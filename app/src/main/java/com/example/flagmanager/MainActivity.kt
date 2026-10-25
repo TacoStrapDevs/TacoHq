@@ -3,6 +3,7 @@ package com.example.flagmanager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,11 +19,13 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.io.File
+import rikka.shizuku.Shizuku
+import java.util.Base64
 
 private const val PKG = "com.roblox.client"
-// UNVERIFIED GUESS. Change it in the app if you find the right path for your Roblox version.
-private const val DEFAULT_PATH = "/data/data/$PKG/files/exe/ClientSettings/ClientAppSettings.json"
+// Based on FastStrap's README (writes to /data/local/tmp). Unverified: edit in the app if needed.
+private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
+private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
 
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
@@ -31,20 +34,49 @@ fun parseFlags(text: String): Map<String, String> {
 
 fun toJson(m: Map<String, String>): String = JSONObject(m).toString(2)
 
-fun su(cmd: String): String = try {
-    val p = ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start()
-    val out = p.inputStream.bufferedReader().readText()
-    if (p.waitFor() == 0) "Applied. Force-close and reopen Roblox." else "Failed: $out"
-} catch (e: Exception) {
-    "No root access: ${e.message}"
+fun shizukuStatus(): String = try {
+    when {
+        !Shizuku.pingBinder() -> "Shizuku is not running. Start it first."
+        Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED ->
+            "Shizuku is running. Tap Grant."
+        else -> "Shizuku ready"
+    }
+} catch (e: Throwable) {
+    "Shizuku unavailable: ${e.message}"
 }
 
-fun applyFlags(ctx: Context, json: String, path: String): String {
-    val tmp = File(ctx.cacheDir, "ClientAppSettings.json").apply { writeText(json) }
+// Shizuku.newProcess is private in API 13.x, so call it by reflection.
+fun sh(cmd: String): Pair<Boolean, String> = try {
+    val m = Shizuku::class.java.getDeclaredMethod(
+        "newProcess",
+        Array<String>::class.java,
+        Array<String>::class.java,
+        String::class.java
+    )
+    m.isAccessible = true
+    val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+    val out = p.inputStream.bufferedReader().readText()
+    val err = p.errorStream.bufferedReader().readText()
+    Pair(p.waitFor() == 0, (out + err).trim())
+} catch (e: Throwable) {
+    Pair(false, ((e.cause ?: e).message ?: e.toString()))
+}
+
+fun applyFlags(json: String, path: String, restart: Boolean, fps: Boolean): String {
+    val b64 = Base64.getEncoder().encodeToString(json.toByteArray())
     val dir = path.substringBeforeLast('/')
-    val chown = if (path.startsWith("/data/"))
-        " && chown \$(stat -c %u:%g /data/data/$PKG) '$path'" else ""
-    return su("mkdir -p '$dir' && cp '${tmp.absolutePath}' '$path' && chmod 666 '$path'$chown")
+    val cmd = buildString {
+        append("mkdir -p '$dir' && echo '$b64' | base64 -d > '$path' && chmod 644 '$path'")
+        if (fps) append(" && setprop $FPS_PROP true")
+        if (restart) append(" && am force-stop $PKG && sleep 1 && monkey -p $PKG -c android.intent.category.LAUNCHER 1")
+    }
+    val (ok, msg) = sh(cmd)
+    return if (ok) "Applied to $path" else "Failed: $msg"
+}
+
+fun resetFlags(path: String): String {
+    val (ok, msg) = sh("rm -f '$path'; setprop $FPS_PROP false; am force-stop $PKG")
+    return if (ok) "Removed flag file. Reopen Roblox." else "Failed: $msg"
 }
 
 class MainActivity : ComponentActivity() {
@@ -71,8 +103,11 @@ fun App() {
             runCatching { putAll(parseFlags(prefs.getString("presets", "{}")!!)) }
         }
     }
-    var path by remember { mutableStateOf(prefs.getString("path", DEFAULT_PATH)!!) }
+    var path by remember { mutableStateOf(prefs.getString("path2", DEFAULT_PATH)!!) }
     var status by remember { mutableStateOf("") }
+    var shStatus by remember { mutableStateOf(shizukuStatus()) }
+    var restart by remember { mutableStateOf(true) }
+    var fps by remember { mutableStateOf(false) }
     var k by remember { mutableStateOf("") }
     var v by remember { mutableStateOf("") }
     var pn by remember { mutableStateOf("") }
@@ -81,7 +116,7 @@ fun App() {
         prefs.edit()
             .putString("flags", toJson(flags))
             .putString("presets", toJson(presets))
-            .putString("path", path)
+            .putString("path2", path)
             .apply()
     }
 
@@ -90,6 +125,16 @@ fun App() {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item { Text("Roblox FastFlag Manager", style = MaterialTheme.typography.titleLarge) }
+        item { Text(shStatus, color = MaterialTheme.colorScheme.primary) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button({
+                    try { Shizuku.requestPermission(1001) } catch (e: Throwable) { status = "Start Shizuku first." }
+                    shStatus = shizukuStatus()
+                }) { Text("Grant Shizuku") }
+                OutlinedButton({ shStatus = shizukuStatus() }) { Text("Refresh") }
+            }
+        }
         item {
             OutlinedTextField(
                 path, { path = it; save() },
@@ -98,13 +143,31 @@ fun App() {
             )
         }
         item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Switch(restart, { restart = it })
+                Text("Restart Roblox after Apply")
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Switch(fps, { fps = it })
+                Text("Disable game frame-rate cap (system prop)")
+            }
+        }
+        item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button({
-                    scope.launch(Dispatchers.IO) { status = applyFlags(ctx, toJson(flags), path) }
+                    scope.launch(Dispatchers.IO) { status = applyFlags(toJson(flags), path, restart, fps) }
                 }) { Text("Apply") }
                 OutlinedButton({
-                    scope.launch(Dispatchers.IO) { status = su("rm -f '$path'").let { if (it.startsWith("Applied")) "Removed flag file." else it } }
+                    scope.launch(Dispatchers.IO) { status = resetFlags(path) }
                 }) { Text("Reset") }
+                OutlinedButton({
+                    scope.launch(Dispatchers.IO) {
+                        val (_, msg) = sh("ls -l '$path'; cat '$path'")
+                        status = msg.ifEmpty { "Nothing returned." }
+                    }
+                }) { Text("Verify") }
             }
         }
         item {
@@ -125,7 +188,13 @@ fun App() {
         item { HorizontalDivider() }
         item { Text("Add flag", style = MaterialTheme.typography.titleMedium) }
         item {
-            OutlinedTextField(k, { k = it }, label = { Text("Name (e.g. FIntDebugForceMSAASamples)") },
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton({ flags["DFIntTaskSchedulerTargetFps"] = "144"; save() }) { Text("FPS 144") }
+                OutlinedButton({ flags["FFlagDebugSkyGray"] = "True"; save() }) { Text("Gray sky") }
+            }
+        }
+        item {
+            OutlinedTextField(k, { k = it }, label = { Text("Name") },
                 singleLine = true, modifier = Modifier.fillMaxWidth())
         }
         item {
