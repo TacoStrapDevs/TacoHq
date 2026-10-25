@@ -717,6 +717,34 @@ private fun NavBar(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int)
 }
 
 @Composable
+private fun StatCard(title: String, value: String, tint: Color) {
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, tint.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+            .padding(vertical = 14.dp, horizontal = 12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                title,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                letterSpacing = 0.8.sp
+            )
+            Text(
+                value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = tint,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 private fun FlagSetting(fs: FS, flags: MutableMap<String, String>, onChange: () -> Unit) {
     when (fs) {
         is FS.Toggle -> {
@@ -940,7 +968,6 @@ fun App() {
         }
     }
 
-    // ----- Theme -----
     val theme = THEMES[themeIdx]
     val pc by animateColorAsState(theme.primary, tween(500), label = "pc")
     val sc by animateColorAsState(theme.secondary, tween(500), label = "sc")
@@ -983,7 +1010,6 @@ fun App() {
         Box(
             Modifier.fillMaxSize().background(base)
         ) {
-            // original app background pattern
             Canvas(Modifier.fillMaxSize()) {
                 val grad = Brush.linearGradient(listOf(pc.copy(alpha = 0.15f), Color.Transparent, sc.copy(alpha = 0.12f)))
                 drawRect(grad, size = size)
@@ -1000,7 +1026,6 @@ fun App() {
             }
 
             Column(Modifier.fillMaxSize()) {
-                // header
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1016,56 +1041,212 @@ fun App() {
                     )
                 }
 
-                // tab bar
                 TabStrip(navItems, page, { page = it })
 
-                // main content area
                 Box(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 8.dp)) {
                     when (page) {
                         0 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 item {
-                                    Group {
-                                        Item("Selected region", loadSelectedRegion(context), onClick = {
-                                            regionMenuExpanded = true
-                                        }) {
-                                            Text(selectedRegion, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(28.dp))
+                                            .background(
+                                                Brush.linearGradient(
+                                                    listOf(
+                                                        pc.copy(alpha = 0.97f),
+                                                        sc.copy(alpha = 0.88f),
+                                                        Color(0xFF1B1614)
+                                                    )
+                                                )
+                                            )
+                                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
+                                            .padding(18.dp)
+                                    ) {
+                                        Canvas(Modifier.matchParentSize()) {
+                                            drawCircle(
+                                                color = Color.White.copy(alpha = 0.08f),
+                                                radius = size.minDimension * 0.7f,
+                                                center = Offset(size.width * 0.78f, size.height * 0.25f)
+                                            )
+                                            drawCircle(
+                                                color = Color(0xFFFFD8A8).copy(alpha = 0.18f),
+                                                radius = size.minDimension * 0.5f,
+                                                center = Offset(size.width * 0.74f, size.height * 0.2f)
+                                            )
                                         }
-                                    }
-                                }
 
-                                item {
-                                    Group {
-                                        Item("Package", pkg) {
-                                            val pr = if (ready || useRoot) robloxVersion else "Shizuku not ready"
-                                            ValueText(pr)
-                                        }
-                                        Item("Path", path) { ValueText(path) }
-                                        Item("Apply on save", null) { TacoSwitch(applyOnSave) { applyOnSave = it } }
-                                    }
-                                }
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text(
+                                                        "TacoStrap",
+                                                        fontSize = 28.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFFFFF8E7)
+                                                    )
+                                                    Text(
+                                                        "Flag dashboard",
+                                                        fontSize = 13.sp,
+                                                        color = Color(0xFFFFE6C2),
+                                                        letterSpacing = 0.5.sp
+                                                    )
+                                                }
 
-                                item {
-                                    Group {
-                                        SectionLabel("Quick actions")
-                                        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Btn("Apply", { doSave(false) }, Modifier.weight(1f), icon = Ic.Check)
-                                            Btn("Launch", { doSave(true) }, Modifier.weight(1f), icon = Ic.Play)
-                                        }
-                                    }
-                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color.White.copy(alpha = 0.12f))
+                                                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Ico(Ic.Bell, Color(0xFFFFF8E7), 18.dp, 2.1f)
+                                                }
+                                            }
 
-                                item {
-                                    Group {
-                                        SectionLabel("Presets")
-                                        val presetKeys = presets.keys.toList()
-                                        if (presetKeys.isEmpty()) {
-                                            Item("No presets yet", "Save a profile to create one")
-                                        } else {
-                                            presetKeys.forEachIndexed { i, k ->
-                                                Item(k, presets[k]?.take(60) ?: "")
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(58.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color.Black.copy(alpha = 0.18f))
+                                                        .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Ico(Ic.Flag, Color(0xFFFFF8E7), 28.dp, 2.3f)
+                                                }
+
+                                                Column {
+                                                    Text(
+                                                        "Server region",
+                                                        fontSize = 12.sp,
+                                                        color = Color(0xFFFFE6C2),
+                                                        letterSpacing = 0.7.sp
+                                                    )
+                                                    Text(
+                                                        text = if (actualRegion != null) {
+                                                            "Actual: $actualRegion"
+                                                        } else {
+                                                            "Selected: $selectedRegion"
+                                                        },
+                                                        fontSize = 17.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = Color.White
+                                                    )
+                                                }
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Btn(
+                                                    "Apply",
+                                                    { doSave(false) },
+                                                    Modifier.weight(1f),
+                                                    icon = Ic.Check
+                                                )
+                                                Btn(
+                                                    "Launch",
+                                                    { doSave(true) },
+                                                    Modifier.weight(1f),
+                                                    icon = Ic.Play
+                                                )
                                             }
                                         }
+                                    }
+                                }
+
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        StatCard("Flags", "${flags.size}", pc)
+                                        StatCard("Presets", "${presets.size}", sc)
+                                        StatCard("Roblox", robloxVersion, Color(0xFFFFD385))
+                                    }
+                                }
+
+                                item {
+                                    Group {
+                                        Item(
+                                            "Selected region",
+                                            "Tap to choose your preferred region",
+                                            onClick = { regionMenuExpanded = true }
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    selectedRegion,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Ico(Ic.Down, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
+                                            }
+                                        }
+
+                                        Item(
+                                            "Package",
+                                            if (ready || useRoot) robloxVersion else "Shizuku not ready"
+                                        ) {
+                                            ValueText(if (ready || useRoot) robloxVersion else "Shizuku unavailable")
+                                        }
+
+                                        Item(
+                                            "Path",
+                                            path
+                                        ) {
+                                            ValueText(path)
+                                        }
+
+                                        Item(
+                                            "Auto apply",
+                                            null
+                                        ) {
+                                            TacoSwitch(applyOnSave) { applyOnSave = it }
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Group {
+                                        SectionLabel("Fast actions")
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Download)
+                                            Btn("Open", { openUrl(ALLOWLIST_URL) }, Modifier.weight(1f), kind = 1, icon = Ic.Doc)
+                                            Btn("Clear", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Close)
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Group {
+                                        SectionLabel("Live status")
+                                        Item("Mode", if (useRoot) "Root mode" else "Shizuku mode")
+                                        Item("Status", shStatus)
+                                        Item("Fallback", if (actualRegion != null) "Live region active" else "Using selected region")
                                     }
                                 }
                             }
@@ -1120,7 +1301,6 @@ fun App() {
                     }
                 }
 
-                // bottom nav
                 NavBar(navItems, page, { page = it })
             }
 
