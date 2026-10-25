@@ -1,5 +1,5 @@
 package com.example.flagmanager
-
+import androidx.compose.foundation.Image
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -125,7 +125,21 @@ fun App() {
         Modifier.fillMaxSize().statusBarsPadding().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { Text("Roblox FastFlag Manager", style = MaterialTheme.typography.titleLarge) }
+        item {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.mangostrap_logo),
+            contentDescription = "MangoStrap logo",
+            modifier = Modifier.size(90.dp)
+        )
+        Text("MangoStrap", style = MaterialTheme.typography.titleLarge)
+        Text("Roblox FastFlag Manager", style = MaterialTheme.typography.bodySmall)
+    }
+        }
         item { Text(shStatus, color = MaterialTheme.colorScheme.primary) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
