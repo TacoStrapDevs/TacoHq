@@ -65,7 +65,6 @@ import rikka.shizuku.Shizuku
 import java.util.Base64
 
 private const val PKG = "com.roblox.client"
-
 private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
 private const val FPS_FLAG = "DFIntTaskSchedulerTargetFps"
@@ -140,8 +139,8 @@ fun clearCache(): String {
 private data class AppTheme(val name: String, val primary: Color, val secondary: Color)
 
 private val THEMES = listOf(
-    AppTheme("Blue", Color(0xFF3D7BFF), Color(0xFF1E5BFF)),
     AppTheme("Taco", Color(0xFFFFB300), Color(0xFFFF7A1A)),
+    AppTheme("Blue", Color(0xFF3D7BFF), Color(0xFF1E5BFF)),
     AppTheme("Void", Color(0xFFB388FF), Color(0xFF7C4DFF)),
     AppTheme("Fish", Color(0xFF26D0B8), Color(0xFF00ACC1)),
     AppTheme("Frost", Color(0xFFB3E5FC), Color(0xFF81D4FA)),
@@ -167,7 +166,7 @@ private val OPTIONS = listOf(
 
 private val GROUPS = listOf("Graphics", "Performance", "World detail", "Interface", "Network", "Debug")
 
-// ---------- Reusable UI ----------
+// ---------- Reusable UI Components ----------
 
 @Composable
 private fun Appear(index: Int, content: @Composable () -> Unit) {
@@ -187,7 +186,7 @@ private fun Panel(
 ) {
     Card(
         modifier.fillMaxWidth().animateContentSize(spring(stiffness = 400f)),
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = container)
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
@@ -206,7 +205,7 @@ private fun PressButton(
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(if (pressed) 0.93f else 1f, spring(dampingRatio = 0.45f, stiffness = 500f), label = "press")
     val m = modifier.scale(sc)
-    val shape = RoundedCornerShape(50)
+    val shape = RoundedCornerShape(16.dp)
     when {
         outlined -> OutlinedButton(onClick, m, interactionSource = src, shape = shape) {
             Text(text, fontWeight = FontWeight.Medium)
@@ -233,18 +232,6 @@ private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
     val sc by animateFloatAsState(if (selected) 1.05f else 1f, spring(dampingRatio = 0.5f), label = "pillsc")
     Box(Modifier.scale(sc).clip(RoundedCornerShape(50)).background(bg).clickable(onClick = onClick)) {
         Text(text, Modifier.padding(horizontal = 18.dp, vertical = 10.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg)
-    }
-}
-
-@Composable
-private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f))
-            .padding(14.dp)
-    ) {
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -289,17 +276,13 @@ fun App() {
 
     val flags = remember {
         mutableStateMapOf<String, String>().apply {
-            runCatching {
-                putAll(parseFlags(prefs.getString("flags", "{}") ?: "{}"))
-            }
+            runCatching { putAll(parseFlags(prefs.getString("flags", "{}") ?: "{}")) }
         }
     }
 
     val presets = remember {
         mutableStateMapOf<String, String>().apply {
-            runCatching {
-                putAll(parseFlags(prefs.getString("presets", "{}") ?: "{}"))
-            }
+            runCatching { putAll(parseFlags(prefs.getString("presets", "{}") ?: "{}")) }
         }
     }
 
@@ -376,27 +359,27 @@ fun App() {
         }
     }
 
-    // ----- Theme -----
+    // ----- Taco Palette / Theme Setup -----
     val theme = THEMES[themeIdx]
     val pc by animateColorAsState(theme.primary, tween(600), label = "pc")
     val sc by animateColorAsState(theme.secondary, tween(600), label = "sc")
-    val base = Color(0xFF131316)
+    val base = Color(0xFF121214)
     val scheme = darkColorScheme(
         primary = pc,
-        onPrimary = Color(0xFF0B0F1A),
-        primaryContainer = lerp(base, pc, 0.28f),
-        onPrimaryContainer = lerp(pc, Color.White, 0.65f),
+        onPrimary = Color(0xFF1C1200),
+        primaryContainer = lerp(base, pc, 0.25f),
+        onPrimaryContainer = lerp(pc, Color.White, 0.70f),
         secondary = sc,
-        onSecondary = Color(0xFF0B0F1A),
-        secondaryContainer = lerp(base, pc, 0.3f),
-        onSecondaryContainer = lerp(pc, Color.White, 0.4f),
+        onSecondary = Color(0xFF1C0800),
+        secondaryContainer = lerp(base, sc, 0.25f),
+        onSecondaryContainer = lerp(sc, Color.White, 0.70f),
         background = base,
-        onBackground = Color(0xFFEDE8E3),
+        onBackground = Color(0xFFEBE6DF),
         surface = base,
-        onSurface = Color(0xFFEDE8E3),
-        surfaceVariant = lerp(Color(0xFF222226), pc, 0.06f),
-        onSurfaceVariant = Color(0xFFC9C4BE),
-        outline = lerp(Color(0xFF55525A), pc, 0.25f)
+        onSurface = Color(0xFFEBE6DF),
+        surfaceVariant = lerp(Color(0xFF1E1E22), pc, 0.08f),
+        onSurfaceVariant = Color(0xFFC7C2BA),
+        outline = lerp(Color(0xFF4A484E), pc, 0.30f)
     )
 
     val inf = rememberInfiniteTransition(label = "inf")
@@ -414,9 +397,9 @@ fun App() {
 
     val statusColor by animateColorAsState(if (ready) Color(0xFF4CAF50) else Color(0xFFEF5350), tween(400), label = "chip")
     val statusText = when {
-        ready -> "Shizuku ready"
-        shStatus.contains("Tap Grant") -> "Needs permission"
-        else -> "Shizuku off"
+        ready -> "Shizuku Ready"
+        shStatus.contains("Tap Grant") -> "Needs Permission"
+        else -> "Shizuku Disconnected"
     }
     val flagCount by animateIntAsState(flags.size, tween(600), label = "count")
     val tabs = listOf("Home" to "🏠", "Flags" to "🚩", "Editor" to "📝", "Presets" to "💾", "Settings" to "⚙️")
@@ -429,8 +412,8 @@ fun App() {
                 .background(
                     Brush.radialGradient(
                         listOf(pc.copy(alpha = 0.22f), Color.Transparent),
-                        center = Offset(150f + 700f * glow, 250f + 500f * glow),
-                        radius = 1100f
+                        center = Offset(200f + 600f * glow, 200f + 400f * glow),
+                        radius = 1200f
                     )
                 )
         ) {
@@ -455,7 +438,7 @@ fun App() {
             ) { pad ->
                 Column(Modifier.padding(pad).fillMaxSize()) {
 
-                    // ----- Header -----
+                    // ----- Top Bar -----
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -469,14 +452,14 @@ fun App() {
                         )
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("TacoStrap", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                            Text(tabs[tab].first, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("TacoStrap", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text("Roblox FastFlag Tweaker", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Row(
                             Modifier
                                 .clip(RoundedCornerShape(50))
-                                .background(statusColor.copy(alpha = 0.18f))
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                                .background(statusColor.copy(alpha = 0.15f))
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
@@ -486,8 +469,8 @@ fun App() {
                                     .clip(CircleShape)
                                     .background(statusColor)
                             )
-                            Spacer(Modifier.width(7.dp))
-                            Text(statusText, fontSize = 12.sp, color = statusColor, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.width(6.dp))
+                            Text(statusText, fontSize = 11.sp, color = statusColor, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
@@ -502,80 +485,163 @@ fun App() {
 
                     Crossfade(targetState = tab, animationSpec = tween(280), label = "tab") { t ->
                         when (t) {
+                            // ==================== HOME (VOIDSTRAP LAYOUT) ====================
                             0 -> LazyColumn(
                                 Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
+                                // --- Voidstrap Style Hero Card ---
                                 item {
                                     Appear(0) {
-                                        Panel {
-                                            SectionTitle("Dashboard")
-                                            Row(
-                                                Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(26.dp),
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(
+                                                        Brush.linearGradient(
+                                                            listOf(
+                                                                pc.copy(alpha = 0.35f),
+                                                                sc.copy(alpha = 0.15f)
+                                                            )
+                                                        )
+                                                    )
+                                                    .padding(20.dp)
                                             ) {
-                                                Stat("Active flags", "$flagCount", Modifier.weight(1f))
-                                                Stat("Roblox", robloxVersion, Modifier.weight(1f))
+                                                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column {
+                                                            Text(
+                                                                "TacoStrap v3.0",
+                                                                fontSize = 20.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                            Text(
+                                                                "Voidstrap-style Android Bootstrapper",
+                                                                fontSize = 12.sp,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(12.dp))
+                                                                .background(pc.copy(alpha = 0.25f))
+                                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                                        ) {
+                                                            Text(
+                                                                "🌮 Taco Mode",
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = pc
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // --- Status Stats Section ---
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                    ) {
+                                                        Column(
+                                                            Modifier
+                                                                .weight(1f)
+                                                                .clip(RoundedCornerShape(18.dp))
+                                                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f))
+                                                                .padding(14.dp)
+                                                        ) {
+                                                            Text("Active Flags", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                            Text("$flagCount", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = pc)
+                                                        }
+
+                                                        Column(
+                                                            Modifier
+                                                                .weight(1f)
+                                                                .clip(RoundedCornerShape(18.dp))
+                                                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f))
+                                                                .padding(14.dp)
+                                                        ) {
+                                                            Text("Roblox Client", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                            Text(robloxVersion, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = pc)
+                                                        }
+                                                    }
+
+                                                    // --- Path Banner ---
+                                                    Text(
+                                                        "Target Path: $path",
+                                                        fontSize = 11.sp,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        maxLines = 1
+                                                    )
+                                                }
                                             }
-                                            Text(
-                                                path,
-                                                fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
                                         }
                                     }
                                 }
 
+                                // --- Voidstrap Quick Launch / Apply Actions ---
                                 item {
                                     Appear(1) {
                                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            PressButton("Apply flags", {
-                                                task { applyFlags(toJson(flags), path, restart, fps) }
-                                            }, Modifier.fillMaxWidth().height(58.dp))
+                                            PressButton(
+                                                "Apply & Launch Roblox",
+                                                { task { applyFlags(toJson(flags), path, restart, fps) } },
+                                                Modifier.fillMaxWidth().height(56.dp)
+                                            )
+
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                                             ) {
-                                                PressButton("Launch", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
-                                                PressButton("Reset", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
+                                                PressButton("Quick Launch", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
+                                                PressButton("Reset Client", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
                                             }
                                         }
                                     }
                                 }
 
+                                // --- Quick Utilities Section ---
                                 item {
                                     Appear(2) {
                                         Panel {
-                                            SectionTitle("Tools")
+                                            SectionTitle("Voidstrap Utilities")
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                                             ) {
-                                                PressButton("Verify", {
+                                                PressButton("Verify JSON", {
                                                     task {
                                                         val (_, msg) = run("ls -l '$path'; cat '$path'")
-                                                        msg.ifEmpty { "Nothing returned. File may not exist." }
+                                                        msg.ifEmpty { "File not found or empty." }
                                                     }
                                                 }, Modifier.weight(1f), outlined = true)
-                                                PressButton("Clear cache", { task { clearCache() } }, Modifier.weight(1f), outlined = true)
+
+                                                PressButton("Clear Cache", { task { clearCache() } }, Modifier.weight(1f), outlined = true)
                                             }
+
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                                             ) {
-                                                PressButton("Refresh", { shStatus = shizukuStatus() }, Modifier.weight(1f), outlined = true)
-                                                PressButton("Grant Shizuku", {
+                                                PressButton("Check Shizuku", { shStatus = shizukuStatus() }, Modifier.weight(1f), outlined = true)
+                                                PressButton("Grant Permission", {
                                                     try {
                                                         Shizuku.requestPermission(1001)
                                                     } catch (e: Throwable) {
-                                                        say("Start Shizuku first.")
+                                                        say("Shizuku isn't running.")
                                                     }
                                                     shStatus = shizukuStatus()
                                                 }, Modifier.weight(1f), outlined = true)
                                             }
-                                            Text(shStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
@@ -599,326 +665,318 @@ fun App() {
                                 }
                             }
 
-                            1 -> {
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
+                            // ==================== FLAGS CATALOG ====================
+                            1 -> LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                item {
+                                    Panel(container = MaterialTheme.colorScheme.primaryContainer) {
+                                        Text(
+                                            "Roblox only accepts whitelisted FastFlags. Unrecognised flags will be ignored.",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+
+                                item {
+                                    OutlinedTextField(
+                                        value = search,
+                                        onValueChange = { search = it },
+                                        label = { Text("Search FastFlags") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(50),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                if (search.isBlank()) {
                                     item {
-                                        Panel(container = MaterialTheme.colorScheme.primaryContainer) {
-                                            Text(
-                                                "Roblox only accepts a whitelist of FastFlags. Flags outside it are ignored, so some of these may do nothing.",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
+                                        Panel {
+                                            SectionTitle("FPS Limit Target")
+                                            ChipRow {
+                                                listOf("30", "60", "90", "120", "144", "240").forEach { n ->
+                                                    Pill("$n FPS", flags[FPS_FLAG] == n) {
+                                                        if (flags[FPS_FLAG] == n) flags.remove(FPS_FLAG) else flags[FPS_FLAG] = n
+                                                        save()
+                                                    }
+                                                }
+                                            }
+
+                                            SectionTitle("Graphics Preset Level")
+                                            ChipRow {
+                                                listOf("1", "3", "5", "7", "10").forEach { n ->
+                                                    Pill("Level $n", flags[QUALITY_FLAG] == n) {
+                                                        if (flags[QUALITY_FLAG] == n) flags.remove(QUALITY_FLAG) else flags[QUALITY_FLAG] = n
+                                                        save()
+                                                    }
+                                                }
+                                            }
+
+                                            SectionTitle("Network Packet MTU")
+                                            ChipRow {
+                                                listOf("900", "1200", "1400", "1492").forEach { n ->
+                                                    Pill(n, flags["DFIntConnectionMTUSize"] == n) {
+                                                        if (flags["DFIntConnectionMTUSize"] == n) flags.remove("DFIntConnectionMTUSize") else flags["DFIntConnectionMTUSize"] = n
+                                                        save()
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
+                                }
 
-                                    item {
+                                GROUPS.forEach { g ->
+                                    val opts = OPTIONS.filter {
+                                        it.group == g && (search.isBlank() || it.title.contains(search, true) || it.key.contains(search, true))
+                                    }
+                                    if (opts.isNotEmpty()) item(key = "g_$g") {
+                                        Panel {
+                                            SectionTitle(g)
+                                            opts.forEach { o ->
+                                                ToggleRow(o.title, o.sub, flags[o.key] == o.on) { toggleOpt(o) }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Panel {
+                                        SectionTitle("Add Custom FastFlag")
                                         OutlinedTextField(
-                                            value = search,
-                                            onValueChange = { search = it },
-                                            label = { Text("Search options") },
+                                            value = k,
+                                            onValueChange = { k = it },
+                                            label = { Text("Flag Key") },
                                             singleLine = true,
-                                            shape = RoundedCornerShape(50),
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = v,
+                                                onValueChange = { v = it },
+                                                label = { Text("Value") },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(16.dp),
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            PressButton("Add", {
+                                                if (k.isNotBlank()) {
+                                                    flags[k.trim()] = v.trim()
+                                                    k = ""
+                                                    v = ""
+                                                    save()
+                                                }
+                                            })
+                                        }
+                                    }
+                                }
+
+                                item { SectionTitle("Active Flags (${flags.size})") }
+                                if (flags.isEmpty()) item { Text("No active flags enabled.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                items(flags.keys.sorted(), key = { "f_$it" }) { name ->
+                                    val value = flags[name] ?: ""
+                                    Panel {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(name, Modifier.weight(1f), fontSize = 13.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
+                                            TextButton({ flags.remove(name); save() }) { Text("✕") }
+                                        }
+                                        OutlinedTextField(
+                                            value = value,
+                                            onValueChange = { flags[name] = it; save() },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(16.dp),
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     }
-
-                                    if (search.isBlank()) {
-                                        item {
-                                            Panel {
-                                                SectionTitle("Frame rate limit")
-                                                ChipRow {
-                                                    listOf("30", "60", "90", "120", "144", "240").forEach { n ->
-                                                        Pill("$n FPS", flags[FPS_FLAG] == n) {
-                                                            if (flags[FPS_FLAG] == n) flags.remove(FPS_FLAG) else flags[FPS_FLAG] = n
-                                                            save()
-                                                        }
-                                                    }
-                                                }
-                                                Text(
-                                                    "Above 60 also needs Disable frame-rate cap in Settings.",
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                                SectionTitle("Graphics quality")
-                                                ChipRow {
-                                                    listOf("1", "3", "5", "7", "10").forEach { n ->
-                                                        Pill("Level $n", flags[QUALITY_FLAG] == n) {
-                                                            if (flags[QUALITY_FLAG] == n) flags.remove(QUALITY_FLAG) else flags[QUALITY_FLAG] = n
-                                                            save()
-                                                        }
-                                                    }
-                                                }
-                                                SectionTitle("Network packet size (MTU)")
-                                                ChipRow {
-                                                    listOf("900", "1200", "1400", "1492").forEach { n ->
-                                                        Pill(n, flags["DFIntConnectionMTUSize"] == n) {
-                                                            if (flags["DFIntConnectionMTUSize"] == n) flags.remove("DFIntConnectionMTUSize") else flags["DFIntConnectionMTUSize"] = n
-                                                            save()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    GROUPS.forEach { g ->
-                                        val opts = OPTIONS.filter {
-                                            it.group == g && (search.isBlank() || it.title.contains(search, true) || it.key.contains(search, true))
-                                        }
-                                        if (opts.isNotEmpty()) item(key = "g_$g") {
-                                            Panel {
-                                                SectionTitle(g)
-                                                opts.forEach { o ->
-                                                    ToggleRow(o.title, o.sub, flags[o.key] == o.on) { toggleOpt(o) }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    item {
-                                        Panel {
-                                            SectionTitle("Add custom flag")
-                                            OutlinedTextField(
-                                                value = k,
-                                                onValueChange = { k = it },
-                                                label = { Text("Name") },
-                                                singleLine = true,
-                                                shape = RoundedCornerShape(16.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                OutlinedTextField(
-                                                    value = v,
-                                                    onValueChange = { v = it },
-                                                    label = { Text("Value") },
-                                                    singleLine = true,
-                                                    shape = RoundedCornerShape(16.dp),
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                PressButton("Add", {
-                                                    if (k.isNotBlank()) {
-                                                        flags[k.trim()] = v.trim()
-                                                        k = ""
-                                                        v = ""
-                                                        save()
-                                                    }
-                                                })
-                                            }
-                                        }
-                                    }
-
-                                    item { SectionTitle("Active flags (${flags.size})") }
-                                    if (flags.isEmpty()) item { Text("Nothing enabled yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                    items(flags.keys.sorted(), key = { "f_$it" }) { name ->
-                                        val value = flags[name] ?: ""
-                                        Panel {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(name, Modifier.weight(1f), fontSize = 13.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
-                                                TextButton({ flags.remove(name); save() }) { Text("✕") }
-                                            }
-                                            OutlinedTextField(
-                                                value = value,
-                                                onValueChange = { flags[name] = it; save() },
-                                                singleLine = true,
-                                                shape = RoundedCornerShape(16.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-                                    }
                                 }
                             }
 
-                            2 -> {
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
-                                    item {
-                                        Panel {
-                                            SectionTitle("Raw JSON")
-                                            OutlinedTextField(
-                                                value = editor,
-                                                onValueChange = { editor = it; editorErr = null },
-                                                modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp),
-                                                textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-                                                shape = RoundedCornerShape(18.dp),
-                                                isError = editorErr != null,
-                                                supportingText = { editorErr?.let { Text(it) } }
-                                            )
-                                            ChipRow {
-                                                PressButton("Load current", { editor = toJson(flags); editorErr = null }, outlined = true)
-                                                PressButton("Validate & save", {
-                                                    runCatching { parseFlags(editor) }
-                                                        .onSuccess {
-                                                            flags.clear()
-                                                            flags.putAll(it)
-                                                            save()
-                                                            editorErr = null
-                                                            say("Saved ${it.size} flags.")
-                                                        }
-                                                        .onFailure { editorErr = "Invalid JSON" }
-                                                })
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            3 -> {
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    item {
-                                        Panel {
-                                            SectionTitle("Save current flags as preset")
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                OutlinedTextField(
-                                                    value = pn,
-                                                    onValueChange = { pn = it },
-                                                    label = { Text("Preset name") },
-                                                    singleLine = true,
-                                                    shape = RoundedCornerShape(16.dp),
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                PressButton("Save", {
-                                                    if (pn.isNotBlank()) {
-                                                        presets[pn.trim()] = toJson(flags)
-                                                        pn = ""
-                                                        save()
-                                                        say("Preset saved.")
-                                                    }
-                                                })
-                                            }
-                                            ChipRow {
-                                                PressButton("Import clipboard", {
-                                                    val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                                                    runCatching { flags.putAll(parseFlags(text)); save() }
-                                                        .onSuccess { say("Imported from clipboard.") }
-                                                        .onFailure { say("Clipboard isn't valid JSON.") }
-                                                }, outlined = true)
-                                                PressButton("Copy JSON", {
-                                                    clip.setPrimaryClip(ClipData.newPlainText("flags", toJson(flags)))
-                                                    say("Copied JSON.")
-                                                }, outlined = true)
-                                                PressButton("Share", {
-                                                    val i = Intent(Intent.ACTION_SEND).apply {
-                                                        type = "text/plain"
-                                                        putExtra(Intent.EXTRA_TEXT, toJson(flags))
-                                                    }
-                                                    ctx.startActivity(Intent.createChooser(i, "Share flags"))
-                                                }, outlined = true)
-                                            }
-                                        }
-                                    }
-
-                                    item { SectionTitle("Saved presets (${presets.size})") }
-                                    if (presets.isEmpty()) item { Text("No presets yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                    items(presets.keys.sorted(), key = { "p_$it" }) { name ->
-                                        val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
-                                        Panel {
-                                            Text(name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                            Text("$count flags", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                TextButton({
-                                                    runCatching {
+                            // ==================== RAW JSON EDITOR ====================
+                            2 -> LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                item {
+                                    Panel {
+                                        SectionTitle("Raw JSON Editor")
+                                        OutlinedTextField(
+                                            value = editor,
+                                            onValueChange = { editor = it; editorErr = null },
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp),
+                                            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                                            shape = RoundedCornerShape(18.dp),
+                                            isError = editorErr != null,
+                                            supportingText = { editorErr?.let { Text(it) } }
+                                        )
+                                        ChipRow {
+                                            PressButton("Load Active Flags", { editor = toJson(flags); editorErr = null }, outlined = true)
+                                            PressButton("Save & Apply", {
+                                                runCatching { parseFlags(editor) }
+                                                    .onSuccess {
                                                         flags.clear()
-                                                        flags.putAll(parseFlags(presets[name]!!))
+                                                        flags.putAll(it)
                                                         save()
-                                                        say("Loaded $name.")
+                                                        editorErr = null
+                                                        say("Successfully parsed and saved ${it.size} flags.")
                                                     }
-                                                }) { Text("Load") }
-                                                TextButton({ renaming = name; newName = name }) { Text("Rename") }
-                                                TextButton({ presets.remove(name); save() }) { Text("Delete") }
-                                            }
+                                                    .onFailure { editorErr = "Invalid JSON Syntax" }
+                                            })
                                         }
                                     }
                                 }
                             }
 
-                            else -> {
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    item {
-                                        Panel {
-                                            SectionTitle("Flag file")
+                            // ==================== PRESETS ====================
+                            3 -> LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                item {
+                                    Panel {
+                                        SectionTitle("Save Current Config as Preset")
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
                                             OutlinedTextField(
-                                                value = path,
-                                                onValueChange = { path = it; save() },
-                                                label = { Text("ClientAppSettings.json path") },
+                                                value = pn,
+                                                onValueChange = { pn = it },
+                                                label = { Text("Preset Title") },
+                                                singleLine = true,
                                                 shape = RoundedCornerShape(16.dp),
-                                                modifier = Modifier.fillMaxWidth()
+                                                modifier = Modifier.weight(1f)
                                             )
-                                            PressButton("Reset path to default", { path = DEFAULT_PATH; save() }, outlined = true)
+                                            PressButton("Save", {
+                                                if (pn.isNotBlank()) {
+                                                    presets[pn.trim()] = toJson(flags)
+                                                    pn = ""
+                                                    save()
+                                                    say("Preset created.")
+                                                }
+                                            })
+                                        }
+                                        ChipRow {
+                                            PressButton("Import Clipboard", {
+                                                val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                                                runCatching { flags.putAll(parseFlags(text)); save() }
+                                                    .onSuccess { say("Imported flags from clipboard.") }
+                                                    .onFailure { say("Clipboard text is not valid JSON.") }
+                                            }, outlined = true)
+                                            PressButton("Copy JSON", {
+                                                clip.setPrimaryClip(ClipData.newPlainText("flags", toJson(flags)))
+                                                say("Copied active flags JSON.")
+                                            }, outlined = true)
+                                            PressButton("Share Config", {
+                                                val i = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_TEXT, toJson(flags))
+                                                }
+                                                ctx.startActivity(Intent.createChooser(i, "Share FastFlags Configuration"))
+                                            }, outlined = true)
                                         }
                                     }
+                                }
 
-                                    item {
-                                        Panel {
-                                            SectionTitle("Behaviour")
-                                            ToggleRow("Restart Roblox after Apply", "Force-stops and relaunches Roblox so flags load.", restart) { restart = it; save() }
-                                            ToggleRow("Disable frame-rate cap", "Sets a system property when you Apply.", fps) { fps = it; save() }
+                                item { SectionTitle("Saved Presets (${presets.size})") }
+                                if (presets.isEmpty()) item { Text("No saved presets found.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                items(presets.keys.sorted(), key = { "p_$it" }) { name ->
+                                    val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
+                                    Panel {
+                                        Text(name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text("$count active flags contained", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            TextButton({
+                                                runCatching {
+                                                    flags.clear()
+                                                    flags.putAll(parseFlags(presets[name]!!))
+                                                    save()
+                                                    say("Loaded preset: $name")
+                                                }
+                                            }) { Text("Load") }
+                                            TextButton({ renaming = name; newName = name }) { Text("Rename") }
+                                            TextButton({ presets.remove(name); save() }) { Text("Delete") }
                                         }
                                     }
+                                }
+                            }
 
-                                    item {
-                                        Panel {
-                                            SectionTitle("Accent theme")
-                                            Row(
-                                                Modifier.horizontalScroll(rememberScrollState())
-                                                    .padding(vertical = 6.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                                            ) {
-                                                THEMES.forEachIndexed { i, th ->
-                                                    val sel = themeIdx == i
-                                                    val s by animateFloatAsState(if (sel) 1.12f else 1f, spring(dampingRatio = 0.5f), label = "sw")
-                                                    Column(Modifier.clickable { themeIdx = i; save() }, horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Box(
-                                                            Modifier.size(54.dp).scale(s).clip(CircleShape)
-                                                                .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
-                                                                .then(if (sel) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
-                                                        )
-                                                        Spacer(Modifier.height(6.dp))
-                                                        Text(th.name, fontSize = 12.sp)
-                                                    }
+                            // ==================== SETTINGS ====================
+                            else -> LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                item {
+                                    Panel {
+                                        SectionTitle("Configuration Path")
+                                        OutlinedTextField(
+                                            value = path,
+                                            onValueChange = { path = it; save() },
+                                            label = { Text("ClientAppSettings.json Location") },
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        PressButton("Reset to Default Path", { path = DEFAULT_PATH; save() }, outlined = true)
+                                    }
+                                }
+
+                                item {
+                                    Panel {
+                                        SectionTitle("App Behavior")
+                                        ToggleRow("Restart Roblox on Apply", "Force-closes and restarts Roblox automatically when applying flags.", restart) { restart = it; save() }
+                                        ToggleRow("Set FPS System Property", "Overrides system frame rate cap via setprop command.", fps) { fps = it; save() }
+                                    }
+                                }
+
+                                item {
+                                    Panel {
+                                        SectionTitle("Accent Theme")
+                                        Row(
+                                            Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                        ) {
+                                            THEMES.forEachIndexed { i, th ->
+                                                val sel = themeIdx == i
+                                                val s by animateFloatAsState(if (sel) 1.12f else 1f, spring(dampingRatio = 0.5f), label = "sw")
+                                                Column(Modifier.clickable { themeIdx = i; save() }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Box(
+                                                        Modifier.size(52.dp).scale(s).clip(CircleShape)
+                                                            .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
+                                                            .then(if (sel) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
+                                                    )
+                                                    Spacer(Modifier.height(6.dp))
+                                                    Text(th.name, fontSize = 12.sp)
                                                 }
                                             }
-                                            ToggleRow("Animated background", "Slow moving glow behind the app.", animBg) { animBg = it; save() }
                                         }
+                                        ToggleRow("Animated Dynamic Glow", "Slowly shifts the background gradient accent.", animBg) { animBg = it; save() }
                                     }
+                                }
 
-                                    item {
-                                        Panel {
-                                            SectionTitle("Maintenance")
-                                            PressButton("Clear Roblox cache", { task { clearCache() } }, outlined = true)
-                                            PressButton("Clear all flags", { flags.clear(); save(); say("Cleared all flags.") }, outlined = true)
-                                        }
+                                item {
+                                    Panel {
+                                        SectionTitle("Maintenance")
+                                        PressButton("Clear Roblox App Cache", { task { clearCache() } }, outlined = true)
+                                        PressButton("Reset All Active Flags", { flags.clear(); save(); say("Cleared all active flags.") }, outlined = true)
                                     }
+                                }
 
-                                    item {
-                                        Panel {
-                                            SectionTitle("About")
-                                            Text(
-                                                "TacoStrap v3.0. Layout inspired by Bloxstrap, Fishstrap and Voidstrap.",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
+                                item {
+                                    Panel {
+                                        SectionTitle("About TacoStrap")
+                                        Text(
+                                            "TacoStrap Manager v3.0\nVoidstrap & Bloxstrap inspired layout with native Shizuku Android integration.",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                 }
                             }
@@ -931,7 +989,7 @@ fun App() {
         renaming?.let { old ->
             AlertDialog(
                 onDismissRequest = { renaming = null },
-                title = { Text("Rename preset") },
+                title = { Text("Rename Preset") },
                 text = { OutlinedTextField(newName, { newName = it }, singleLine = true) },
                 confirmButton = {
                     TextButton({
