@@ -243,3 +243,6 @@ fun App() {
         }
     }
 }
+
+
+import androidx.compose.ui.res.painterResource
