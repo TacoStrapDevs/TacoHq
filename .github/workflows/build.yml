@@ -1,4 +1,3 @@
-
 name: Build APK
 on:
   workflow_dispatch:
@@ -22,7 +21,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          gradle assembleDebug --no-daemon 2>&1 | tee build.log
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
 
       - name: Show error
         if: failure()
@@ -35,3 +34,4 @@ jobs:
         with:
           name: FlagManager-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
