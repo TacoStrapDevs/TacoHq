@@ -1,13 +1,12 @@
 
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
-        <application
+    <application
         android:label="MangoStrap"
-        android:icon="@drawable/mangostrap_logo"
         android:theme="@android:style/Theme.Material.NoActionBar">
-        
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
@@ -25,5 +24,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
     </application>
 </manifest>
