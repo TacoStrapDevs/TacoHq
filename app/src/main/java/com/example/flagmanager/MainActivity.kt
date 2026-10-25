@@ -208,9 +208,15 @@ private fun PressButton(
     val m = modifier.scale(sc)
     val shape = RoundedCornerShape(50)
     when {
-        outlined -> OutlinedButton(onClick, m, interactionSource = src, shape = shape) { Text(text, fontWeight = FontWeight.Medium) }
-        tonal -> FilledTonalButton(onClick, m, interactionSource = src, shape = shape) { Text(text, fontWeight = SemiBold) }
-        else -> Button(onClick, m, interactionSource = src, shape = shape) { Text(text, fontWeight = FontWeight.Bold) }
+        outlined -> OutlinedButton(onClick, m, interactionSource = src, shape = shape) {
+            Text(text, fontWeight = FontWeight.Medium)
+        }
+        tonal -> FilledTonalButton(onClick, m, interactionSource = src, shape = shape) {
+            Text(text, fontWeight = FontWeight.SemiBold)
+        }
+        else -> Button(onClick, m, interactionSource = src, shape = shape) {
+            Text(text, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
