@@ -1,8 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <application
         android:label="FlagManager"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -11,12 +19,3 @@
         </activity>
     </application>
 </manifest>
-
-<provider
-    android:name="rikka.shizuku.ShizukuProvider"
-    android:authorities="${applicationId}.shizuku"
-    android:multiprocess="false"
-    android:enabled="true"
-    android:exported="true"
-    android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
-
