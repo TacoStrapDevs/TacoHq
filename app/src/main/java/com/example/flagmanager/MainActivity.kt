@@ -266,6 +266,59 @@ private fun ChipRow(content: @Composable RowScope.() -> Unit) {
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
+@Composable
+private fun HomeMetric(label: String, value: String, accent: Color = MaterialTheme.colorScheme.primary) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f)),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 0.dp)
+    ) {
+        Column(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = accent, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun HomeAction(
+    icon: String,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 0.dp)
+            .animateContentSize(spring(stiffness = 390f)),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = lerp(MaterialTheme.colorScheme.surfaceVariant, accent, 0.08f)),
+        onClick = onClick
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(accent.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(icon, fontSize = 20.sp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -343,7 +396,6 @@ fun App() {
         }
     }
 
-    // ----- Theme -----
     val theme = THEMES[themeIdx]
     val pc by animateColorAsState(theme.primary, tween(600), label = "pc")
     val sc by animateColorAsState(theme.secondary, tween(600), label = "sc")
@@ -402,8 +454,6 @@ fun App() {
                 }
             ) { pad ->
                 Column(Modifier.padding(pad).fillMaxSize()) {
-
-                    // ----- Header -----
                     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Image(
                             painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
@@ -430,30 +480,73 @@ fun App() {
 
                     Crossfade(targetState = tab, animationSpec = tween(280), label = "tab") { t ->
                         when (t) {
-
-                            // ================= HOME =================
                             0 -> LazyColumn(
                                 Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 item {
                                     Appear(0) {
-                                        Panel {
-                                            SectionTitle("Dashboard")
-                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                Stat("Active flags", "$flagCount", Modifier.weight(1f))
-                                                Stat("Roblox", robloxVersion, Modifier.weight(1f))
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = lerp(base, pc, 0.17f)),
+                                            shape = RoundedCornerShape(28.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Box(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .background(
+                                                        Brush.linearGradient(
+                                                            listOf(
+                                                                pc.copy(alpha = 0.36f),
+                                                                pc.copy(alpha = 0.14f),
+                                                                Color.Transparent
+                                                            ),
+                                                            start = Offset.Zero,
+                                                            end = Offset.Infinite
+                                                        )
+                                                    )
+                                                    .padding(20.dp)
+                                            ) {
+                                                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                                    Row(
+                                                        Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column {
+                                                            Text("Roblox flag control", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                                            Text("Injection ready", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                                                        }
+                                                        Box(
+                                                            Modifier.size(44.dp).clip(CircleShape).background(pc.copy(alpha = 0.18f)),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text("🚀", fontSize = 20.sp)
+                                                        }
+                                                    }
+
+                                                    Text(
+                                                        path,
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    )
+
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                        HomeMetric("Active", "$flagCount")
+                                                        HomeMetric("Version", robloxVersion, if (ready) pc else MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
                                             }
-                                            Text(path, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
+
                                 item {
                                     Appear(1) {
                                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            PressButton("Apply flags", {
-                                                task { applyFlags(toJson(flags), path, restart, fps) }
-                                            }, Modifier.fillMaxWidth().height(58.dp))
+                                            PressButton("Apply flags", { task { applyFlags(toJson(flags), path, restart, fps) } }, Modifier.fillMaxWidth().height(58.dp))
                                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                                 PressButton("Launch", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
                                                 PressButton("Reset", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
@@ -461,30 +554,48 @@ fun App() {
                                         }
                                     }
                                 }
+
                                 item {
                                     Appear(2) {
                                         Panel {
-                                            SectionTitle("Tools")
-                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                PressButton("Verify", {
+                                            SectionTitle("Quick actions")
+                                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                HomeAction("✔", "Verify file", "Check the current flag file and output", pc) {
                                                     task {
                                                         val (_, msg) = run("ls -l '$path'; cat '$path'")
                                                         msg.ifEmpty { "Nothing returned. File may not exist." }
                                                     }
-                                                }, Modifier.weight(1f), outlined = true)
-                                                PressButton("Clear cache", { task { clearCache() } }, Modifier.weight(1f), outlined = true)
+                                                }
+                                                HomeAction("🧹", "Clear cache", "Remove temporary Roblox cache folders", MaterialTheme.colorScheme.secondary) {
+                                                    task { clearCache() }
+                                                }
                                             }
-                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                                PressButton("Refresh", { shStatus = shizukuStatus() }, Modifier.weight(1f), outlined = true)
-                                                PressButton("Grant Shizuku", {
-                                                    try { Shizuku.requestPermission(1001) } catch (e: Throwable) { say("Start Shizuku first.") }
-                                                    shStatus = shizukuStatus()
-                                                }, Modifier.weight(1f), outlined = true)
-                                            }
-                                            Text(shStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
+
+                                item {
+                                    Appear(3) {
+                                        Panel {
+                                            SectionTitle("Status")
+                                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(Modifier.size(10.dp).clip(CircleShape).background(statusColor))
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(shStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                if (restart) HomeMetric("Restart", "On", MaterialTheme.colorScheme.primary) else HomeMetric("Restart", "Off", MaterialTheme.colorScheme.onSurfaceVariant)
+                                                if (fps) HomeMetric("FPS cap", "Off", MaterialTheme.colorScheme.tertiary) else HomeMetric("FPS cap", "On", MaterialTheme.colorScheme.secondary)
+                                            }
+                                            Text(
+                                                "If Roblox ignores the flag list, keep the path valid and relaunch after apply.",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
                                 item {
                                     AnimatedVisibility(
                                         output.isNotEmpty(),
@@ -498,7 +609,6 @@ fun App() {
                                 }
                             }
 
-                            // ================= FLAGS =================
                             1 -> {
                                 LazyColumn(
                                     Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
@@ -595,7 +705,6 @@ fun App() {
                                 }
                             }
 
-                            // ================= EDITOR =================
                             2 -> LazyColumn(
                                 Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -623,7 +732,6 @@ fun App() {
                                 }
                             }
 
-                            // ================= PRESETS =================
                             3 -> LazyColumn(
                                 Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -670,7 +778,6 @@ fun App() {
                                 }
                             }
 
-                            // ================= SETTINGS =================
                             else -> LazyColumn(
                                 Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
