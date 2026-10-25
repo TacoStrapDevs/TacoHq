@@ -6,13 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
@@ -26,12 +25,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,7 +40,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,11 +58,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,28 +96,21 @@ private fun loadSelectedRegion(ctx: Context): String {
     return try {
         val json = JSONObject(file.readText())
         json.optString("region", "Singapore")
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         "Singapore"
-    }
-}
-
-private fun launchRoblox(ctx: Context): Boolean {
-    return try {
-        val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ROBLOX_PKG)
-        if (launchIntent != null) {
-            ctx.startActivity(launchIntent)
-            true
-        } else {
-            false
-        }
-    } catch (_: Exception) {
-        false
     }
 }
 
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
-    return o.keys().asSequence().associateWith { o.get(it).toString() }
+    return o.keys().asSequence().associateWith { key ->
+        val s = o.get(key).toString()
+        when {
+            s.equals("true", ignoreCase = true) -> "True"
+            s.equals("false", ignoreCase = true) -> "False"
+            else -> s
+        }
+    }
 }
 
 fun toJson(m: Map<String, String>): String = JSONObject(m).toString(2)
@@ -181,24 +165,9 @@ fun applyFlags(json: String, path: String, fps: Boolean, root: Boolean): String 
     return if (ok) "Applied to $path" else "Failed: $msg"
 }
 
-fun resetFlags(path: String, pkg: String, root: Boolean): String {
-    val (ok, msg) = runCmd("rm -f '$path'; setprop $FPS_PROP false; am force-stop $pkg", root)
-    return if (ok) "Removed flag file. Reopen Roblox." else "Failed: $msg"
-}
-
 fun launchPkg(pkg: String, root: Boolean): String {
     val (ok, msg) = runCmd("monkey -p $pkg -c android.intent.category.LAUNCHER 1", root)
     return if (ok) "Launched Roblox." else "Failed: $msg"
-}
-
-fun launchGame(id: String, root: Boolean): String {
-    val (ok, msg) = runCmd("am start -a android.intent.action.VIEW -d 'roblox://placeId=$id'", root)
-    return if (ok) "Launching game $id." else "Failed: $msg"
-}
-
-fun clearCache(pkg: String, root: Boolean): String {
-    val (ok, msg) = runCmd("rm -rf /sdcard/Android/data/$pkg/cache/*", root)
-    return if (ok) "Cleared Roblox cache." else "Failed: $msg"
 }
 
 // ---------- Models ----------
@@ -215,7 +184,6 @@ private val THEMES = listOf(
 )
 
 private data class Opt(val label: String, val sets: Map<String, String>)
-private data class Pack(val name: String, val desc: String, val sets: Map<String, String>)
 
 private sealed class FS {
     data class Toggle(val title: String, val sub: String, val sets: Map<String, String>) : FS()
@@ -304,32 +272,9 @@ private val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Network" to listOf(FS_PRELOAD, FS_MTU)
 )
 
-private val PACKS = listOf(
-    Pack(
-        "Balanced", "Medium textures and 2x anti aliasing",
-        texSet("2") + mapOf("FIntDebugForceMSAASamples" to "2")
-    ),
-    Pack(
-        "Performance", "Lowest textures, no shadows or post-processing",
-        texSet("0") + mapOf(
-            "FIntDebugForceMSAASamples" to "1",
-            "FIntRenderShadowIntensity" to "0",
-            "FFlagDisablePostFx" to "True"
-        )
-    ),
-    Pack(
-        "Quality", "Sharp textures and 4x anti aliasing",
-        texSet("3") + mapOf("FIntDebugForceMSAASamples" to "4")
-    )
-)
-
 private val LocalCorner = compositionLocalOf { 24.dp }
 private val LocalPad = compositionLocalOf { 16.dp }
 private val LocalMotion = compositionLocalOf { true }
-
-private val Amber = Color(0xFFE8B84A)
-private val Good = Color(0xFF5BC27A)
-private val Bad = Color(0xFFEF6B63)
 
 // ---------- Icons (drawn, no emoji) ----------
 
@@ -453,23 +398,6 @@ private fun Ico(kind: Ic, tint: Color, sz: Dp = 24.dp, stroke: Float = 1.9f) {
 // ---------- Reusable UI ----------
 
 @Composable
-private fun Appear(index: Int, content: @Composable () -> Unit) {
-    if (!LocalMotion.current) {
-        content()
-        return
-    }
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(index * 55L)
-        visible = true
-    }
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(360)) + slideInVertically(tween(360)) { it / 8 }
-    ) { content() }
-}
-
-@Composable
 private fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier.fillMaxWidth()
@@ -533,28 +461,12 @@ private fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun SwitchItem(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Item(title, sub, { onChange(!checked) }) { TacoSwitch(checked, onChange) }
-}
-
-@Composable
 private fun SectionLabel(text: String) {
     Text(
         text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 8.dp, top = 8.dp)
     )
-}
-
-@Composable
-private fun PageHeader(title: String, sub: String? = null) {
-    Column(Modifier.padding(horizontal = 4.dp, vertical = 14.dp)) {
-        Text(title, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
-        if (sub != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(sub, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
 }
 
 @Composable
@@ -644,23 +556,6 @@ private fun Btn(
 }
 
 @Composable
-private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    val bg by animateColorAsState(if (selected) cs.primary else Color.Transparent, tween(220), label = "pbg")
-    val fg by animateColorAsState(if (selected) cs.onPrimary else cs.onSurface, tween(220), label = "pfg")
-    Box(
-        Modifier.clip(CircleShape).background(bg)
-            .border(1.dp, if (selected) Color.Transparent else cs.outline, CircleShape)
-            .clickable(onClick = onClick)
-    ) {
-        Text(
-            text, Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-            fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg
-        )
-    }
-}
-
-@Composable
 private fun TabStrip(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
@@ -717,7 +612,7 @@ private fun NavBar(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int)
 }
 
 @Composable
-private fun StatCard(title: String, value: String, tint: Color) {
+private fun RowScope.StatCard(title: String, value: String, tint: Color) {
     Box(
         modifier = Modifier
             .weight(1f)
@@ -749,9 +644,14 @@ private fun FlagSetting(fs: FS, flags: MutableMap<String, String>, onChange: () 
     when (fs) {
         is FS.Toggle -> {
             val on = fs.sets.all { (k, v) -> flags[k] == v }
-            SwitchItem(fs.title, fs.sub, on) { want ->
-                if (want) flags.putAll(fs.sets) else fs.sets.keys.forEach { flags.remove(it) }
+            Item(fs.title, fs.sub, { 
+                if (!on) flags.putAll(fs.sets) else fs.sets.keys.forEach { flags.remove(it) }
                 onChange()
+            }) {
+                TacoSwitch(on) { want ->
+                    if (want) flags.putAll(fs.sets) else fs.sets.keys.forEach { flags.remove(it) }
+                    onChange()
+                }
             }
         }
         is FS.Choice -> {
@@ -853,28 +753,8 @@ fun App() {
     var robloxVersion by remember { mutableStateOf("-") }
 
     var page by remember { mutableStateOf(0) }
-    var modsTab by remember { mutableStateOf(0) }
-    var setTab by remember { mutableStateOf(0) }
-    var showEditor by remember { mutableStateOf(false) }
-    var edTab by remember { mutableStateOf(0) }
-    var quickIdx by remember { mutableStateOf(0) }
-
-    var search by remember { mutableStateOf("") }
     var k by remember { mutableStateOf("") }
     var v by remember { mutableStateOf("") }
-    var pn by remember { mutableStateOf("") }
-    var gn by remember { mutableStateOf("") }
-    var gid by remember { mutableStateOf("") }
-    var jsonText by remember { mutableStateOf("") }
-    var jsonMsg by remember { mutableStateOf("") }
-    var fileOut by remember { mutableStateOf("") }
-    var renaming by remember { mutableStateOf<String?>(null) }
-    var newName by remember { mutableStateOf("") }
-    var confirmClear by remember { mutableStateOf(false) }
-    var pkgDialog by remember { mutableStateOf(false) }
-    var pkgInput by remember { mutableStateOf("") }
-    var pkgMenu by remember { mutableStateOf(false) }
-    var licenses by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     var selectedRegion by remember { mutableStateOf(loadSelectedRegion(context)) }
@@ -920,12 +800,12 @@ fun App() {
         }
     }
 
-    fun doSave(launch: Boolean) {
+    fun doSave(launchAfter: Boolean) {
         save()
         scope.launch(Dispatchers.IO) {
             val msg = if (applyOnSave) applyFlags(toJson(flags), path, fps, useRoot) else "Saved in app."
             toast("flag", msg)
-            if (launch && !msg.startsWith("Failed")) {
+            if (launchAfter && !msg.startsWith("Failed")) {
                 if (restart) runCmd("am force-stop $pkg && sleep 1", useRoot)
                 toast("launch", launchPkg(pkg, useRoot))
             }
@@ -936,18 +816,17 @@ fun App() {
         runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
 
-    fun backupJson(): String = JSONObject().apply {
-        put("flags", JSONObject(flags.toMap()))
-        put("presets", JSONObject(presets.toMap()))
-        put("games", JSONObject(games.toMap()))
-    }.toString(2)
-
-    fun share(text: String, title: String) {
-        val i = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val msg = runCatching {
+                val text = ctx.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+                val parsed = parseFlags(text)
+                flags.putAll(parsed)
+                save()
+                "Imported ${parsed.size} flags from file."
+            }.getOrElse { "Failed: couldn't read that file as JSON." }
+            toast("other", msg)
         }
-        ctx.startActivity(Intent.createChooser(i, title))
     }
 
     LaunchedEffect(Unit) {
@@ -999,12 +878,10 @@ fun App() {
         label = "shift"
     )
     val glow = if (animBg && motion) shift else 0.5f
-    val flagCount by animateIntAsState(flags.size, tween(500), label = "count")
     val navItems = listOf(
         "Home" to Ic.Home, "Library" to Ic.Grid, "Mods" to Ic.Layers,
         "FastFlags" to Ic.Flag, "Settings" to Ic.Sliders
     )
-    val pageAnim = if (motion) 260 else 0
 
     MaterialTheme(colorScheme = scheme) {
         Box(
@@ -1037,7 +914,6 @@ fun App() {
                     }
                     Box(
                         Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { }
                     )
                 }
 
@@ -1191,38 +1067,45 @@ fun App() {
                                             "Tap to choose your preferred region",
                                             onClick = { regionMenuExpanded = true }
                                         ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Text(
-                                                    selectedRegion,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                                Ico(Ic.Down, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
+                                            Box {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        selectedRegion,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                    Ico(Ic.Down, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
+                                                }
+                                                DropdownMenu(
+                                                    expanded = regionMenuExpanded,
+                                                    onDismissRequest = { regionMenuExpanded = false }
+                                                ) {
+                                                    regionOptions.forEach { option ->
+                                                        DropdownMenuItem(
+                                                            text = { Text(option) },
+                                                            onClick = {
+                                                                selectedRegion = option
+                                                                saveSelectedRegion(context, option)
+                                                                regionMenuExpanded = false
+                                                            }
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
 
                                         Item(
-                                            "Package",
+                                            "Roblox version",
                                             if (ready || useRoot) robloxVersion else "Shizuku not ready"
-                                        ) {
-                                            ValueText(if (ready || useRoot) robloxVersion else "Shizuku unavailable")
-                                        }
+                                        )
 
-                                        Item(
-                                            "Path",
-                                            path
-                                        ) {
-                                            ValueText(path)
-                                        }
+                                        Item("Flag file path", path)
 
-                                        Item(
-                                            "Auto apply",
-                                            null
-                                        ) {
-                                            TacoSwitch(applyOnSave) { applyOnSave = it }
+                                        Item("Auto apply", "Write flags when you tap Apply or Launch") {
+                                            TacoSwitch(applyOnSave) { applyOnSave = it; save() }
                                         }
                                     }
                                 }
@@ -1236,7 +1119,7 @@ fun App() {
                                         ) {
                                             Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Download)
                                             Btn("Open", { openUrl(ALLOWLIST_URL) }, Modifier.weight(1f), kind = 1, icon = Ic.Doc)
-                                            Btn("Clear", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Close)
+                                            Btn("Clear", { flags.clear(); doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Close)
                                         }
                                     }
                                 }
@@ -1275,12 +1158,119 @@ fun App() {
                             }
                         }
                         3 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                item {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Btn("Apply", { doSave(false) }, Modifier.weight(1f), icon = Ic.Check)
+                                        Btn("Launch", { doSave(true) }, Modifier.weight(1f), icon = Ic.Play)
+                                    }
+                                }
+
+                                SECTIONS.forEach { (name, list) ->
+                                    item {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            SectionLabel(name)
+                                            Group {
+                                                list.forEach { fs -> FlagSetting(fs, flags) { save() } }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 item {
                                     Group {
-                                        SectionLabel("FastFlags")
-                                        SECTIONS.forEach { (name, list) ->
-                                            Item(name, "${list.size} options")
+                                        SectionLabel("Custom flag")
+                                        Column(
+                                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                k, { k = it },
+                                                label = { Text("Flag name") },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(14.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                            OutlinedTextField(
+                                                v, { v = it },
+                                                label = { Text("Value") },
+                                                singleLine = true,
+                                                shape = RoundedCornerShape(14.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                            Btn(
+                                                "Add flag",
+                                                {
+                                                    if (k.isNotBlank()) {
+                                                        flags[k.trim()] = v.trim()
+                                                        k = ""
+                                                        v = ""
+                                                        save()
+                                                    }
+                                                },
+                                                Modifier.fillMaxWidth(),
+                                                icon = Ic.Plus
+                                            )
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Group {
+                                        SectionLabel("Import and export")
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Btn(
+                                                "File",
+                                                { picker.launch(arrayOf("*/*")) },
+                                                Modifier.weight(1f),
+                                                kind = 1,
+                                                icon = Ic.Folder
+                                            )
+                                            Btn(
+                                                "Paste",
+                                                {
+                                                    val msg = runCatching {
+                                                        val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                                                        flags.putAll(parseFlags(text))
+                                                        save()
+                                                        "Imported from clipboard."
+                                                    }.getOrElse { "Failed: clipboard isn't valid JSON." }
+                                                    toast("other", msg)
+                                                },
+                                                Modifier.weight(1f),
+                                                kind = 1,
+                                                icon = Ic.Doc
+                                            )
+                                            Btn(
+                                                "Copy",
+                                                {
+                                                    clip.setPrimaryClip(ClipData.newPlainText("flags", toJson(flags)))
+                                                    toast("other", "Copied flags as JSON.")
+                                                },
+                                                Modifier.weight(1f),
+                                                kind = 1,
+                                                icon = Ic.Download
+                                            )
+                                        }
+                                    }
+                                }
+
+                                item { SectionLabel("Active flags (${flags.size})") }
+
+                                items(flags.keys.sorted()) { name ->
+                                    Group {
+                                        Item(name, flags[name]) {
+                                            Btn("Remove", { flags.remove(name); save() }, kind = 2, h = 36.dp)
                                         }
                                     }
                                 }
@@ -1291,9 +1281,20 @@ fun App() {
                                 item {
                                     Group {
                                         Item("Settings", "Theme, motion, save behavior")
-                                        Item("Theme", THEMES[themeIdx].name) { }
-                                        Item("Motion", if (motion) "On" else "Off") { TacoSwitch(motion) { motion = it } }
-                                        Item("True black", if (trueBlack) "On" else "Off") { TacoSwitch(trueBlack) { trueBlack = it } }
+                                        Item("Theme", THEMES[themeIdx].name) {
+                                            Btn(
+                                                "Next",
+                                                { themeIdx = (themeIdx + 1) % THEMES.size; save() },
+                                                kind = 1,
+                                                h = 36.dp
+                                            )
+                                        }
+                                        Item("Motion", if (motion) "On" else "Off") {
+                                            TacoSwitch(motion) { motion = it; save() }
+                                        }
+                                        Item("True black", if (trueBlack) "On" else "Off") {
+                                            TacoSwitch(trueBlack) { trueBlack = it; save() }
+                                        }
                                     }
                                 }
                             }
@@ -1302,22 +1303,6 @@ fun App() {
                 }
 
                 NavBar(navItems, page, { page = it })
-            }
-
-            DropdownMenu(
-                expanded = regionMenuExpanded,
-                onDismissRequest = { regionMenuExpanded = false }
-            ) {
-                regionOptions.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option) },
-                        onClick = {
-                            selectedRegion = option
-                            saveSelectedRegion(context, option)
-                            regionMenuExpanded = false
-                        }
-                    )
-                }
             }
 
             SnackbarHost(
