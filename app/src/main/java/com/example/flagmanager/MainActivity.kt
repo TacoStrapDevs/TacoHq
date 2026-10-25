@@ -30,6 +30,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,9 +51,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
@@ -60,6 +68,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -160,12 +170,12 @@ fun clearCache(pkg: String, root: Boolean): String {
 private data class AppTheme(val name: String, val primary: Color, val secondary: Color)
 
 private val THEMES = listOf(
-    AppTheme("Taco", Color(0xFFFFB300), Color(0xFFFF7A1A)),
-    AppTheme("Void", Color(0xFFB388FF), Color(0xFF7C4DFF)),
-    AppTheme("Blox", Color(0xFF4FC3F7), Color(0xFF1E88E5)),
-    AppTheme("Fish", Color(0xFF26D0B8), Color(0xFF00ACC1)),
-    AppTheme("Frost", Color(0xFFB3E5FC), Color(0xFF81D4FA)),
-    AppTheme("Rose", Color(0xFFFF8FAB), Color(0xFFE91E63))
+    AppTheme("Taco", Color(0xFFFFB02E), Color(0xFFF26B1D)),
+    AppTheme("Salsa", Color(0xFFFF6B5E), Color(0xFFD7263D)),
+    AppTheme("Guac", Color(0xFF9CCC65), Color(0xFF558B2F)),
+    AppTheme("Void", Color(0xFFB69CFF), Color(0xFF7C4DFF)),
+    AppTheme("Blox", Color(0xFF5BB8F5), Color(0xFF1E88E5)),
+    AppTheme("Frost", Color(0xFFA8E6F0), Color(0xFF4DB6C6))
 )
 
 private data class Opt(val label: String, val sets: Map<String, String>)
@@ -260,7 +270,7 @@ private val SECTIONS: List<Pair<String, List<FS>>> = listOf(
 
 private val PACKS = listOf(
     Pack(
-        "Balanced, recommended", "Medium textures and 2x anti aliasing",
+        "Balanced", "Medium textures and 2x anti aliasing",
         texSet("2") + mapOf("FIntDebugForceMSAASamples" to "2")
     ),
     Pack(
@@ -277,20 +287,149 @@ private val PACKS = listOf(
     )
 )
 
-private val LocalCorner = compositionLocalOf { 28.dp }
+private val LocalCorner = compositionLocalOf { 24.dp }
+private val LocalPad = compositionLocalOf { 16.dp }
+private val LocalMotion = compositionLocalOf { true }
+
+private val Amber = Color(0xFFE8B84A)
+private val Good = Color(0xFF5BC27A)
+private val Bad = Color(0xFFEF6B63)
+
+// ---------- Icons (drawn, no emoji) ----------
+
+private enum class Ic {
+    Home, Grid, Layers, Flag, Sliders, Right, Down, Up, Back, Close, Plus,
+    Info, Warn, Play, Check, Download, Folder, Bell, Game, Doc, Search
+}
+
+private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
+    val path = Path()
+    path.moveTo(p[0] * s, p[1] * s)
+    var i = 2
+    while (i < p.size) {
+        path.lineTo(p[i] * s, p[i + 1] * s)
+        i += 2
+    }
+    drawPath(path, c, style = st)
+}
+
+@Composable
+private fun Ico(kind: Ic, tint: Color, sz: Dp = 24.dp, stroke: Float = 1.9f) {
+    Canvas(Modifier.size(sz)) {
+        val s = this.size.width / 24f
+        val st = Stroke(width = stroke * s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (kind) {
+            Ic.Home -> {
+                pl(tint, st, s, 3f, 11f, 12f, 3.5f, 21f, 11f)
+                pl(tint, st, s, 5.5f, 9.5f, 5.5f, 20f, 18.5f, 20f, 18.5f, 9.5f)
+                pl(tint, st, s, 10f, 20f, 10f, 14f, 14f, 14f, 14f, 20f)
+            }
+            Ic.Grid -> {
+                listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f).forEach { (x, y) ->
+                    drawRoundRect(tint, Offset(x * s, y * s), Size(6.5f * s, 6.5f * s), CornerRadius(1.8f * s), style = st)
+                }
+            }
+            Ic.Layers -> {
+                pl(tint, st, s, 12f, 3.5f, 21f, 8.5f, 12f, 13.5f, 3f, 8.5f, 12f, 3.5f)
+                pl(tint, st, s, 3f, 12.5f, 12f, 17.5f, 21f, 12.5f)
+                pl(tint, st, s, 3f, 16.5f, 12f, 21.5f, 21f, 16.5f)
+            }
+            Ic.Flag -> {
+                pl(tint, st, s, 6f, 21f, 6f, 4f)
+                pl(tint, st, s, 6f, 4.5f, 18f, 4.5f, 15f, 9f, 18f, 13.5f, 6f, 13.5f)
+            }
+            Ic.Sliders -> {
+                pl(tint, st, s, 4f, 6f, 7f, 6f)
+                pl(tint, st, s, 11f, 6f, 20f, 6f)
+                drawCircle(tint, 2f * s, Offset(9f * s, 6f * s), style = st)
+                pl(tint, st, s, 4f, 12f, 12f, 12f)
+                pl(tint, st, s, 16f, 12f, 20f, 12f)
+                drawCircle(tint, 2f * s, Offset(14f * s, 12f * s), style = st)
+                pl(tint, st, s, 4f, 18f, 5f, 18f)
+                pl(tint, st, s, 9f, 18f, 20f, 18f)
+                drawCircle(tint, 2f * s, Offset(7f * s, 18f * s), style = st)
+            }
+            Ic.Right -> pl(tint, st, s, 9f, 5f, 16f, 12f, 9f, 19f)
+            Ic.Down -> pl(tint, st, s, 5f, 9f, 12f, 16f, 19f, 9f)
+            Ic.Up -> pl(tint, st, s, 5f, 15f, 12f, 8f, 19f, 15f)
+            Ic.Back -> {
+                pl(tint, st, s, 19f, 12f, 5f, 12f)
+                pl(tint, st, s, 11f, 5f, 4.5f, 12f, 11f, 19f)
+            }
+            Ic.Close -> {
+                pl(tint, st, s, 6f, 6f, 18f, 18f)
+                pl(tint, st, s, 18f, 6f, 6f, 18f)
+            }
+            Ic.Plus -> {
+                pl(tint, st, s, 12f, 5f, 12f, 19f)
+                pl(tint, st, s, 5f, 12f, 19f, 12f)
+            }
+            Ic.Info -> {
+                drawCircle(tint, 9f * s, Offset(12f * s, 12f * s), style = st)
+                pl(tint, st, s, 12f, 11f, 12f, 16.5f)
+                drawCircle(tint, 1.1f * s, Offset(12f * s, 7.8f * s))
+            }
+            Ic.Warn -> {
+                pl(tint, st, s, 12f, 3.5f, 21.5f, 20f, 2.5f, 20f, 12f, 3.5f)
+                pl(tint, st, s, 12f, 10f, 12f, 14.5f)
+                drawCircle(tint, 1.1f * s, Offset(12f * s, 17.3f * s))
+            }
+            Ic.Play -> pl(tint, st, s, 8f, 5f, 19f, 12f, 8f, 19f, 8f, 5f)
+            Ic.Check -> pl(tint, st, s, 5f, 12.5f, 10f, 17.5f, 19f, 7f)
+            Ic.Download -> {
+                pl(tint, st, s, 12f, 4f, 12f, 15f)
+                pl(tint, st, s, 7f, 10.5f, 12f, 15.5f, 17f, 10.5f)
+                pl(tint, st, s, 5f, 20f, 19f, 20f)
+            }
+            Ic.Folder -> pl(tint, st, s, 3.5f, 6.5f, 9.5f, 6.5f, 11.5f, 9f, 20.5f, 9f, 20.5f, 18.5f, 3.5f, 18.5f, 3.5f, 6.5f)
+            Ic.Bell -> {
+                val p = Path()
+                p.moveTo(6.5f * s, 17f * s)
+                p.lineTo(6.5f * s, 11f * s)
+                p.cubicTo(6.5f * s, 7.5f * s, 9f * s, 5.5f * s, 12f * s, 5.5f * s)
+                p.cubicTo(15f * s, 5.5f * s, 17.5f * s, 7.5f * s, 17.5f * s, 11f * s)
+                p.lineTo(17.5f * s, 17f * s)
+                drawPath(p, tint, style = st)
+                pl(tint, st, s, 4.5f, 17f, 19.5f, 17f)
+                pl(tint, st, s, 10f, 20.5f, 14f, 20.5f)
+            }
+            Ic.Game -> {
+                drawRoundRect(tint, Offset(3f * s, 7.5f * s), Size(18f * s, 10f * s), CornerRadius(5f * s), style = st)
+                pl(tint, st, s, 7.5f, 10.5f, 7.5f, 14.5f)
+                pl(tint, st, s, 5.5f, 12.5f, 9.5f, 12.5f)
+                drawCircle(tint, 1.1f * s, Offset(15.5f * s, 11.5f * s))
+                drawCircle(tint, 1.1f * s, Offset(18f * s, 13.5f * s))
+            }
+            Ic.Doc -> {
+                drawRoundRect(tint, Offset(5f * s, 3f * s), Size(14f * s, 18f * s), CornerRadius(2f * s), style = st)
+                pl(tint, st, s, 8.5f, 9f, 15.5f, 9f)
+                pl(tint, st, s, 8.5f, 13f, 15.5f, 13f)
+                pl(tint, st, s, 8.5f, 17f, 12.5f, 17f)
+            }
+            Ic.Search -> {
+                drawCircle(tint, 6.5f * s, Offset(11f * s, 11f * s), style = st)
+                pl(tint, st, s, 16f, 16f, 20.5f, 20.5f)
+            }
+        }
+    }
+}
 
 // ---------- Reusable UI ----------
 
 @Composable
 private fun Appear(index: Int, content: @Composable () -> Unit) {
+    if (!LocalMotion.current) {
+        content()
+        return
+    }
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay(index * 60L)
+        delay(index * 55L)
         visible = true
     }
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(380)) + slideInVertically(tween(380)) { it / 6 }
+        enter = fadeIn(tween(360)) + slideInVertically(tween(360)) { it / 8 }
     ) { content() }
 }
 
@@ -301,7 +440,7 @@ private fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScop
             .clip(RoundedCornerShape(LocalCorner.current))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .animateContentSize()
-            .padding(vertical = 8.dp),
+            .padding(vertical = 4.dp),
         content = content
     )
 }
@@ -315,13 +454,16 @@ private fun Item(
 ) {
     val m = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
     Row(
-        Modifier.fillMaxWidth().then(m).padding(horizontal = 20.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().then(m).padding(horizontal = 20.dp, vertical = LocalPad.current),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp)
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             if (sub != null) {
-                Text(sub, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    sub, fontSize = 13.sp, lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         if (trailing != null) {
@@ -332,41 +474,68 @@ private fun Item(
 }
 
 @Composable
+private fun ValueText(text: String) {
+    Text(text, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+}
+
+@Composable
+private fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val track by animateColorAsState(if (checked) cs.primary else Color(0xFF3A3632), tween(220), label = "swt")
+    val thumb by animateColorAsState(if (checked) cs.onPrimary else Color(0xFF9A948C), tween(220), label = "swc")
+    val x by animateDpAsState(
+        if (checked) 25.dp else 4.dp, spring(dampingRatio = 0.7f, stiffness = 500f), label = "swx"
+    )
+    Box(
+        Modifier.width(54.dp).height(31.dp).clip(CircleShape).background(track)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                onChange(!checked)
+            }
+    ) {
+        Box(Modifier.offset(x = x, y = 3.5.dp).size(24.dp).clip(CircleShape).background(thumb))
+    }
+}
+
+@Composable
 private fun SwitchItem(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Item(title, sub, { onChange(!checked) }) { Switch(checked, onChange) }
+    Item(title, sub, { onChange(!checked) }) { TacoSwitch(checked, onChange) }
 }
 
 @Composable
 private fun SectionLabel(text: String) {
     Text(
-        text, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+        text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 12.dp, top = 6.dp)
+        modifier = Modifier.padding(start = 8.dp, top = 8.dp)
     )
 }
 
 @Composable
 private fun PageHeader(title: String, sub: String? = null) {
-    Column(Modifier.padding(horizontal = 4.dp, vertical = 12.dp)) {
-        Text(title, fontSize = 34.sp)
-        if (sub != null) Text(sub, fontSize = 17.sp)
+    Column(Modifier.padding(horizontal = 4.dp, vertical = 14.dp)) {
+        Text(title, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
+        if (sub != null) {
+            Spacer(Modifier.height(2.dp))
+            Text(sub, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
 @Composable
 private fun ChoiceBox(current: String, options: List<String>, onPick: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val cs = MaterialTheme.colorScheme
     Box {
         Row(
-            Modifier.clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f))
+            Modifier.clip(RoundedCornerShape(14.dp))
+                .background(cs.background.copy(alpha = 0.55f))
                 .clickable { open = true }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(current, fontSize = 14.sp, maxLines = 1, modifier = Modifier.widthIn(max = 140.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("▾", fontSize = 12.sp)
+            Text(current, fontSize = 14.sp, maxLines = 1, modifier = Modifier.widthIn(max = 130.dp))
+            Spacer(Modifier.width(4.dp))
+            Ico(Ic.Down, cs.onSurfaceVariant, 16.dp, 2.2f)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEachIndexed { i, o ->
@@ -388,51 +557,66 @@ private fun NumBox(
         modifier = modifier,
         singleLine = true,
         placeholder = { Text(hint, fontSize = 14.sp) },
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         textStyle = LocalTextStyle.current.copy(fontSize = 14.sp)
     )
 }
 
 @Composable
-private fun PressButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, style: Int = 0) {
+private fun Btn(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    kind: Int = 0,
+    icon: Ic? = null,
+    h: Dp = 48.dp
+) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.94f else 1f,
-        animationSpec = spring(dampingRatio = 0.5f),
-        label = "press"
+    val sc by animateFloatAsState(
+        if (pressed) 0.96f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "btn"
     )
-    val m = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
-    val shape = RoundedCornerShape(50)
-    when (style) {
-        0 -> Button(onClick = onClick, modifier = m, interactionSource = src, shape = shape) {
-            Text(text, fontWeight = FontWeight.Bold, maxLines = 1, fontSize = 15.sp)
+    val cs = MaterialTheme.colorScheme
+    val bg = when (kind) {
+        0 -> cs.primary
+        1 -> cs.primary.copy(alpha = 0.16f)
+        else -> Color.Transparent
+    }
+    val fg = when (kind) {
+        0 -> cs.onPrimary
+        1 -> cs.primary
+        else -> cs.onSurface
+    }
+    Row(
+        modifier.height(h)
+            .graphicsLayer { scaleX = sc; scaleY = sc }
+            .clip(CircleShape)
+            .background(bg)
+            .then(if (kind == 2) Modifier.border(1.dp, cs.outline, CircleShape) else Modifier)
+            .clickable(interactionSource = src, indication = null, onClick = onClick)
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        if (icon != null) {
+            Ico(icon, fg, 18.dp, 2.1f)
+            Spacer(Modifier.width(8.dp))
         }
-        1 -> Button(
-            onClick = onClick, modifier = m, interactionSource = src, shape = shape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary
-            )
-        ) { Text(text, fontWeight = FontWeight.Bold, maxLines = 1, fontSize = 15.sp) }
-        else -> OutlinedButton(onClick = onClick, modifier = m, interactionSource = src, shape = shape) {
-            Text(text, fontWeight = FontWeight.Medium, maxLines = 1, fontSize = 15.sp)
-        }
+        Text(text, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
 @Composable
 private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
-    val bg by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background.copy(alpha = 0.6f),
-        tween(250), label = "pillbg"
-    )
-    val fg by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        tween(250), label = "pillfg"
-    )
-    Box(Modifier.clip(RoundedCornerShape(50)).background(bg).clickable(onClick = onClick)) {
+    val cs = MaterialTheme.colorScheme
+    val bg by animateColorAsState(if (selected) cs.primary else Color.Transparent, tween(220), label = "pbg")
+    val fg by animateColorAsState(if (selected) cs.onPrimary else cs.onSurface, tween(220), label = "pfg")
+    Box(
+        Modifier.clip(CircleShape).background(bg)
+            .border(1.dp, if (selected) Color.Transparent else cs.outline, CircleShape)
+            .clickable(onClick = onClick)
+    ) {
         Text(
             text, Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg
@@ -441,54 +625,55 @@ private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier.clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f))
-            .padding(12.dp)
-    ) {
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            value, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-            color = MaterialTheme.colorScheme.primary
-        )
-    }
-}
-
-@Composable
-private fun StatusChip(text: String, color: Color) {
-    Row(
-        Modifier.clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.18f))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 12.sp, color = color)
-    }
-}
-
-@Composable
-private fun TabStrip(items: List<Pair<String, String>>, selected: Int, onSelect: (Int) -> Unit) {
+private fun TabStrip(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int) -> Unit) {
+    val cs = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-        items.forEachIndexed { i, (label, icon) ->
+        items.forEachIndexed { i, (label, ic) ->
             val sel = i == selected
-            val c by animateColorAsState(
-                if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                tween(250), label = "tabc"
-            )
-            val w by animateDpAsState(if (sel) 44.dp else 0.dp, tween(300), label = "tabw")
+            val c by animateColorAsState(if (sel) cs.primary else cs.onSurfaceVariant, tween(220), label = "tc")
+            val w by animateDpAsState(if (sel) 36.dp else 0.dp, tween(280), label = "tw")
             Column(
-                Modifier.clickable { onSelect(i) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                    onSelect(i)
+                }.padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(icon, fontSize = 22.sp)
-                Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c)
+                Ico(ic, c, 24.dp)
+                Spacer(Modifier.height(4.dp))
+                Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = c)
                 Spacer(Modifier.height(6.dp))
+                Box(Modifier.width(w).height(3.dp).clip(CircleShape).background(cs.primary))
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavBar(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp)) {
+        items.forEachIndexed { i, (label, ic) ->
+            val sel = i == selected
+            val tint by animateColorAsState(if (sel) cs.primary else cs.onSurfaceVariant, tween(220), label = "nt")
+            val pillW by animateDpAsState(
+                if (sel) 60.dp else 30.dp, spring(dampingRatio = 0.8f, stiffness = 400f), label = "pw"
+            )
+            val pillA by animateFloatAsState(if (sel) 1f else 0f, tween(220), label = "pa")
+            Column(
+                Modifier.weight(1f).clickable(
+                    interactionSource = remember { MutableInteractionSource() }, indication = null
+                ) { onSelect(i) },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Box(
-                    Modifier.width(w).height(3.dp).clip(RoundedCornerShape(2.dp))
-                        .background(MaterialTheme.colorScheme.primary)
+                    Modifier.width(pillW).height(32.dp).clip(CircleShape)
+                        .background(cs.primary.copy(alpha = 0.18f * pillA)),
+                    contentAlignment = Alignment.Center
+                ) { Ico(ic, tint, 22.dp) }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    label, fontSize = 11.sp, color = tint, maxLines = 1,
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }
@@ -591,8 +776,11 @@ fun App() {
     var applyOnSave by remember { mutableStateOf(prefs.getBoolean("applyOnSave", true)) }
     var themeIdx by remember { mutableStateOf(prefs.getInt("theme", 0).coerceIn(0, THEMES.size - 1)) }
     var animBg by remember { mutableStateOf(prefs.getBoolean("animbg", true)) }
-    var glowAmt by remember { mutableStateOf(prefs.getFloat("glow", 0.22f)) }
-    var cornerDp by remember { mutableStateOf(prefs.getFloat("corner", 28f)) }
+    var trueBlack by remember { mutableStateOf(prefs.getBoolean("trueBlack", false)) }
+    var compact by remember { mutableStateOf(prefs.getBoolean("compact", false)) }
+    var motion by remember { mutableStateOf(prefs.getBoolean("motion", true)) }
+    var glowAmt by remember { mutableStateOf(prefs.getFloat("glow2", 0.10f)) }
+    var cornerDp by remember { mutableStateOf(prefs.getFloat("corner2", 24f)) }
     var msgFlag by remember { mutableStateOf(prefs.getBoolean("msgFlag", true)) }
     var msgLaunch by remember { mutableStateOf(prefs.getBoolean("msgLaunch", true)) }
     var msgOther by remember { mutableStateOf(prefs.getBoolean("msgOther", true)) }
@@ -637,8 +825,11 @@ fun App() {
             .putBoolean("applyOnSave", applyOnSave)
             .putInt("theme", themeIdx)
             .putBoolean("animbg", animBg)
-            .putFloat("glow", glowAmt)
-            .putFloat("corner", cornerDp)
+            .putBoolean("trueBlack", trueBlack)
+            .putBoolean("compact", compact)
+            .putBoolean("motion", motion)
+            .putFloat("glow2", glowAmt)
+            .putFloat("corner2", cornerDp)
             .putBoolean("msgFlag", msgFlag)
             .putBoolean("msgLaunch", msgLaunch)
             .putBoolean("msgOther", msgOther)
@@ -709,44 +900,42 @@ fun App() {
 
     // ----- Theme -----
     val theme = THEMES[themeIdx]
-    val pc by animateColorAsState(theme.primary, tween(600), label = "pc")
-    val sc by animateColorAsState(theme.secondary, tween(600), label = "sc")
-    val base = Color(0xFF151518)
+    val pc by animateColorAsState(theme.primary, tween(500), label = "pc")
+    val sc by animateColorAsState(theme.secondary, tween(500), label = "sc")
+    val base = if (trueBlack) Color.Black else Color(0xFF121110)
+    val sv = lerp(if (trueBlack) Color(0xFF141414) else Color(0xFF1D1B19), pc, 0.04f)
     val scheme = darkColorScheme(
         primary = pc,
-        onPrimary = Color(0xFF16120A),
-        primaryContainer = lerp(base, pc, 0.28f),
-        onPrimaryContainer = lerp(pc, Color.White, 0.65f),
+        onPrimary = Color(0xFF1A1206),
+        primaryContainer = lerp(base, pc, 0.25f),
+        onPrimaryContainer = lerp(pc, Color.White, 0.7f),
         secondary = sc,
-        onSecondary = Color(0xFF16120A),
-        secondaryContainer = lerp(Color(0xFF2A2A30), pc, 0.22f),
+        onSecondary = Color(0xFF1A1206),
+        secondaryContainer = lerp(sv, pc, 0.2f),
         onSecondaryContainer = lerp(pc, Color.White, 0.4f),
         background = base,
-        onBackground = Color(0xFFEDE8E3),
+        onBackground = Color(0xFFF2ECE6),
         surface = base,
-        onSurface = Color(0xFFEDE8E3),
-        surfaceVariant = lerp(Color(0xFF242427), pc, 0.05f),
-        onSurfaceVariant = Color(0xFFC9C4BE),
-        outline = lerp(Color(0xFF55525A), pc, 0.25f)
+        onSurface = Color(0xFFF2ECE6),
+        surfaceVariant = sv,
+        onSurfaceVariant = Color(0xFFB5ADA4),
+        outline = Color(0xFF4A443E),
+        outlineVariant = Color(0xFF2E2A26)
     )
 
     val inf = rememberInfiniteTransition(label = "inf")
     val shift by inf.animateFloat(
         initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(8000, easing = LinearEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
         label = "shift"
     )
-    val breath by inf.animateFloat(
-        initialValue = 1f, targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Reverse),
-        label = "breath"
+    val glow = if (animBg && motion) shift else 0.5f
+    val flagCount by animateIntAsState(flags.size, tween(500), label = "count")
+    val navItems = listOf(
+        "Home" to Ic.Home, "Library" to Ic.Grid, "Mods" to Ic.Layers,
+        "FastFlags" to Ic.Flag, "Settings" to Ic.Sliders
     )
-    val glow = if (animBg) shift else 0.3f
-    val flagCount by animateIntAsState(flags.size, tween(600), label = "count")
-    val shColor by animateColorAsState(
-        if (ready) Color(0xFF4CAF50) else Color(0xFFEF5350), tween(400), label = "shc"
-    )
-    val navItems = listOf("Home" to "🌮", "Library" to "🎮", "Mods" to "🛠️", "FastFlags" to "🚩", "Settings" to "⚙️")
+    val pageAnim = if (motion) 260 else 0
 
     // ================= PAGES =================
 
@@ -754,14 +943,17 @@ fun App() {
     fun ProfilesUI() {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Group {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Save current flags as a profile", fontSize = 17.sp)
+                Column(
+                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Save current flags as a profile", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             pn, { pn = it }, label = { Text("Profile name") }, singleLine = true,
-                            shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f)
+                            shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
                         )
-                        PressButton("Save", {
+                        Btn("Save", {
                             if (pn.isNotBlank()) {
                                 presets[pn.trim()] = toJson(flags); pn = ""; save()
                                 toast("flag", "Profile saved.")
@@ -769,18 +961,18 @@ fun App() {
                         })
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PressButton("Import clipboard", {
+                        Btn("Import clipboard", {
                             val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
                             val msg = runCatching {
                                 flags.putAll(parseFlags(text)); save(); "Imported from clipboard."
                             }.getOrElse { "Failed: clipboard isn't valid JSON." }
                             toast("flag", msg)
-                        }, style = 2)
-                        PressButton("Copy JSON", {
+                        }, kind = 2, h = 40.dp)
+                        Btn("Copy JSON", {
                             clip.setPrimaryClip(ClipData.newPlainText("flags", toJson(flags)))
                             toast("other", "Copied JSON.")
-                        }, style = 2)
-                        PressButton("Share", { share(toJson(flags), "Share flags") }, style = 2)
+                        }, kind = 2, h = 40.dp)
+                        Btn("Share", { share(toJson(flags), "Share flags") }, kind = 2, h = 40.dp)
                     }
                 }
             }
@@ -791,7 +983,10 @@ fun App() {
                 val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
                 Group {
                     Item(name, "$count flags")
-                    Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         TextButton({
                             runCatching {
                                 flags.clear(); flags.putAll(parseFlags(presets[name]!!)); save()
@@ -808,71 +1003,83 @@ fun App() {
 
     @Composable
     fun HomePage() {
+        val cs = MaterialTheme.colorScheme
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            PageHeader("Home", "Welcome to TacoStrap.")
+            Appear(0) {
+                Row(Modifier.padding(horizontal = 4.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
+                        Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("TacoStrap", fontSize = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
+                        Text("FastFlag manager for Roblox", fontSize = 14.sp, color = cs.onSurfaceVariant)
+                    }
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (ready) Good else Bad))
+                }
+            }
             Appear(1) {
                 Group {
-                    Row(
-                        Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Image(
-                            painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
-                            Modifier.size(64.dp).graphicsLayer { scaleX = breath; scaleY = breath }
-                                .clip(RoundedCornerShape(18.dp))
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text("TacoStrap", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Text("Taco edition v3.0", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                    Item("Roblox") { ValueText(robloxVersion) }
+                    Item("Active flags") {
+                        Text("$flagCount", fontSize = 15.sp, color = cs.primary, fontWeight = FontWeight.SemiBold)
                     }
-                    Row(Modifier.padding(horizontal = 20.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Stat("Roblox", robloxVersion, Modifier.weight(1f))
-                        Stat("Active flags", "$flagCount", Modifier.weight(1f))
+                    Item("Shizuku") {
+                        if (ready) ValueText("Connected") else Btn("Grant", {
+                            try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
+                            shStatus = shizukuStatus()
+                        }, kind = 1, h = 36.dp)
                     }
-                    Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusChip(if (ready) "Shizuku ready" else "Shizuku off", shColor)
-                        StatusChip(if (useRoot) "Root on" else "Root off", if (useRoot) Color(0xFF4CAF50) else Color(0xFF8D8D93))
-                    }
+                    Item("Root") { ValueText(if (useRoot) "On" else "Off") }
+                    Item("Flag file", path)
                 }
             }
             Appear(2) {
-                PressButton(
+                Btn(
                     "Launch Roblox",
                     { scope.launch(Dispatchers.IO) { toast("launch", launchPkg(pkg, useRoot)) } },
-                    Modifier.fillMaxWidth().height(58.dp)
+                    Modifier.fillMaxWidth(), icon = Ic.Play, h = 56.dp
                 )
             }
             Appear(3) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Pinned games")
-                    Group {
-                        if (games.isEmpty()) {
-                            Item("No pinned games", "Add games in the Library tab.", { page = 1 })
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Btn("Verify file", {
+                        scope.launch(Dispatchers.IO) {
+                            val (_, out) = runCmd("ls -l '$path'; cat '$path'", useRoot)
+                            fileOut = out.ifEmpty { "Nothing returned." }
                         }
-                        games.keys.sorted().take(4).forEach { name ->
-                            Item(name, "Place ID ${games[name]}", {
-                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
-                            }) { Text("Play", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
-                        }
-                    }
+                    }, Modifier.weight(1f), kind = 1)
+                    Btn("Reset", {
+                        scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
+                    }, Modifier.weight(1f), kind = 2)
+                }
+            }
+            if (fileOut.isNotEmpty()) {
+                Group {
+                    Text(
+                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                    )
                 }
             }
             Appear(4) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Status")
+                    SectionLabel("Pinned games")
                     Group {
-                        Item("Shizuku", shStatus) {
-                            PressButton("Grant", {
-                                try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
-                                shStatus = shizukuStatus()
-                            }, style = 1)
+                        if (games.isEmpty()) {
+                            Item("No pinned games", "Add games in the Library tab.", { page = 1 }) {
+                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                            }
                         }
-                        Item("Flag file", path)
+                        games.keys.sorted().take(4).forEach { name ->
+                            Item(name, "Place ID ${games[name]}", {
+                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                            }) { Ico(Ic.Play, cs.primary, 20.dp) }
+                        }
                     }
                 }
             }
@@ -881,33 +1088,37 @@ fun App() {
 
     @Composable
     fun LibraryPage() {
+        val cs = MaterialTheme.colorScheme
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             PageHeader("Library", "Pin games and jump straight in.")
             Appear(1) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SectionLabel("Add a game")
                     Group {
-                        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
                             OutlinedTextField(
                                 gn, { gn = it }, label = { Text("Name") }, singleLine = true,
-                                shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                             )
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     gid, { gid = it.filter { c -> c.isDigit() } }, label = { Text("Place ID") },
-                                    singleLine = true, shape = RoundedCornerShape(16.dp),
+                                    singleLine = true, shape = RoundedCornerShape(14.dp),
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     modifier = Modifier.weight(1f)
                                 )
-                                PressButton("Add", {
+                                Btn("Add", {
                                     if (gn.isNotBlank() && gid.isNotBlank()) {
                                         games[gn.trim()] = gid; gn = ""; gid = ""; save()
                                         toast("other", "Game added.")
                                     }
-                                })
+                                }, icon = Ic.Plus)
                             }
                         }
                     }
@@ -922,11 +1133,15 @@ fun App() {
                             Item(name, "Place ID ${games[name]}", {
                                 scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
                             }) {
-                                Row {
-                                    TextButton({
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Btn("Play", {
                                         scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
-                                    }) { Text("Play") }
-                                    TextButton({ games.remove(name); save() }) { Text("✕") }
+                                    }, kind = 1, h = 36.dp)
+                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        Modifier.size(36.dp).clip(CircleShape).clickable { games.remove(name); save() },
+                                        contentAlignment = Alignment.Center
+                                    ) { Ico(Ic.Close, cs.onSurfaceVariant, 18.dp) }
                                 }
                             }
                         }
@@ -938,35 +1153,42 @@ fun App() {
 
     @Composable
     fun ModsPage() {
+        val cs = MaterialTheme.colorScheme
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             PageHeader("Mods", "Tweak Roblox with packs, profiles and your own files.")
             Appear(1) {
                 Group {
-                    Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("ⓘ", fontSize = 28.sp, color = Color(0xFFFFD54F))
+                    Row(
+                        Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Ico(Ic.Info, Amber, 26.dp)
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Write flags to Roblox", fontSize = 20.sp)
+                            Text("Write flags to Roblox", fontSize = 17.sp, fontWeight = FontWeight.Medium)
                             Text(
                                 "Writes your flags to the flag file when you tap Save. Roblox on Android only reads files from its own app package, so root may be needed.",
-                                fontSize = 14.sp
+                                fontSize = 13.sp, lineHeight = 18.sp, color = cs.onSurfaceVariant
                             )
                         }
-                        Switch(applyOnSave, { applyOnSave = it; save() })
+                        Spacer(Modifier.width(12.dp))
+                        TacoSwitch(applyOnSave) { applyOnSave = it; save() }
                     }
-                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) { Text("›", fontSize = 24.sp) }
+                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
+                        Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                    }
                 }
             }
             Appear(2) {
                 TabStrip(
-                    listOf("Customize" to "🛠️", "Packs" to "⬇️", "My Mods" to "🧩", "Files" to "📁"),
+                    listOf("Customize" to Ic.Sliders, "Packs" to Ic.Download, "Profiles" to Ic.Layers, "Files" to Ic.Folder),
                     modsTab
                 ) { modsTab = it }
             }
-            Crossfade(targetState = modsTab, animationSpec = tween(250), label = "modsTab") { t ->
+            Crossfade(targetState = modsTab, animationSpec = tween(pageAnim), label = "modsTab") { t ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (t) {
                         0 -> {
@@ -987,10 +1209,10 @@ fun App() {
                             Group {
                                 PACKS.forEach { p ->
                                     Item(p.name, p.desc) {
-                                        PressButton("Apply", {
+                                        Btn("Apply", {
                                             flags.putAll(p.sets); save()
                                             toast("flag", "Added ${p.name} flags.")
-                                        }, style = 1)
+                                        }, kind = 1, h = 38.dp)
                                     }
                                 }
                             }
@@ -1005,19 +1227,19 @@ fun App() {
                                         val (_, out) = runCmd("ls -l '$path'; cat '$path'", useRoot)
                                         fileOut = out.ifEmpty { "Nothing returned." }
                                     }
-                                }) { Text("›", fontSize = 24.sp) }
-                                Item("Delete flag file", "Removes the file and restarts nothing", {
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Delete flag file", "Removes the file and stops Roblox", {
                                     scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
-                                }) { Text("›", fontSize = 24.sp) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
                                 Item("Clear Roblox cache", "Frees up space", {
                                     scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
-                                }) { Text("›", fontSize = 24.sp) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
                             }
                             if (fileOut.isNotEmpty()) {
                                 Group {
                                     Text(
-                                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                                        fontFamily = FontFamily.Monospace, fontSize = 12.sp
+                                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                                        fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
                                     )
                                 }
                             }
@@ -1030,18 +1252,25 @@ fun App() {
 
     @Composable
     fun FlagsPage() {
+        val cs = MaterialTheme.colorScheme
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            PageHeader("FastFlag Settings", "Presets for your Default profile.")
+            PageHeader("FastFlags", "Settings for your current profile.")
             Appear(1) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("⚠", fontSize = 24.sp, color = Color(0xFFFFD54F))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Ico(Ic.Warn, Amber, 22.dp)
                     Spacer(Modifier.width(12.dp))
-                    Text("Roblox may ignore flags outside its allowlist.", Modifier.weight(1f), fontSize = 14.sp)
+                    Text(
+                        "Roblox may ignore flags outside its allowlist.",
+                        Modifier.weight(1f), fontSize = 14.sp, color = cs.onSurfaceVariant
+                    )
                     TextButton({ showEditor = true }) {
-                        Text("Open FastFlag Editor", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("Open editor", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -1059,18 +1288,18 @@ fun App() {
                     Group {
                         Item("Recommended", PACKS[quickIdx].desc)
                         Row(
-                            Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             ChoiceBox(PACKS[quickIdx].name, PACKS.map { it.name }) { quickIdx = it }
-                            PressButton("Apply", {
+                            Btn("Apply", {
                                 flags.putAll(PACKS[quickIdx].sets); save()
                                 toast("flag", "Added ${PACKS[quickIdx].name} flags.")
-                            })
+                            }, h = 44.dp)
                         }
                         Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
-                            Text("›", fontSize = 24.sp)
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                         }
                     }
                 }
@@ -1080,61 +1309,81 @@ fun App() {
 
     @Composable
     fun SettingsPage() {
+        val cs = MaterialTheme.colorScheme
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             PageHeader("Settings")
             TabStrip(
-                listOf("Appearance" to "🎚️", "Notifications" to "🔔", "Roblox" to "🎮", "Backup" to "📁", "About" to "ℹ️"),
+                listOf(
+                    "Appearance" to Ic.Sliders, "Notifications" to Ic.Bell, "Roblox" to Ic.Game,
+                    "Backup" to Ic.Folder, "About" to Ic.Info
+                ),
                 setTab
             ) { setTab = it }
-            Crossfade(targetState = setTab, animationSpec = tween(250), label = "setTab") { t ->
+            Crossfade(targetState = setTab, animationSpec = tween(pageAnim), label = "setTab") { t ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (t) {
                         0 -> {
+                            SectionLabel("Accent")
                             Group {
-                                Item("Accent color", THEMES[themeIdx].name) {
-                                    ChoiceBox(THEMES[themeIdx].name, THEMES.map { it.name }) { themeIdx = it; save() }
-                                }
                                 Row(
-                                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(18.dp)
                                 ) {
                                     THEMES.forEachIndexed { i, th ->
                                         val sel = themeIdx == i
                                         val s by animateFloatAsState(
-                                            if (sel) 1.12f else 1f, spring(dampingRatio = 0.5f), label = "sw"
+                                            if (sel) 1.1f else 1f, spring(dampingRatio = 0.6f), label = "sw"
                                         )
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.clickable { themeIdx = i; save() }
+                                            modifier = Modifier.clickable(
+                                                interactionSource = remember { MutableInteractionSource() }, indication = null
+                                            ) { themeIdx = i; save() }
                                         ) {
                                             Box(
-                                                Modifier.size(52.dp)
+                                                Modifier.size(46.dp)
                                                     .graphicsLayer { scaleX = s; scaleY = s }
                                                     .clip(CircleShape)
                                                     .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
-                                                    .then(if (sel) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
-                                            )
+                                                    .then(if (sel) Modifier.border(2.dp, cs.onSurface, CircleShape) else Modifier),
+                                                contentAlignment = Alignment.Center
+                                            ) { if (sel) Ico(Ic.Check, Color(0xFF1A1206), 22.dp, 2.4f) }
                                             Spacer(Modifier.height(6.dp))
-                                            Text(th.name, fontSize = 12.sp)
+                                            Text(th.name, fontSize = 12.sp, color = if (sel) cs.onSurface else cs.onSurfaceVariant)
                                         }
                                     }
                                 }
-                                SwitchItem("Animated background", "Slow moving glow behind the app.", animBg) { animBg = it; save() }
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                                    Text("Background glow", fontSize = 17.sp)
+                            }
+                            SectionLabel("Surface")
+                            Group {
+                                SwitchItem("True black", "Pure black background for OLED screens.", trueBlack) { trueBlack = it; save() }
+                                SwitchItem("Animated background", "A faint accent glow that drifts slowly.", animBg) { animBg = it; save() }
+                                SwitchItem("Compact lists", "Tighter spacing between rows.", compact) { compact = it; save() }
+                                SwitchItem("Motion", "Turn off for no animations or transitions.", motion) { motion = it; save() }
+                            }
+                            SectionLabel("Shape")
+                            Group {
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Background glow", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${(glowAmt * 200).toInt()}%")
+                                    }
                                     Slider(
                                         value = glowAmt, onValueChange = { glowAmt = it },
                                         valueRange = 0f..0.5f, onValueChangeFinished = { save() }
                                     )
                                 }
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                                    Text("Corner roundness", fontSize = 17.sp)
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Corner roundness", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${cornerDp.toInt()} dp")
+                                    }
                                     Slider(
                                         value = cornerDp, onValueChange = { cornerDp = it },
-                                        valueRange = 8f..40f, onValueChangeFinished = { save() }
+                                        valueRange = 6f..40f, onValueChangeFinished = { save() }
                                     )
                                 }
                             }
@@ -1150,24 +1399,31 @@ fun App() {
                         }
                         2 -> {
                             Group {
-                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed · version $robloxVersion")
-                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }) { Text("›", fontSize = 24.sp) }
+                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion")
+                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
                                 Item("Shizuku", shStatus) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        PressButton("Grant", {
-                                            try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
-                                            shStatus = shizukuStatus()
-                                        }, style = 1)
-                                    }
+                                    Btn("Grant", {
+                                        try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
+                                        shStatus = shizukuStatus()
+                                    }, kind = 1, h = 36.dp)
                                 }
                                 SwitchItem(
-                                    "Use root", "Apply FastFlags and mods with root. Turn this on to ask your root manager for permission.",
+                                    "Use root",
+                                    "Apply FastFlags and mods with root. Turn this on to ask your root manager for permission.",
                                     useRoot
                                 ) { useRoot = it; save() }
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            }
+                            SectionLabel("Flag file")
+                            Group {
+                                Column(
+                                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
                                     OutlinedTextField(
                                         path, { path = it; save() }, label = { Text("Flag file path") },
-                                        shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                                     )
                                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Pill("Default", path == DEFAULT_PATH) { path = DEFAULT_PATH; save() }
@@ -1175,19 +1431,22 @@ fun App() {
                                         Pill("App data (root, unverified)", path == appPath) { path = appPath; save() }
                                     }
                                 }
-                                SwitchItem("Restart Roblox on Save and Launch", "Force-stops Roblox before launching.", restart) { restart = it; save() }
+                                SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart) { restart = it; save() }
                                 SwitchItem("Disable frame-rate cap", "Sets a system property when you save.", fps) { fps = it; save() }
                                 Item("Clear Roblox cache", "Frees up space", {
                                     scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
-                                }) { Text("›", fontSize = 24.sp) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
                             }
                         }
                         3 -> {
                             Group {
-                                Item("Save your pinned games, FastFlag profiles and flags to a file, or restore them on another device.")
-                                Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    PressButton("Export backup", { share(backupJson(), "Export backup") }, style = 1)
-                                    PressButton("Import backup", {
+                                Item("Save your pinned games, profiles and flags to a file, or restore them on another device.")
+                                Row(
+                                    Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Btn("Export backup", { share(backupJson(), "Export backup") }, kind = 1)
+                                    Btn("Import backup", {
                                         val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
                                         val msg = runCatching {
                                             val o = JSONObject(text)
@@ -1198,25 +1457,28 @@ fun App() {
                                             "Backup imported."
                                         }.getOrElse { "Failed: copy a backup to the clipboard first." }
                                         toast("other", msg)
-                                    }, style = 1)
+                                    }, kind = 1)
                                 }
                             }
                         }
                         else -> {
                             Group {
-                                Item("Diagnostics", "A report you can copy or share for support", {
-                                    val report = "TacoStrap 3.0\nAndroid ${Build.VERSION.SDK_INT}\n$shStatus\nRoot: $useRoot\nPackage: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}"
+                                Item("Diagnostics", "A report you can copy for support", {
+                                    val report = "TacoStrap 3.1\nAndroid ${Build.VERSION.SDK_INT}\n$shStatus\nRoot: $useRoot\nPackage: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}"
                                     clip.setPrimaryClip(ClipData.newPlainText("report", report))
                                     toast("other", "Copied diagnostics.")
-                                }) { Text("›", fontSize = 24.sp) }
-                                Item("Licenses", "Open source notices", { licenses = true }) { Text("›", fontSize = 24.sp) }
-                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) { Text("›", fontSize = 24.sp) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Licenses", "Open source notices", { licenses = true }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
                             }
                             Text(
-                                "TacoStrap for Android 3.0 · Taco edition",
+                                "TacoStrap for Android 3.1",
                                 Modifier.fillMaxWidth().padding(top = 8.dp),
-                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                fontSize = 13.sp, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
                             )
                         }
                     }
@@ -1227,17 +1489,26 @@ fun App() {
 
     @Composable
     fun EditorScreen() {
+        val cs = MaterialTheme.colorScheme
         val filtered = flags.keys.filter { it.contains(search, ignoreCase = true) }.sorted()
         Column(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-                .statusBarsPadding().navigationBarsPadding()
+            Modifier.fillMaxSize().background(cs.background).statusBarsPadding().navigationBarsPadding()
         ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton({ showEditor = false }) { Text("←", fontSize = 26.sp) }
-                Text("FastFlag Editor", fontSize = 26.sp, modifier = Modifier.weight(1f))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).clickable { showEditor = false },
+                    contentAlignment = Alignment.Center
+                ) { Ico(Ic.Back, cs.onSurface, 24.dp) }
+                Text(
+                    "FastFlag editor", Modifier.weight(1f).padding(start = 4.dp),
+                    fontSize = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp
+                )
                 TextButton({ confirmClear = true }) { Text("Clear all") }
             }
-            TabStrip(listOf("Flags" to "🚩", "JSON" to "🧾", "Profiles" to "💾"), edTab) { edTab = it }
+            TabStrip(listOf("Flags" to Ic.Flag, "JSON" to Ic.Doc, "Profiles" to Ic.Layers), edTab) { edTab = it }
             when (edTab) {
                 0 -> LazyColumn(
                     Modifier.fillMaxSize(),
@@ -1247,55 +1518,64 @@ fun App() {
                     item {
                         OutlinedTextField(
                             search, { search = it }, label = { Text("Search flags") }, singleLine = true,
-                            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                            leadingIcon = { Ico(Ic.Search, cs.onSurfaceVariant, 20.dp) },
+                            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                         )
                     }
                     item {
                         Group {
-                            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Add custom flag", fontSize = 17.sp)
+                            Column(
+                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text("Add custom flag", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                                 OutlinedTextField(
                                     k, { k = it }, label = { Text("Name") }, singleLine = true,
-                                    shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                                 )
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         v, { v = it }, label = { Text("Value") }, singleLine = true,
-                                        shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f)
+                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
                                     )
-                                    PressButton("Add", {
+                                    Btn("Add", {
                                         if (k.isNotBlank()) { flags[k.trim()] = v.trim(); k = ""; v = ""; save() }
-                                    })
+                                    }, icon = Ic.Plus)
                                 }
                             }
                         }
                     }
                     item { SectionLabel("Your flags (${filtered.size})") }
                     if (filtered.isEmpty()) {
-                        item { Text("No flags yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        item { Text("No flags yet.", color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp)) }
                     }
                     items(filtered, key = { it }) { name ->
                         val value = flags[name] ?: ""
                         val isBool = value.equals("true", true) || value.equals("false", true)
                         Group {
-                            Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
                                     name, Modifier.weight(1f), fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium
                                 )
                                 if (isBool) {
-                                    Switch(
-                                        checked = value.equals("true", true),
-                                        onCheckedChange = { flags[name] = if (it) "True" else "False"; save() }
-                                    )
+                                    TacoSwitch(value.equals("true", true)) {
+                                        flags[name] = if (it) "True" else "False"; save()
+                                    }
                                 }
-                                TextButton({ flags.remove(name); save() }) { Text("✕") }
+                                Box(
+                                    Modifier.size(40.dp).clip(CircleShape).clickable { flags.remove(name); save() },
+                                    contentAlignment = Alignment.Center
+                                ) { Ico(Ic.Close, cs.onSurfaceVariant, 18.dp) }
                             }
                             if (!isBool) {
                                 OutlinedTextField(
                                     value, { flags[name] = it; save() }, singleLine = true,
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
                                 )
                             }
                         }
@@ -1303,17 +1583,17 @@ fun App() {
                 }
                 1 -> Column(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedTextField(
                         jsonText, { jsonText = it }, label = { Text("ClientAppSettings JSON") },
                         minLines = 8, maxLines = 16,
                         textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
-                        shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PressButton("Load current", { jsonText = toJson(flags); jsonMsg = "" }, style = 2)
-                        PressButton("Replace flags", {
+                        Btn("Load current", { jsonText = toJson(flags); jsonMsg = "" }, kind = 2)
+                        Btn("Replace flags", {
                             jsonMsg = runCatching {
                                 val m = parseFlags(jsonText)
                                 flags.clear(); flags.putAll(m); save()
@@ -1321,7 +1601,7 @@ fun App() {
                             }.getOrElse { "Invalid JSON." }
                         })
                     }
-                    if (jsonMsg.isNotEmpty()) Text(jsonMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    if (jsonMsg.isNotEmpty()) Text(jsonMsg, fontSize = 13.sp, color = cs.primary)
                 }
                 else -> Column(
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
@@ -1335,34 +1615,59 @@ fun App() {
     BackHandler(enabled = showEditor) { showEditor = false }
 
     MaterialTheme(colorScheme = scheme) {
-        CompositionLocalProvider(LocalCorner provides cornerDp.dp) {
+        CompositionLocalProvider(
+            LocalCorner provides cornerDp.dp,
+            LocalPad provides (if (compact) 10.dp else 16.dp),
+            LocalMotion provides motion
+        ) {
             Box(
                 Modifier.fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
                     .background(
                         Brush.radialGradient(
                             colors = listOf(pc.copy(alpha = glowAmt), Color.Transparent),
-                            center = Offset(200f + 700f * glow, 300f + 500f * glow),
-                            radius = 1000f
+                            center = Offset(300f + 480f * glow, -80f),
+                            radius = 1100f
                         )
                     )
             ) {
                 Scaffold(
                     containerColor = Color.Transparent,
-                    snackbarHost = { SnackbarHost(snackbar) },
+                    snackbarHost = {
+                        SnackbarHost(snackbar) { d ->
+                            Snackbar(
+                                d, shape = RoundedCornerShape(16.dp),
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    },
                     bottomBar = {
-                        Column(Modifier.background(lerp(Color(0xFF2A2A2E), pc, 0.04f))) {
+                        Column(
+                            Modifier.background(MaterialTheme.colorScheme.surfaceVariant).navigationBarsPadding()
+                        ) {
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                             Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Box {
-                                    PressButton(
-                                        (if (pkg == DEFAULT_PKG) "Roblox" else "Custom") + " ⌃",
-                                        { pkgMenu = true },
-                                        Modifier.height(56.dp), style = 1
-                                    )
+                                    Row(
+                                        Modifier.height(48.dp).clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                                            .clickable { pkgMenu = true }
+                                            .padding(start = 18.dp, end = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            if (pkg == DEFAULT_PKG) "Roblox" else "Custom",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Ico(Ic.Up, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
+                                    }
                                     DropdownMenu(expanded = pkgMenu, onDismissRequest = { pkgMenu = false }) {
                                         DropdownMenuItem(
                                             text = { Text("Roblox ($DEFAULT_PKG)") },
@@ -1374,29 +1679,15 @@ fun App() {
                                         )
                                     }
                                 }
-                                PressButton("Save and Launch", { doSave(true) }, Modifier.weight(1.6f).height(56.dp))
-                                PressButton("Save", { doSave(false) }, Modifier.weight(1f).height(56.dp))
+                                Btn("Save and Launch", { doSave(true) }, Modifier.weight(1.5f))
+                                Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1)
                             }
-                            NavigationBar(containerColor = Color.Transparent) {
-                                navItems.forEachIndexed { i, (name, emoji) ->
-                                    NavigationBarItem(
-                                        selected = page == i,
-                                        onClick = { page = i },
-                                        icon = {
-                                            val s by animateFloatAsState(
-                                                if (page == i) 1.25f else 1f, spring(dampingRatio = 0.5f), label = "ic"
-                                            )
-                                            Text(emoji, fontSize = 20.sp, modifier = Modifier.graphicsLayer { scaleX = s; scaleY = s })
-                                        },
-                                        label = { Text(name, fontSize = 11.sp, maxLines = 1) }
-                                    )
-                                }
-                            }
+                            NavBar(navItems, page) { page = it }
                         }
                     }
                 ) { pad ->
                     Box(Modifier.padding(pad).fillMaxSize()) {
-                        Crossfade(targetState = page, animationSpec = tween(300), label = "page") { p ->
+                        Crossfade(targetState = page, animationSpec = tween(pageAnim), label = "page") { p ->
                             when (p) {
                                 0 -> HomePage()
                                 1 -> LibraryPage()
@@ -1410,14 +1701,15 @@ fun App() {
 
                 AnimatedVisibility(
                     visible = showEditor,
-                    enter = slideInHorizontally(tween(320)) { it } + fadeIn(tween(320)),
-                    exit = slideOutHorizontally(tween(260)) { it } + fadeOut(tween(260))
+                    enter = slideInHorizontally(tween(if (motion) 300 else 0)) { it } + fadeIn(tween(if (motion) 300 else 0)),
+                    exit = slideOutHorizontally(tween(if (motion) 240 else 0)) { it } + fadeOut(tween(if (motion) 240 else 0))
                 ) { EditorScreen() }
             }
 
             renaming?.let { old ->
                 AlertDialog(
                     onDismissRequest = { renaming = null },
+                    shape = RoundedCornerShape(28.dp),
                     title = { Text("Rename profile") },
                     text = { OutlinedTextField(newName, { newName = it }, singleLine = true) },
                     confirmButton = {
@@ -1436,6 +1728,7 @@ fun App() {
             if (confirmClear) {
                 AlertDialog(
                     onDismissRequest = { confirmClear = false },
+                    shape = RoundedCornerShape(28.dp),
                     title = { Text("Clear all flags?") },
                     text = { Text("This removes all ${flags.size} flags from the list. Saved profiles are kept.") },
                     confirmButton = { TextButton({ flags.clear(); save(); confirmClear = false }) { Text("Clear") } },
@@ -1446,6 +1739,7 @@ fun App() {
             if (pkgDialog) {
                 AlertDialog(
                     onDismissRequest = { pkgDialog = false },
+                    shape = RoundedCornerShape(28.dp),
                     title = { Text("Package name") },
                     text = {
                         OutlinedTextField(
@@ -1466,6 +1760,7 @@ fun App() {
             if (licenses) {
                 AlertDialog(
                     onDismissRequest = { licenses = false },
+                    shape = RoundedCornerShape(28.dp),
                     title = { Text("Licenses") },
                     text = { Text("TacoStrap is built with Jetpack Compose and Shizuku (Apache License 2.0).") },
                     confirmButton = { TextButton({ licenses = false }) { Text("Close") } }
