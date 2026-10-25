@@ -142,21 +142,17 @@ fun shizukuStatus(): String = try {
     "Shizuku unavailable: ${e.message}"
 }
 
-// Shizuku.newProcess is private in API 13.x, so call it by reflection.
+// Use the system shell directly instead of reflection into the hidden Shizuku.newProcess API.
 fun sh(cmd: String): Pair<Boolean, String> = try {
-    val m = Shizuku::class.java.getDeclaredMethod(
-        "newProcess",
-        Array<String>::class.java,
-        Array<String>::class.java,
-        String::class.java
-    )
-    m.isAccessible = true
-    val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-    val out = p.inputStream.bufferedReader().readText()
-    val err = p.errorStream.bufferedReader().readText()
-    Pair(p.waitFor() == 0, (out + err).trim())
+    val process = ProcessBuilder("/system/bin/sh", "-c", cmd)
+        .redirectErrorStream(true)
+        .start()
+
+    val output = process.inputStream.bufferedReader().readText()
+    val exitCode = process.waitFor()
+    Pair(exitCode == 0, output.trim())
 } catch (e: Throwable) {
-    Pair(false, ((e.cause ?: e).message ?: e.toString()))
+    Pair(false, (e.cause ?: e).message ?: e.toString())
 }
 
 fun suSh(cmd: String): Pair<Boolean, String> = try {
@@ -998,332 +994,210 @@ fun App() {
         animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
         label = "shift"
     )
-    val glow = if (animBg && motion) shift else 0.5f
-    val flagCount by animateIntAsState(flags.size, tween(500), label = "count")
-    val navItems = listOf(
-        "Home" to Ic.Home, "Library" to Ic.Grid, "Mods" to Ic.Layers,
-        "FastFlags" to Ic.Flag, "Settings" to Ic.Sliders
+
+    val bg = Brush.linearGradient(
+        listOf(
+            lerp(base, Color.White, 0.02f),
+            lerp(base, pc, 0.12f),
+            base
+        ),
+        start = Offset(0f, 0f),
+        end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
     )
-    val pageAnim = if (motion) 260 else 0
 
     MaterialTheme(colorScheme = scheme) {
         Box(
-            Modifier.fillMaxSize().background(base)
+            Modifier
+                .fillMaxSize()
+                .background(bg)
+                .padding(horizontal = 18.dp)
         ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val grad = Brush.linearGradient(listOf(pc.copy(alpha = 0.15f), Color.Transparent, sc.copy(alpha = 0.12f)))
-                drawRect(grad, size = size)
-                val c = 24f
-                for (x in 0..(size.width / c).toInt() + 2) {
-                    for (y in 0..(size.height / c).toInt() + 2) {
-                        drawCircle(
-                            color = Color.White.copy(alpha = 0.015f),
-                            radius = 1.2f,
-                            center = Offset(x * c + (shift * 30f), y * c + (glow * 24f))
-                        )
-                    }
-                }
-            }
-
+            val dynamicPadding = if (compact) 10.dp else 16.dp
             Column(Modifier.fillMaxSize()) {
+                Spacer(Modifier.height(18.dp))
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                 ) {
-                    Column {
-                        Text("TacoStrap", fontSize = 29.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Fast flag manager", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Box(Modifier.weight(1f)) {
+                        PageHeader("TacoStrap", "Local Roblox flag manager")
                     }
+                    if (ready) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Good.copy(alpha = 0.12f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Shizuku", color = Good, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                var showWarning by remember { mutableStateOf(false) }
+                if (!ready && !useRoot) {
+                    showWarning = true
+                }
+                if (showWarning) {
                     Box(
-                        Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { }
-                    )
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Amber.copy(alpha = 0.12f))
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Ico(Ic.Warn, Amber, 18.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Shizuku is required for direct flag writes unless you enable root mode.",
+                                color = Amber,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
                 }
 
-                TabStrip(navItems, page, { page = it })
+                Spacer(Modifier.height(10.dp))
 
-                Box(Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    when (page) {
-                        0 -> {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                item {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(28.dp))
-                                            .background(
-                                                Brush.linearGradient(
-                                                    listOf(
-                                                        pc.copy(alpha = 0.97f),
-                                                        sc.copy(alpha = 0.88f),
-                                                        Color(0xFF1B1614)
-                                                    )
-                                                )
-                                            )
-                                            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
-                                            .padding(18.dp)
-                                    ) {
-                                        Canvas(Modifier.matchParentSize()) {
-                                            drawCircle(
-                                                color = Color.White.copy(alpha = 0.08f),
-                                                radius = size.minDimension * 0.7f,
-                                                center = Offset(size.width * 0.78f, size.height * 0.25f)
-                                            )
-                                            drawCircle(
-                                                color = Color(0xFFFFD8A8).copy(alpha = 0.18f),
-                                                radius = size.minDimension * 0.5f,
-                                                center = Offset(size.width * 0.74f, size.height * 0.2f)
-                                            )
-                                        }
+                val navs = listOf(
+                    "Home" to Ic.Home,
+                    "Flags" to Ic.Flag,
+                    "Presets" to Ic.Grid,
+                    "Game" to Ic.Game,
+                    "Tools" to Ic.Sliders
+                )
 
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column {
-                                                    Text(
-                                                        "TacoStrap",
-                                                        fontSize = 28.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFFFFF8E7)
-                                                    )
-                                                    Text(
-                                                        "Flag dashboard",
-                                                        fontSize = 13.sp,
-                                                        color = Color(0xFFFFE6C2),
-                                                        letterSpacing = 0.5.sp
-                                                    )
-                                                }
+                NavBar(navs, page) { page = it }
 
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(40.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color.White.copy(alpha = 0.12f))
-                                                        .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Ico(Ic.Bell, Color(0xFFFFF8E7), 18.dp, 2.1f)
-                                                }
-                                            }
+                Spacer(Modifier.height(10.dp))
 
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(58.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color.Black.copy(alpha = 0.18f))
-                                                        .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Ico(Ic.Flag, Color(0xFFFFF8E7), 28.dp, 2.3f)
-                                                }
+                when (page) {
+                    0 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                Item("Current path", path, trailing = {
+                                    ValueText(path)
+                                })
+                                Item("Package", pkg, trailing = {
+                                    ValueText(pkg)
+                                })
+                            }
 
-                                                Column {
-                                                    Text(
-                                                        "Server region",
-                                                        fontSize = 12.sp,
-                                                        color = Color(0xFFFFE6C2),
-                                                        letterSpacing = 0.7.sp
-                                                    )
-                                                    Text(
-                                                        text = if (actualRegion != null) {
-                                                            "Actual: $actualRegion"
-                                                        } else {
-                                                            "Selected: $selectedRegion"
-                                                        },
-                                                        fontSize = 17.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = Color.White
-                                                    )
-                                                }
-                                            }
-
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Btn(
-                                                    "Apply",
-                                                    { doSave(false) },
-                                                    Modifier.weight(1f),
-                                                    icon = Ic.Check
-                                                )
-                                                Btn(
-                                                    "Launch",
-                                                    { doSave(true) },
-                                                    Modifier.weight(1f),
-                                                    icon = Ic.Play
-                                                )
-                                            }
-                                        }
+                            Group {
+                                Item("Theme") {
+                                    ChoiceBox(THEMES[themeIdx].name, THEMES.map { it.name }) { i ->
+                                        themeIdx = i
+                                        save()
                                     }
                                 }
-
-                                item {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        StatCard("Flags", "${flags.size}", pc)
-                                        StatCard("Presets", "${presets.size}", sc)
-                                        StatCard("Roblox", robloxVersion, Color(0xFFFFD385))
-                                    }
-                                }
-
-                                item {
-                                    Group {
-                                        Item(
-                                            "Selected region",
-                                            "Tap to choose your preferred region",
-                                            onClick = { regionMenuExpanded = true }
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Text(
-                                                    selectedRegion,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Medium
-                                                )
-                                                Ico(Ic.Down, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
-                                            }
-                                        }
-
-                                        Item(
-                                            "Package",
-                                            if (ready || useRoot) robloxVersion else "Shizuku not ready"
-                                        ) {
-                                            ValueText(if (ready || useRoot) robloxVersion else "Shizuku unavailable")
-                                        }
-
-                                        Item(
-                                            "Path",
-                                            path
-                                        ) {
-                                            ValueText(path)
-                                        }
-
-                                        Item(
-                                            "Auto apply",
-                                            null
-                                        ) {
-                                            TacoSwitch(applyOnSave) { applyOnSave = it }
-                                        }
-                                    }
-                                }
-
-                                item {
-                                    Group {
-                                        SectionLabel("Fast actions")
+                                Item("Region") {
+                                    Box {
                                         Row(
-                                            Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            Modifier.clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f))
+                                                .clickable { regionMenuExpanded = !regionMenuExpanded }
+                                                .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Download)
-                                            Btn("Open", { openUrl(ALLOWLIST_URL) }, Modifier.weight(1f), kind = 1, icon = Ic.Doc)
-                                            Btn("Clear", { doSave(false) }, Modifier.weight(1f), kind = 1, icon = Ic.Close)
+                                            Text(selectedRegion, fontSize = 14.sp, maxLines = 1)
+                                            Spacer(Modifier.width(4.dp))
+                                            Ico(Ic.Down, MaterialTheme.colorScheme.onSurfaceVariant, 16.dp, 2.2f)
+                                        }
+                                        DropdownMenu(
+                                            expanded = regionMenuExpanded,
+                                            onDismissRequest = { regionMenuExpanded = false }
+                                        ) {
+                                            regionOptions.forEach { region ->
+                                                DropdownMenuItem(
+                                                    text = { Text(region) },
+                                                    onClick = {
+                                                        selectedRegion = region
+                                                        saveSelectedRegion(context, region)
+                                                        regionMenuExpanded = false
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                            }
 
-                                item {
-                                    Group {
-                                        SectionLabel("Live status")
-                                        Item("Mode", if (useRoot) "Root mode" else "Shizuku mode")
-                                        Item("Status", shStatus)
-                                        Item("Fallback", if (actualRegion != null) "Live region active" else "Using selected region")
-                                    }
+                            Group {
+                                Item("Roblox version", robloxVersion, trailing = {
+                                    ValueText(robloxVersion)
+                                })
+                                Item("Global FPS lock", null, { fps = !fps; save() }) {
+                                    TacoSwitch(fps, { fps = it; save() })
+                                }
+                                Item("Use root mode", null, { useRoot = !useRoot; save() }) {
+                                    TacoSwitch(useRoot, { useRoot = it; save() })
+                                }
+                                Item("Apply on save", null, { applyOnSave = !applyOnSave; save() }) {
+                                    TacoSwitch(applyOnSave, { applyOnSave = it; save() })
                                 }
                             }
                         }
-                        1 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                item {
-                                    Group {
-                                        Item("Library", "Saved profiles and game folders")
-                                    }
-                                }
-                                item {
-                                    Group {
-                                        Item("Games", "${games.size} tracked entries")
-                                    }
+                    }
+                    1 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Quick edit")
+                                Item("Path") { Text(path, modifier = Modifier.padding(start = 10.dp)) }
+                                Item("Use default path") {
+                                    path = DEFAULT_PATH
+                                    save()
                                 }
                             }
-                        }
-                        2 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                item {
-                                    Group {
-                                        Item("Mods", "Configuration and live tweaks")
-                                    }
-                                }
-                            }
-                        }
-                        3 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                item {
-                                    Group {
-                                        SectionLabel("FastFlags")
-                                        SECTIONS.forEach { (name, list) ->
-                                            Item(name, "${list.size} options")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        4 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                item {
-                                    Group {
-                                        Item("Settings", "Theme, motion, save behavior")
-                                        Item("Theme", THEMES[themeIdx].name) { }
-                                        Item("Motion", if (motion) "On" else "Off") { TacoSwitch(motion) { motion = it } }
-                                        Item("True black", if (trueBlack) "On" else "Off") { TacoSwitch(trueBlack) { trueBlack = it } }
+
+                            Group {
+                                SECTIONS.forEach { (section, items) ->
+                                    SectionLabel(section)
+                                    items.forEach { fs ->
+                                        FlagSetting(fs, flags) { save() }
                                     }
                                 }
                             }
                         }
                     }
-                }
-
-                NavBar(navItems, page, { page = it })
-            }
-
-            DropdownMenu(
-                expanded = regionMenuExpanded,
-                onDismissRequest = { regionMenuExpanded = false }
-            ) {
-                regionOptions.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option) },
-                        onClick = {
-                            selectedRegion = option
-                            saveSelectedRegion(context, option)
-                            regionMenuExpanded = false
+                    2 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Presets")
+                                presets.forEach { (name, json) ->
+                                    Item(name, "Saved preset") {
+                                        val sets = parseFlags(json)
+                                        flags.clear(); flags.putAll(sets); save()
+                                    }
+                                }
+                            }
                         }
-                    )
+                    }
+                    3 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Game manager")
+                                games.forEach { (name, value) ->
+                                    Item(name, value)
+                                }
+                            }
+                        }
+                    }
+                    4 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Utilities")
+                                Item("Open allowlist topic") { openUrl(ALLOWLIST_URL) }
+                                Item("Launch Roblox") { launchRoblox(context) }
+                                Item("Reset flags") { toast("flag", resetFlags(path, pkg, useRoot)) }
+                                Item("Clear cache") { toast("flag", clearCache(pkg, useRoot)) }
+                                Item("Save config") { doSave(false) }
+                                Item("Save + apply") { doSave(true) }
+                            }
+                        }
+                    }
                 }
             }
-
-            SnackbarHost(
-                hostState = snackbar,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
-            )
         }
     }
 }
