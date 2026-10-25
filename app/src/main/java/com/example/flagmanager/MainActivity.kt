@@ -142,7 +142,7 @@ fun shizukuStatus(): String = try {
     "Shizuku unavailable: ${e.message}"
 }
 
-// Use the system shell directly instead of reflecting into the removed Shizuku.newProcess API.
+// Use the system shell directly instead of reflection into the hidden Shizuku.newProcess API.
 fun sh(cmd: String): Pair<Boolean, String> = try {
     val process = ProcessBuilder("/system/bin/sh", "-c", cmd)
         .redirectErrorStream(true)
@@ -995,6 +995,209 @@ fun App() {
         label = "shift"
     )
 
-    // the rest of the file in the original project is intact; this patch is limited to the broken shell execution code.
-    Box(modifier = Modifier.fillMaxSize())
+    val bg = Brush.linearGradient(
+        listOf(
+            lerp(base, Color.White, 0.02f),
+            lerp(base, pc, 0.12f),
+            base
+        ),
+        start = Offset(0f, 0f),
+        end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY)
+    )
+
+    MaterialTheme(colorScheme = scheme) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(bg)
+                .padding(horizontal = 18.dp)
+        ) {
+            val dynamicPadding = if (compact) 10.dp else 16.dp
+            Column(Modifier.fillMaxSize()) {
+                Spacer(Modifier.height(18.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        PageHeader("TacoStrap", "Local Roblox flag manager")
+                    }
+                    if (ready) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Good.copy(alpha = 0.12f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Shizuku", color = Good, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                var showWarning by remember { mutableStateOf(false) }
+                if (!ready && !useRoot) {
+                    showWarning = true
+                }
+                if (showWarning) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Amber.copy(alpha = 0.12f))
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Ico(Ic.Warn, Amber, 18.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Shizuku is required for direct flag writes unless you enable root mode.",
+                                color = Amber,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                val navs = listOf(
+                    "Home" to Ic.Home,
+                    "Flags" to Ic.Flag,
+                    "Presets" to Ic.Grid,
+                    "Game" to Ic.Game,
+                    "Tools" to Ic.Sliders
+                )
+
+                NavBar(navs, page) { page = it }
+
+                Spacer(Modifier.height(10.dp))
+
+                when (page) {
+                    0 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                Item("Current path", path, trailing = {
+                                    ValueText(path)
+                                })
+                                Item("Package", pkg, trailing = {
+                                    ValueText(pkg)
+                                })
+                            }
+
+                            Group {
+                                Item("Theme") {
+                                    ChoiceBox(THEMES[themeIdx].name, THEMES.map { it.name }) { i ->
+                                        themeIdx = i
+                                        save()
+                                    }
+                                }
+                                Item("Region") {
+                                    Box {
+                                        Row(
+                                            Modifier.clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.55f))
+                                                .clickable { regionMenuExpanded = !regionMenuExpanded }
+                                                .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(selectedRegion, fontSize = 14.sp, maxLines = 1)
+                                            Spacer(Modifier.width(4.dp))
+                                            Ico(Ic.Down, MaterialTheme.colorScheme.onSurfaceVariant, 16.dp, 2.2f)
+                                        }
+                                        DropdownMenu(
+                                            expanded = regionMenuExpanded,
+                                            onDismissRequest = { regionMenuExpanded = false }
+                                        ) {
+                                            regionOptions.forEach { region ->
+                                                DropdownMenuItem(
+                                                    text = { Text(region) },
+                                                    onClick = {
+                                                        selectedRegion = region
+                                                        saveSelectedRegion(context, region)
+                                                        regionMenuExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Group {
+                                Item("Roblox version", robloxVersion, trailing = {
+                                    ValueText(robloxVersion)
+                                })
+                                Item("Global FPS lock", null, { fps = !fps; save() }) {
+                                    TacoSwitch(fps, { fps = it; save() })
+                                }
+                                Item("Use root mode", null, { useRoot = !useRoot; save() }) {
+                                    TacoSwitch(useRoot, { useRoot = it; save() })
+                                }
+                                Item("Apply on save", null, { applyOnSave = !applyOnSave; save() }) {
+                                    TacoSwitch(applyOnSave, { applyOnSave = it; save() })
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Quick edit")
+                                Item("Path") { Text(path, modifier = Modifier.padding(start = 10.dp)) }
+                                Item("Use default path") {
+                                    path = DEFAULT_PATH
+                                    save()
+                                }
+                            }
+
+                            Group {
+                                SECTIONS.forEach { (section, items) ->
+                                    SectionLabel(section)
+                                    items.forEach { fs ->
+                                        FlagSetting(fs, flags) { save() }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    2 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Presets")
+                                presets.forEach { (name, json) ->
+                                    Item(name, "Saved preset") {
+                                        val sets = parseFlags(json)
+                                        flags.clear(); flags.putAll(sets); save()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    3 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Game manager")
+                                games.forEach { (name, value) ->
+                                    Item(name, value)
+                                }
+                            }
+                        }
+                    }
+                    4 -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Group {
+                                SectionLabel("Utilities")
+                                Item("Open allowlist topic") { openUrl(ALLOWLIST_URL) }
+                                Item("Launch Roblox") { launchRoblox(context) }
+                                Item("Reset flags") { toast("flag", resetFlags(path, pkg, useRoot)) }
+                                Item("Clear cache") { toast("flag", clearCache(pkg, useRoot)) }
+                                Item("Save config") { doSave(false) }
+                                Item("Save + apply") { doSave(true) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
