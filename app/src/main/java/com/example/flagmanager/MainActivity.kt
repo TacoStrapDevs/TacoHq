@@ -78,7 +78,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
-import java.io.File
 import java.util.Base64
 
 private const val DEFAULT_PKG = "com.roblox.client"
@@ -87,42 +86,7 @@ private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
 private const val ALLOWLIST_URL =
     "https://devforum.roblox.com/t/allowlist-for-local-client-configuration-via-fast-flags/3966569"
 
-private const val ROBLOX_PKG = "com.roblox.client"
-
 // ---------- Logic ----------
-
-private fun saveSelectedRegion(ctx: Context, region: String) {
-    val file = File(ctx.filesDir, "selected_region.json")
-    val json = JSONObject()
-    json.put("region", region)
-    file.writeText(json.toString())
-}
-
-private fun loadSelectedRegion(ctx: Context): String {
-    val file = File(ctx.filesDir, "selected_region.json")
-    if (!file.exists()) return "Singapore"
-
-    return try {
-        val json = JSONObject(file.readText())
-        json.optString("region", "Singapore")
-    } catch (_: Exception) {
-        "Singapore"
-    }
-}
-
-private fun launchRoblox(ctx: Context): Boolean {
-    return try {
-        val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ROBLOX_PKG)
-        if (launchIntent != null) {
-            ctx.startActivity(launchIntent)
-            true
-        } else {
-            false
-        }
-    } catch (_: Exception) {
-        false
-    }
-}
 
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
@@ -848,12 +812,6 @@ fun App() {
     var pkgMenu by remember { mutableStateOf(false) }
     var licenses by remember { mutableStateOf(false) }
 
-    val context = LocalContext.current
-    var selectedRegion by remember { mutableStateOf(loadSelectedRegion(context)) }
-    var actualRegion by remember { mutableStateOf<String?>(null) }
-    var regionMenuExpanded by remember { mutableStateOf(false) }
-    val regionOptions = listOf("Singapore", "US East", "US West", "EU", "Asia")
-
     fun save() {
         prefs.edit()
             .putString("flags", toJson(flags))
@@ -979,96 +937,6 @@ fun App() {
     )
     val pageAnim = if (motion) 260 else 0
 
-    Group {
-        Column(
-            Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                "Server region",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Text(
-                text = if (actualRegion != null) {
-                    "Actual joined region: $actualRegion"
-                } else {
-                    "Selected region: $selectedRegion"
-                },
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Box {
-                OutlinedButton(
-                    onClick = { regionMenuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Choose region")
-                }
-
-                DropdownMenu(
-                    expanded = regionMenuExpanded,
-                    onDismissRequest = { regionMenuExpanded = false }
-                ) {
-                    regionOptions.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option) },
-                            onClick = {
-                                selectedRegion = option
-                                actualRegion = null
-                                saveSelectedRegion(context, option)
-                                regionMenuExpanded = false
-                                scope.launch {
-                                    snackbar.showSnackbar("Region saved: $option")
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(
-                    onClick = {
-                        selectedRegion = "Singapore"
-                        actualRegion = null
-                        saveSelectedRegion(context, selectedRegion)
-                        scope.launch {
-                            snackbar.showSnackbar("Region saved: Singapore")
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Set Singapore")
-                }
-
-                Button(
-                    onClick = {
-                        saveSelectedRegion(context, selectedRegion)
-                        val ok = launchRoblox(context)
-                        if (!ok) {
-                            scope.launch {
-                                snackbar.showSnackbar("Roblox is not installed")
-                            }
-                        } else {
-                            scope.launch {
-                                snackbar.showSnackbar("Launching Roblox — selected: $selectedRegion")
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Launch Roblox")
-                }
-            }
-        }
-    }
-
     // ================= PAGES =================
 
     @Composable
@@ -1134,718 +1002,770 @@ fun App() {
     }
 
     @Composable
-    fun SettingsUI() {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Group {
-                Item("Package", sub = "Current: $pkg", onClick = {
-                    pkgDialog = true
-                })
-                Item("Path", sub = "Current: $path", onClick = {
-                    pkgDialog = true
-                })
-                Item("Shizuku", sub = "Status: $shStatus", onClick = {
-                    pkgDialog = true
-                })
-                Item("Theme", sub = "Current: ${THEMES[themeIdx].name}", onClick = {
-                    themeIdx = (themeIdx + 1) % THEMES.size
-                    save()
-                })
-                Item("Motion", sub = "Current: ${if (motion) "On" else "Off"}", onClick = {
-                    motion = !motion
-                    save()
-                })
-                Item("Motion", sub = "Current: ${if (motion) "On" else "Off"}", onClick = {
-                    motion = !motion
-                    save()
-                })
-                Item("Ground", sub = "Current: ${if (trueBlack) "True" else "False"}", onClick = {
-                    trueBlack = !trueBlack
-                    save()
-                })
-                Item("Glow", sub = "Current: ${if (glowAmt > 0.0f) "On" else "Off"}", onClick = {
-                    glowAmt = if (glowAmt > 0.0f) 0f else 0.1f
-                    save()
-                })
-                Item("Corner", sub = "Current: ${if (cornerDp > 0.0f) "On" else "Off"}", onClick = {
-                    cornerDp = if (cornerDp > 0.0f) 24f else 0f
-                    save()
-                })
-                Item("App theme", sub = "Current: ${THEMES[themeIdx].name}", onClick = {
-                    themeIdx = (themeIdx + 1) % THEMES.size
-                    save()
-                })
-                Item("Root", sub = "Current: ${if (useRoot) "On" else "Off"}", onClick = {
-                    useRoot = !useRoot
-                    save()
-                })
-                Item("Use Shizuku", sub = "Current: ${if (useRoot) "On" else "Off"}", onClick = {
-                    useRoot = !useRoot
-                    save()
-                })
-                Item("Apply on save", sub = "Current: ${if (applyOnSave) "On" else "Off"}", onClick = {
-                    applyOnSave = !applyOnSave
-                    save()
-                })
+    fun HomePage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Appear(0) {
+                Row(Modifier.padding(horizontal = 4.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
+                        Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("TacoStrap", fontSize = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
+                        Text("FastFlag manager for Roblox", fontSize = 14.sp, color = cs.onSurfaceVariant)
+                    }
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (ready) Good else Bad))
+                }
             }
-            Group {
-                Item("Reset all flags", onClick = {
-                    flags.clear()
-                    save()
-                    toast("flag", "All flags cleared.")
-                })
-                Item("Reset app state", onClick = {
-                    flags.clear()
-                    save()
-                    toast("flag", "All flags cleared.")
-                })
-                Item("Open allowlist", onClick = {
-                    openUrl(ALLOWLIST_URL)
-                })
-                Item("Open changelog", onClick = {
-                    openUrl("https://github.com/iclips270-ship-it/Flagmanager/releases")
-                })
+            Appear(1) {
+                Group {
+                    Item("Roblox") { ValueText(robloxVersion) }
+                    Item("Active flags") {
+                        Text("$flagCount", fontSize = 15.sp, color = cs.primary, fontWeight = FontWeight.SemiBold)
+                    }
+                    Item("Shizuku") {
+                        if (ready) ValueText("Connected") else Btn("Grant", {
+                            try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
+                            shStatus = shizukuStatus()
+                        }, kind = 1, h = 36.dp)
+                    }
+                    Item("Root") { ValueText(if (useRoot) "On" else "Off") }
+                    Item("Flag file", path)
+                }
             }
-        }
-    }
-
-    @Composable
-    fun HomeUI() {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Group {
-                Item("Roblox package", sub = "Current: $pkg", onClick = {
-                    pkgDialog = true
-                })
-                Item("Fast flag file", sub = "Current: $path", onClick = {
-                    pkgDialog = true
-                })
-                Item("Shizuku", sub = "Status: $shStatus", onClick = {
-                    pkgDialog = true
-                })
-                Item("App version", sub = "Current: $robloxVersion", onClick = {
-                    pkgDialog = true
-                })
-                Item("Theme", sub = "Current: ${THEMES[themeIdx].name}", onClick = {
-                    themeIdx = (themeIdx + 1) % THEMES.size
-                    save()
-                })
-                Item("App theme", sub = "Current: ${THEMES[themeIdx].name}", onClick = {
-                    themeIdx = (themeIdx + 1) % THEMES.size
-                    save()
-                })
-                Item("Selected region", sub = "Current: $selectedRegion", onClick = {
-                    regionMenuExpanded = true
-                })
+            Appear(2) {
+                Btn(
+                    "Launch Roblox",
+                    { scope.launch(Dispatchers.IO) { toast("launch", launchPkg(pkg, useRoot)) } },
+                    Modifier.fillMaxWidth(), icon = Ic.Play, h = 56.dp
+                )
+            }
+            Appear(3) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Btn("Verify file", {
+                        scope.launch(Dispatchers.IO) {
+                            val (_, out) = runCmd("ls -l '$path'; cat '$path'", useRoot)
+                            fileOut = out.ifEmpty { "Nothing returned." }
+                        }
+                    }, Modifier.weight(1f), kind = 1)
+                    Btn("Reset", {
+                        scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
+                    }, Modifier.weight(1f), kind = 2)
+                }
+            }
+            if (fileOut.isNotEmpty()) {
+                Group {
+                    Text(
+                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                }
+            }
+            Appear(4) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Pinned games")
+                    Group {
+                        if (games.isEmpty()) {
+                            Item("No pinned games", "Add games in the Library tab.", { page = 1 }) {
+                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                            }
+                        }
+                        games.keys.sorted().take(4).forEach { name ->
+                            Item(name, "Place ID ${games[name]}", {
+                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                            }) { Ico(Ic.Play, cs.primary, 20.dp) }
+                        }
+                    }
+                }
             }
         }
     }
 
     @Composable
-    fun AppContent() {
-        val pageTitles = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-        val pageOrder = listOf(
-            "Home" to Ic.Home,
-            "Home" to Ic.Home,
-            "Library" to Ic.Grid,
-            "Profiles" to Ic.Grid,
-            "FastFlags" to Ic.Flag,
-            "Settings" to Ic.Sliders
-        )
-
-        val selectedPage = remember { mutableStateOf(0) }
-        val pageMap = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageName = when (selectedPage.value) {
-            0 -> "Home"
-            1 -> "Home"
-            2 -> "Library"
-            3 -> "Profiles"
-            4 -> "FastFlags"
-            5 -> "Settings"
-            else -> "Home"
-        }
-
-        val pageTitles2 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageList = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageToDisplay = when (selectedPage.value) {
-            0 -> "Home"
-            1 -> "Home"
-            2 -> "Library"
-            3 -> "Profiles"
-            4 -> "FastFlags"
-            5 -> "Settings"
-            else -> "Home"
-        }
-
-        val buildPage = { page: String ->
-            when (page) {
-                "Home" -> HomeUI()
-                "Library" -> LibraryUI()
-                "Profiles" -> ProfilesUI()
-                "FastFlags" -> FastFlagsUI()
-                "Settings" -> SettingsUI()
-                else -> HomeUI()
+    fun LibraryPage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PageHeader("Library", "Pin games and jump straight in.")
+            Appear(1) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Add a game")
+                    Group {
+                        Column(
+                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                gn, { gn = it }, label = { Text("Name") }, singleLine = true,
+                                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    gid, { gid = it.filter { c -> c.isDigit() } }, label = { Text("Place ID") },
+                                    singleLine = true, shape = RoundedCornerShape(14.dp),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Btn("Add", {
+                                    if (gn.isNotBlank() && gid.isNotBlank()) {
+                                        games[gn.trim()] = gid; gn = ""; gid = ""; save()
+                                        toast("other", "Game added.")
+                                    }
+                                }, icon = Ic.Plus)
+                            }
+                        }
+                    }
+                }
+            }
+            Appear(2) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Pinned (${games.size})")
+                    Group {
+                        if (games.isEmpty()) Item("No games yet", "Add one above.")
+                        games.keys.sorted().forEach { name ->
+                            Item(name, "Place ID ${games[name]}", {
+                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                            }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Btn("Play", {
+                                        scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                                    }, kind = 1, h = 36.dp)
+                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        Modifier.size(36.dp).clip(CircleShape).clickable { games.remove(name); save() },
+                                        contentAlignment = Alignment.Center
+                                    ) { Ico(Ic.Close, cs.onSurfaceVariant, 18.dp) }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-
-        val selectedPage = remember { mutableStateOf(0) }
-        val pageMap2 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pages = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val packageValue = remember { mutableStateOf(0) }
-
-        val selectedPageValue = remember { mutableStateOf(0) }
-
-        val selectedPageLabel = when (selectedPageValue.value) {
-            0 -> "Home"
-            1 -> "Home"
-            2 -> "Library"
-            3 -> "Profiles"
-            4 -> "FastFlags"
-            5 -> "Settings"
-            else -> "Home"
-        }
-
-        val missing = remember { mutableStateOf(0) }
-
-        val pageInfo = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageMap3 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageInfo2 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageVal = remember { mutableStateOf(0) }
-
-        val pageNames = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageDisplayMap = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val notSelected = remember { mutableStateOf(0) }
-
-        val pageViews = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex = remember { mutableStateOf(0) }
-
-        val pageListUpdated = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageNamesDetailed = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageViewsDetailed = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageOptions = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex2 = remember { mutableStateOf(0) }
-
-        val pageOptions2 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex3 = remember { mutableStateOf(0) }
-
-        val pageOptions3 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex4 = remember { mutableStateOf(0) }
-
-        val pageOptions4 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex5 = remember { mutableStateOf(0) }
-
-        val pageOptions5 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageNamesList = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageDisplayList = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val origin = remember { mutableStateOf(0) }
-
-        val appContent = remember { mutableStateOf(0) }
-
-        val selectedPageOverview = remember { mutableStateOf(0) }
-
-        val pageInfoDetailed = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val selectedPageIndex6 = remember { mutableStateOf(0) }
-
-        val pageOptions6 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageNames6 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageCont = remember { mutableStateOf(0) }
-
-        val pageNameHash = remember { mutableStateOf(0) }
-
-        val pageTitlesDup = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val appPages = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageIndex = remember { mutableStateOf(0) }
-
-        val pageNameMarker = remember { mutableStateOf(0) }
-
-        val pageTitlesFinal = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageStack = remember { mutableStateOf(0) }
-
-        val pageDisplaySet = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val appPagesFinal = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageFlow = remember { mutableStateOf(0) }
-
-        val pageFlow2 = remember { mutableStateOf(0) }
-
-        val pageData = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData2 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData3 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData4 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData5 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData6 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData7 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData8 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData9 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData10 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData11 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData12 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData13 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData14 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData15 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData16 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData17 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData18 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData19 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData20 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData21 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData22 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData23 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData24 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageData25 = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val appState = remember { mutableStateOf(0) }
-
-        val selectedPageIndexFinal = remember { mutableStateOf(0) }
-
-        val pageDisplayFinal = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val pageStateFinal = remember { mutableStateOf(0) }
-
-        val pageNameState = remember { mutableStateOf(0) }
-
-        val selection = remember { mutableStateOf(0) }
-
-        val finalPageChoice = remember { mutableStateOf(0) }
-
-        val pageDisplayMapFinal = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val finalSelection = remember { mutableStateOf(0) }
-
-        val pageChoices = listOf(
-            "Home",
-            "Library",
-            "Profiles",
-            "FastFlags",
-            "Settings"
-        )
-
-        val finalPage = remember { mutableStateOf(0) }
-
-        val pageChoice = remember { mutableStateOf(0) }
-
-        val finalRoute = remember { mutableStateOf(0) }
-
-        val selectedPageValueFinal = remember { mutableStateOf(0) }
-
-        val pageStateFinal2 = remember { mutableStateOf(0) }
-
-        val buildPage = { page: String ->
-            when (page) {
-                "Home" -> HomeUI()
-                "Library" -> LibraryUI()
-                "Profiles" -> ProfilesUI()
-                "FastFlags" -> FastFlagsUI()
-                "Settings" -> SettingsUI()
-                else -> HomeUI()
-            }
-        }
-
-        NavBar(
-            items = navItems,
-            selected = page,
-            onSelect = { page = it }
-        )
-
-        if (page == 0) HomeUI()
-        else if (page == 1) LibraryUI()
-        else if (page == 2) ProfilesUI()
-        else if (page == 3) FastFlagsUI()
-        else if (page == 4) SettingsUI()
     }
 
-    // This is the main entry of the app
-    AppContent()
+    @Composable
+    fun ModsPage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PageHeader("Mods", "Tweak Roblox with packs, profiles and your own files.")
+            Appear(1) {
+                Group {
+                    Row(
+                        Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Ico(Ic.Info, Amber, 26.dp)
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Write flags to Roblox", fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                "Writes your flags to the flag file when you tap Save. Roblox on Android only reads files from its own app package, so root may be needed.",
+                                fontSize = 13.sp, lineHeight = 18.sp, color = cs.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        TacoSwitch(applyOnSave) { applyOnSave = it; save() }
+                    }
+                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
+                        Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                    }
+                }
+            }
+            Appear(2) {
+                TabStrip(
+                    listOf("Customize" to Ic.Sliders, "Packs" to Ic.Download, "Profiles" to Ic.Layers, "Files" to Ic.Folder),
+                    modsTab
+                ) { modsTab = it }
+            }
+            Crossfade(targetState = modsTab, animationSpec = tween(pageAnim), label = "modsTab") { t ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (t) {
+                        0 -> {
+                            SectionLabel("Display")
+                            Group {
+                                FlagSetting(FS_FPSCOUNT, flags) { save() }
+                                FlagSetting(FS_BLUR, flags) { save() }
+                                FlagSetting(FS_SKY, flags) { save() }
+                            }
+                            SectionLabel("Performance")
+                            Group {
+                                FlagSetting(FS_FPS, flags) { save() }
+                                FlagSetting(FS_QUALITY, flags) { save() }
+                            }
+                        }
+                        1 -> {
+                            SectionLabel("Flag packs")
+                            Group {
+                                PACKS.forEach { p ->
+                                    Item(p.name, p.desc) {
+                                        Btn("Apply", {
+                                            flags.putAll(p.sets); save()
+                                            toast("flag", "Added ${p.name} flags.")
+                                        }, kind = 1, h = 38.dp)
+                                    }
+                                }
+                            }
+                        }
+                        2 -> ProfilesUI()
+                        else -> {
+                            SectionLabel("Flag file")
+                            Group {
+                                Item("Path", path)
+                                Item("View file", "Shows the file Roblox would read", {
+                                    scope.launch(Dispatchers.IO) {
+                                        val (_, out) = runCmd("ls -l '$path'; cat '$path'", useRoot)
+                                        fileOut = out.ifEmpty { "Nothing returned." }
+                                    }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Delete flag file", "Removes the file and stops Roblox", {
+                                    scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Clear Roblox cache", "Frees up space", {
+                                    scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                            }
+                            if (fileOut.isNotEmpty()) {
+                                Group {
+                                    Text(
+                                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                                        fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun FlagsPage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PageHeader("FastFlags", "Settings for your current profile.")
+            Appear(1) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Ico(Ic.Warn, Amber, 22.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "Roblox may ignore flags outside its allowlist.",
+                        Modifier.weight(1f), fontSize = 14.sp, color = cs.onSurfaceVariant
+                    )
+                    TextButton({ showEditor = true }) {
+                        Text("Open editor", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            SECTIONS.forEachIndexed { idx, (title, list) ->
+                Appear(2 + idx) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionLabel(title)
+                        Group { list.forEach { FlagSetting(it, flags) { save() } } }
+                    }
+                }
+            }
+            Appear(8) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Quick setup")
+                    Group {
+                        Item("Recommended", PACKS[quickIdx].desc)
+                        Row(
+                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            ChoiceBox(PACKS[quickIdx].name, PACKS.map { it.name }) { quickIdx = it }
+                            Btn("Apply", {
+                                flags.putAll(PACKS[quickIdx].sets); save()
+                                toast("flag", "Added ${PACKS[quickIdx].name} flags.")
+                            }, h = 44.dp)
+                        }
+                        Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SettingsPage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PageHeader("Settings")
+            TabStrip(
+                listOf(
+                    "Appearance" to Ic.Sliders, "Notifications" to Ic.Bell, "Roblox" to Ic.Game,
+                    "Backup" to Ic.Folder, "About" to Ic.Info
+                ),
+                setTab
+            ) { setTab = it }
+            Crossfade(targetState = setTab, animationSpec = tween(pageAnim), label = "setTab") { t ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (t) {
+                        0 -> {
+                            SectionLabel("Accent")
+                            Group {
+                                Row(
+                                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(18.dp)
+                                ) {
+                                    THEMES.forEachIndexed { i, th ->
+                                        val sel = themeIdx == i
+                                        val s by animateFloatAsState(
+                                            if (sel) 1.1f else 1f, spring(dampingRatio = 0.6f), label = "sw"
+                                        )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.clickable(
+                                                interactionSource = remember { MutableInteractionSource() }, indication = null
+                                            ) { themeIdx = i; save() }
+                                        ) {
+                                            Box(
+                                                Modifier.size(46.dp)
+                                                    .graphicsLayer { scaleX = s; scaleY = s }
+                                                    .clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
+                                                    .then(if (sel) Modifier.border(2.dp, cs.onSurface, CircleShape) else Modifier),
+                                                contentAlignment = Alignment.Center
+                                            ) { if (sel) Ico(Ic.Check, Color(0xFF1A1206), 22.dp, 2.4f) }
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(th.name, fontSize = 12.sp, color = if (sel) cs.onSurface else cs.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                            SectionLabel("Surface")
+                            Group {
+                                SwitchItem("True black", "Pure black background for OLED screens.", trueBlack) { trueBlack = it; save() }
+                                SwitchItem("Animated background", "A faint accent glow that drifts slowly.", animBg) { animBg = it; save() }
+                                SwitchItem("Compact lists", "Tighter spacing between rows.", compact) { compact = it; save() }
+                                SwitchItem("Motion", "Turn off for no animations or transitions.", motion) { motion = it; save() }
+                            }
+                            SectionLabel("Shape")
+                            Group {
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Background glow", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${(glowAmt * 200).toInt()}%")
+                                    }
+                                    Slider(
+                                        value = glowAmt, onValueChange = { glowAmt = it },
+                                        valueRange = 0f..0.5f, onValueChangeFinished = { save() }
+                                    )
+                                }
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Corner roundness", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${cornerDp.toInt()} dp")
+                                    }
+                                    Slider(
+                                        value = cornerDp, onValueChange = { cornerDp = it },
+                                        valueRange = 6f..40f, onValueChangeFinished = { save() }
+                                    )
+                                }
+                            }
+                        }
+                        1 -> {
+                            SectionLabel("In app messages")
+                            Group {
+                                Item("Errors always show, whatever you turn off here.")
+                                SwitchItem("FastFlag messages", "Confirms when flags are saved, applied or imported.", msgFlag) { msgFlag = it; save() }
+                                SwitchItem("Launch messages", "Confirms when Roblox or a game is launched.", msgLaunch) { msgLaunch = it; save() }
+                                SwitchItem("Other messages", "Confirms copies, backups and other actions.", msgOther) { msgOther = it; save() }
+                            }
+                        }
+                        2 -> {
+                            Group {
+                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion")
+                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Shizuku", shStatus) {
+                                    Btn("Grant", {
+                                        try { Shizuku.requestPermission(1001) } catch (e: Throwable) { toast("other", "Failed: start Shizuku first.") }
+                                        shStatus = shizukuStatus()
+                                    }, kind = 1, h = 36.dp)
+                                }
+                                SwitchItem(
+                                    "Use root",
+                                    "Apply FastFlags and mods with root. Turn this on to ask your root manager for permission.",
+                                    useRoot
+                                ) { useRoot = it; save() }
+                            }
+                            SectionLabel("Flag file")
+                            Group {
+                                Column(
+                                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        path, { path = it; save() }, label = { Text("Flag file path") },
+                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Pill("Default", path == DEFAULT_PATH) { path = DEFAULT_PATH; save() }
+                                        val appPath = "/data/data/$pkg/files/ClientSettings/ClientAppSettings.json"
+                                        Pill("App data (root, unverified)", path == appPath) { path = appPath; save() }
+                                    }
+                                }
+                                SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart) { restart = it; save() }
+                                SwitchItem("Disable frame-rate cap", "Sets a system property when you save.", fps) { fps = it; save() }
+                                Item("Clear Roblox cache", "Frees up space", {
+                                    scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                            }
+                        }
+                        3 -> {
+                            Group {
+                                Item("Save your pinned games, profiles and flags to a file, or restore them on another device.")
+                                Row(
+                                    Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Btn("Export backup", { share(backupJson(), "Export backup") }, kind = 1)
+                                    Btn("Import backup", {
+                                        val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                                        val msg = runCatching {
+                                            val o = JSONObject(text)
+                                            o.optJSONObject("flags")?.let { j -> flags.clear(); flags.putAll(parseFlags(j.toString())) }
+                                            o.optJSONObject("presets")?.let { j -> presets.clear(); presets.putAll(parseFlags(j.toString())) }
+                                            o.optJSONObject("games")?.let { j -> games.clear(); games.putAll(parseFlags(j.toString())) }
+                                            save()
+                                            "Backup imported."
+                                        }.getOrElse { "Failed: copy a backup to the clipboard first." }
+                                        toast("other", msg)
+                                    }, kind = 1)
+                                }
+                            }
+                        }
+                        else -> {
+                            Group {
+                                Item("Diagnostics", "A report you can copy for support", {
+                                    val report = "TacoStrap 3.1\nAndroid ${Build.VERSION.SDK_INT}\n$shStatus\nRoot: $useRoot\nPackage: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}"
+                                    clip.setPrimaryClip(ClipData.newPlainText("report", report))
+                                    toast("other", "Copied diagnostics.")
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Licenses", "Open source notices", { licenses = true }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                            }
+                            Text(
+                                "TacoStrap for Android 3.1",
+                                Modifier.fillMaxWidth().padding(top = 8.dp),
+                                fontSize = 13.sp, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun EditorScreen() {
+        val cs = MaterialTheme.colorScheme
+        val filtered = flags.keys.filter { it.contains(search, ignoreCase = true) }.sorted()
+        Column(
+            Modifier.fillMaxSize().background(cs.background).statusBarsPadding().navigationBarsPadding()
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).clickable { showEditor = false },
+                    contentAlignment = Alignment.Center
+                ) { Ico(Ic.Back, cs.onSurface, 24.dp) }
+                Text(
+                    "FastFlag editor", Modifier.weight(1f).padding(start = 4.dp),
+                    fontSize = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp
+                )
+                TextButton({ confirmClear = true }) { Text("Clear all") }
+            }
+            TabStrip(listOf("Flags" to Ic.Flag, "JSON" to Ic.Doc, "Profiles" to Ic.Layers), edTab) { edTab = it }
+            when (edTab) {
+                0 -> LazyColumn(
+                    Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        OutlinedTextField(
+                            search, { search = it }, label = { Text("Search flags") }, singleLine = true,
+                            leadingIcon = { Ico(Ic.Search, cs.onSurfaceVariant, 20.dp) },
+                            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    item {
+                        Group {
+                            Column(
+                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text("Add custom flag", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                OutlinedTextField(
+                                    k, { k = it }, label = { Text("Name") }, singleLine = true,
+                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        v, { v = it }, label = { Text("Value") }, singleLine = true,
+                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
+                                    )
+                                    Btn("Add", {
+                                        if (k.isNotBlank()) { flags[k.trim()] = v.trim(); k = ""; v = ""; save() }
+                                    }, icon = Ic.Plus)
+                                }
+                            }
+                        }
+                    }
+                    item { SectionLabel("Your flags (${filtered.size})") }
+                    if (filtered.isEmpty()) {
+                        item { Text("No flags yet.", color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp)) }
+                    }
+                    items(filtered, key = { it }) { name ->
+                        val value = flags[name] ?: ""
+                        val isBool = value.equals("true", true) || value.equals("false", true)
+                        Group {
+                            Row(
+                                Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    name, Modifier.weight(1f), fontSize = 13.sp,
+                                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium
+                                )
+                                if (isBool) {
+                                    TacoSwitch(value.equals("true", true)) {
+                                        flags[name] = if (it) "True" else "False"; save()
+                                    }
+                                }
+                                Box(
+                                    Modifier.size(40.dp).clip(CircleShape).clickable { flags.remove(name); save() },
+                                    contentAlignment = Alignment.Center
+                                ) { Ico(Ic.Close, cs.onSurfaceVariant, 18.dp) }
+                            }
+                            if (!isBool) {
+                                OutlinedTextField(
+                                    value, { flags[name] = it; save() }, singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                1 -> Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedTextField(
+                        jsonText, { jsonText = it }, label = { Text("ClientAppSettings JSON") },
+                        minLines = 8, maxLines = 16,
+                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                        shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Btn("Load current", { jsonText = toJson(flags); jsonMsg = "" }, kind = 2)
+                        Btn("Replace flags", {
+                            jsonMsg = runCatching {
+                                val m = parseFlags(jsonText)
+                                flags.clear(); flags.putAll(m); save()
+                                "Loaded ${m.size} flags."
+                            }.getOrElse { "Invalid JSON." }
+                        })
+                    }
+                    if (jsonMsg.isNotEmpty()) Text(jsonMsg, fontSize = 13.sp, color = cs.primary)
+                }
+                else -> Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
+                ) { ProfilesUI() }
+            }
+        }
+    }
+
+    // ================= ROOT UI =================
+
+    BackHandler(enabled = showEditor) { showEditor = false }
+
+    MaterialTheme(colorScheme = scheme) {
+        CompositionLocalProvider(
+            LocalCorner provides cornerDp.dp,
+            LocalPad provides (if (compact) 10.dp else 16.dp),
+            LocalMotion provides motion
+        ) {
+            Box(
+                Modifier.fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(pc.copy(alpha = glowAmt), Color.Transparent),
+                            center = Offset(300f + 480f * glow, -80f),
+                            radius = 1100f
+                        )
+                    )
+            ) {
+                Scaffold(
+                    containerColor = Color.Transparent,
+                    snackbarHost = {
+                        SnackbarHost(snackbar) { d ->
+                            Snackbar(
+                                d, shape = RoundedCornerShape(16.dp),
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    },
+                    bottomBar = {
+                        Column(
+                            Modifier.background(MaterialTheme.colorScheme.surfaceVariant).navigationBarsPadding()
+                        ) {
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box {
+                                    Row(
+                                        Modifier.height(48.dp).clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                                            .clickable { pkgMenu = true }
+                                            .padding(start = 18.dp, end = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            if (pkg == DEFAULT_PKG) "Roblox" else "Custom",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Ico(Ic.Up, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
+                                    }
+                                    DropdownMenu(expanded = pkgMenu, onDismissRequest = { pkgMenu = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("Roblox ($DEFAULT_PKG)") },
+                                            onClick = { pkg = DEFAULT_PKG; pkgMenu = false; save() }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Custom package...") },
+                                            onClick = { pkgMenu = false; pkgInput = pkg; pkgDialog = true }
+                                        )
+                                    }
+                                }
+                                Btn("Save and Launch", { doSave(true) }, Modifier.weight(1.5f))
+                                Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1)
+                            }
+                            NavBar(navItems, page) { page = it }
+                        }
+                    }
+                ) { pad ->
+                    Box(Modifier.padding(pad).fillMaxSize()) {
+                        Crossfade(targetState = page, animationSpec = tween(pageAnim), label = "page") { p ->
+                            when (p) {
+                                0 -> HomePage()
+                                1 -> LibraryPage()
+                                2 -> ModsPage()
+                                3 -> FlagsPage()
+                                else -> SettingsPage()
+                            }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showEditor,
+                    enter = slideInHorizontally(tween(if (motion) 300 else 0)) { it } + fadeIn(tween(if (motion) 300 else 0)),
+                    exit = slideOutHorizontally(tween(if (motion) 240 else 0)) { it } + fadeOut(tween(if (motion) 240 else 0))
+                ) { EditorScreen() }
+            }
+
+            renaming?.let { old ->
+                AlertDialog(
+                    onDismissRequest = { renaming = null },
+                    shape = RoundedCornerShape(28.dp),
+                    title = { Text("Rename profile") },
+                    text = { OutlinedTextField(newName, { newName = it }, singleLine = true) },
+                    confirmButton = {
+                        TextButton({
+                            val n = newName.trim()
+                            if (n.isNotEmpty() && n != old) {
+                                presets[old]?.let { presets[n] = it; presets.remove(old); save() }
+                            }
+                            renaming = null
+                        }) { Text("Rename") }
+                    },
+                    dismissButton = { TextButton({ renaming = null }) { Text("Cancel") } }
+                )
+            }
+
+            if (confirmClear) {
+                AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    shape = RoundedCornerShape(28.dp),
+                    title = { Text("Clear all flags?") },
+                    text = { Text("This removes all ${flags.size} flags from the list. Saved profiles are kept.") },
+                    confirmButton = { TextButton({ flags.clear(); save(); confirmClear = false }) { Text("Clear") } },
+                    dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (pkgDialog) {
+                AlertDialog(
+                    onDismissRequest = { pkgDialog = false },
+                    shape = RoundedCornerShape(28.dp),
+                    title = { Text("Package name") },
+                    text = {
+                        OutlinedTextField(
+                            pkgInput, { pkgInput = it }, singleLine = true,
+                            label = { Text("e.g. com.roblox.client") }
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            if (pkgInput.isNotBlank()) { pkg = pkgInput.trim(); save() }
+                            pkgDialog = false
+                        }) { Text("Save") }
+                    },
+                    dismissButton = { TextButton({ pkgDialog = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (licenses) {
+                AlertDialog(
+                    onDismissRequest = { licenses = false },
+                    shape = RoundedCornerShape(28.dp),
+                    title = { Text("Licenses") },
+                    text = { Text("TacoStrap is built with Jetpack Compose and Shizuku (Apache License 2.0).") },
+                    confirmButton = { TextButton({ licenses = false }) { Text("Close") } }
+                )
+            }
+        }
+    }
 }
