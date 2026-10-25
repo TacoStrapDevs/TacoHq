@@ -71,8 +71,6 @@ private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
 private const val FPS_FLAG = "DFIntTaskSchedulerTargetFps"
 private const val QUALITY_FLAG = "FIntRomarkStartWithGraphicQualityLevel"
 
-// ---------- Logic ----------
-
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
     return o.keys().asSequence().associateWith { o.get(it).toString() }
@@ -125,6 +123,16 @@ fun resetFlags(path: String): String {
     return if (ok) "Removed flag file. Reopen Roblox." else "Failed: $msg"
 }
 
+fun fullRobloxReset(path: String): String {
+    val (ok, msg) = run("""
+        rm -f '$path';
+        setprop $FPS_PROP false;
+        rm -rf /sdcard/Android/data/$PKG/cache/*;
+        am force-stop $PKG
+    """.trimIndent())
+    return if (ok) "Full Roblox reset complete. Reopen Roblox." else "Failed: $msg"
+}
+
 fun clearAllRobloxFlags(path: String): String {
     val (ok, msg) = run("rm -f '$path'; setprop $FPS_PROP false; am force-stop $PKG")
     return if (ok) "Removed all Roblox flags. Reopen Roblox." else "Failed: $msg"
@@ -139,8 +147,6 @@ fun clearCache(): String {
     val (ok, msg) = run("rm -rf /sdcard/Android/data/$PKG/cache/*")
     return if (ok) "Cleared Roblox cache." else "Failed: $msg"
 }
-
-// ---------- Catalog ----------
 
 private data class AppTheme(val name: String, val primary: Color, val secondary: Color)
 
@@ -171,8 +177,6 @@ private val OPTIONS = listOf(
 )
 
 private val GROUPS = listOf("Graphics", "Performance", "World detail", "Interface", "Network", "Debug")
-
-// ---------- Reusable UI ----------
 
 @Composable
 private fun Appear(index: Int, content: @Composable () -> Unit) {
@@ -381,7 +385,6 @@ fun App() {
         }
     }
 
-    // ----- Theme -----
     val theme = THEMES[themeIdx]
     val pc by animateColorAsState(theme.primary, tween(600), label = "pc")
     val sc by animateColorAsState(theme.secondary, tween(600), label = "sc")
@@ -405,16 +408,8 @@ fun App() {
     )
 
     val inf = rememberInfiniteTransition(label = "inf")
-    val shift by inf.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "shift"
-    )
-    val pulse by inf.animateFloat(
-        0.6f, 1f,
-        infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse),
-        label = "pulse"
-    )
+    val shift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "shift")
+    val pulse by inf.animateFloat(0.6f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
     val glow = if (animBg) shift else 0.3f
 
     val statusColor by animateColorAsState(if (ready) Color(0xFF4CAF50) else Color(0xFFEF5350), tween(400), label = "chip")
@@ -423,6 +418,7 @@ fun App() {
         shStatus.contains("Tap Grant") -> "Needs permission"
         else -> "Shizuku off"
     }
+
     val flagCount by animateIntAsState(flags.size, tween(600), label = "count")
     val tabs = listOf("Home" to "🏠", "Flags" to "🚩", "Editor" to "📝", "Presets" to "💾", "Settings" to "⚙️")
 
@@ -434,7 +430,7 @@ fun App() {
                 .background(
                     Brush.radialGradient(
                         listOf(pc.copy(alpha = 0.22f), Color.Transparent),
-                        center = Offset(150f + 700f * glow, 250f + 500f * glow),
+                        center = Offset(150f + 700f * glow, 250f + 700f * glow),
                         radius = 1100f
                     )
                 )
@@ -459,12 +455,8 @@ fun App() {
                 }
             ) { pad ->
                 Column(Modifier.padding(pad).fillMaxSize()) {
-
-                    // ----- Header -----
                     Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Image(
@@ -498,10 +490,7 @@ fun App() {
 
                     AnimatedVisibility(busy, enter = fadeIn(), exit = fadeOut()) {
                         LinearProgressIndicator(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
-                                .clip(RoundedCornerShape(50))
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp).clip(RoundedCornerShape(50))
                         )
                     }
 
@@ -523,12 +512,7 @@ fun App() {
                                                 Stat("Active flags", "$flagCount", Modifier.weight(1f))
                                                 Stat("Roblox", robloxVersion, Modifier.weight(1f))
                                             }
-                                            Text(
-                                                path,
-                                                fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
+                                            Text(path, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
@@ -539,6 +523,7 @@ fun App() {
                                             PressButton("Apply flags", {
                                                 task { applyFlags(toJson(flags), path, restart, fps) }
                                             }, Modifier.fillMaxWidth().height(58.dp))
+
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -546,6 +531,18 @@ fun App() {
                                                 PressButton("Launch", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
                                                 PressButton("Reset", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
                                             }
+
+                                            Row(
+                                                Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                PressButton("Full reset", {
+                                                    flags.clear()
+                                                    save()
+                                                    task { fullRobloxReset(path) }
+                                                }, Modifier.fillMaxWidth(), outlined = true)
+                                            }
+
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -576,6 +573,7 @@ fun App() {
                                                 }, Modifier.weight(1f), outlined = true)
                                                 PressButton("Clear cache", { task { clearCache() } }, Modifier.weight(1f), outlined = true)
                                             }
+
                                             Row(
                                                 Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -590,6 +588,7 @@ fun App() {
                                                     shStatus = shizukuStatus()
                                                 }, Modifier.weight(1f), outlined = true)
                                             }
+
                                             Text(shStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
@@ -602,12 +601,7 @@ fun App() {
                                         exit = fadeOut() + shrinkVertically()
                                     ) {
                                         Panel(container = MaterialTheme.colorScheme.primaryContainer) {
-                                            Text(
-                                                output,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
+                                            Text(output, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                                             TextButton({ output = "" }) { Text("Dismiss") }
                                         }
                                     }
@@ -840,7 +834,9 @@ fun App() {
                                     }
 
                                     item { SectionTitle("Saved presets (${presets.size})") }
-                                    if (presets.isEmpty()) item { Text("No presets yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    if (presets.isEmpty()) item {
+                                        Text("No presets yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                     items(presets.keys.sorted(), key = { "p_$it" }) { name ->
                                         val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
                                         Panel {
@@ -895,8 +891,7 @@ fun App() {
                                         Panel {
                                             SectionTitle("Accent theme")
                                             Row(
-                                                Modifier.horizontalScroll(rememberScrollState())
-                                                    .padding(vertical = 6.dp),
+                                                Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
                                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                                             ) {
                                                 THEMES.forEachIndexed { i, th ->
@@ -925,6 +920,11 @@ fun App() {
                                                 flags.clear()
                                                 save()
                                                 task { clearAllRobloxFlags(path) }
+                                            }, outlined = true)
+                                            PressButton("Full reset", {
+                                                flags.clear()
+                                                save()
+                                                task { fullRobloxReset(path) }
                                             }, outlined = true)
                                         }
                                     }
