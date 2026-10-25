@@ -65,10 +65,13 @@ import rikka.shizuku.Shizuku
 import java.util.Base64
 
 private const val PKG = "com.roblox.client"
+
 private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
 private const val FPS_FLAG = "DFIntTaskSchedulerTargetFps"
 private const val QUALITY_FLAG = "FIntRomarkStartWithGraphicQualityLevel"
+
+// ---------- Logic ----------
 
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
@@ -132,6 +135,8 @@ fun clearCache(): String {
     return if (ok) "Cleared Roblox cache." else "Failed: $msg"
 }
 
+// ---------- Catalog ----------
+
 private data class AppTheme(val name: String, val primary: Color, val secondary: Color)
 
 private val THEMES = listOf(
@@ -162,6 +167,8 @@ private val OPTIONS = listOf(
 
 private val GROUPS = listOf("Graphics", "Performance", "World detail", "Interface", "Network", "Debug")
 
+// ---------- Reusable UI ----------
+
 @Composable
 private fun Appear(index: Int, content: @Composable () -> Unit) {
     var visible by remember { mutableStateOf(false) }
@@ -170,38 +177,6 @@ private fun Appear(index: Int, content: @Composable () -> Unit) {
         visible = visible,
         enter = fadeIn(tween(360)) + slideInVertically(tween(360)) { it / 6 }
     ) { content() }
-}
-
-@Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-}
-
-@Composable
-private fun ChipRow(content: @Composable RowScope.() -> Unit) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
-}
-
-@Composable
-private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
-    val bg by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
-        tween(220), label = "pillbg"
-    )
-    val fg by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-        tween(220), label = "pillfg"
-    )
-    val sc by animateFloatAsState(if (selected) 1.04f else 1f, spring(dampingRatio = 0.5f), label = "pillsc")
-    Box(
-        Modifier
-            .scale(sc)
-            .clip(RoundedCornerShape(50))
-            .background(bg)
-            .clickable(onClick = onClick)
-    ) {
-        Text(text, Modifier.padding(horizontal = 18.dp, vertical = 10.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg)
-    }
 }
 
 @Composable
@@ -259,7 +234,66 @@ private fun PressButton(
 }
 
 @Composable
-private fun GlowStat(label: String, value: String, accent: Color = MaterialTheme.colorScheme.primary) {
+private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
+    val bg by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+        tween(220), label = "pillbg"
+    )
+    val fg by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        tween(220), label = "pillfg"
+    )
+    val sc by animateFloatAsState(if (selected) 1.04f else 1f, spring(dampingRatio = 0.5f), label = "pillsc")
+    Box(
+        Modifier
+            .scale(sc)
+            .clip(RoundedCornerShape(50))
+            .background(bg)
+            .clickable(onClick = onClick)
+    ) {
+        Text(text, Modifier.padding(horizontal = 18.dp, vertical = 10.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg)
+    }
+}
+
+@Composable
+private fun Stat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f))
+            .padding(14.dp)
+    ) {
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onChange(!checked) }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, fontWeight = FontWeight.Medium, fontSize = 16.sp)
+            Text(sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked, onChange)
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+private fun ChipRow(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+}
+
+@Composable
+private fun HeroMetric(label: String, value: String, accent: Color = MaterialTheme.colorScheme.primary) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -301,20 +335,6 @@ private fun ActionTile(icon: String, title: String, subtitle: String, accent: Co
     }
 }
 
-@Composable
-private fun ToggleRow(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { onChange(!checked) }.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontWeight = FontWeight.Medium, fontSize = 16.sp)
-            Text(sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked, onChange)
-    }
-}
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -331,37 +351,37 @@ fun App() {
     val snack = remember { SnackbarHostState() }
 
     val flags = remember {
-        mutableStateMapOf<String, String>().apply { runCatching { putAll(parseFlags(prefs.getString("flags", "{}")!!)) } }
+        mutableStateMapOf<String, String>().apply { runCatching { putAll(parseFlags(prefs.getString("flags", \"{}\")!!)) } }
     }
     val presets = remember {
-        mutableStateMapOf<String, String>().apply { runCatching { putAll(parseFlags(prefs.getString("presets", "{}")!!)) } }
+        mutableStateMapOf<String, String>().apply { runCatching { putAll(parseFlags(prefs.getString(\"presets\", \"{}\")!!)) } }
     }
-    var path by remember { mutableStateOf(prefs.getString("path3", DEFAULT_PATH)!!) }
-    var restart by remember { mutableStateOf(prefs.getBoolean("restart", true)) }
-    var fps by remember { mutableStateOf(prefs.getBoolean("fps", false)) }
-    var themeIdx by remember { mutableStateOf(prefs.getInt("theme", 0).coerceIn(0, THEMES.size - 1)) }
-    var animBg by remember { mutableStateOf(prefs.getBoolean("animbg", true)) }
+    var path by remember { mutableStateOf(prefs.getString(\"path3\", DEFAULT_PATH)!!) }
+    var restart by remember { mutableStateOf(prefs.getBoolean(\"restart\", true)) }
+    var fps by remember { mutableStateOf(prefs.getBoolean(\"fps\", false)) }
+    var themeIdx by remember { mutableStateOf(prefs.getInt(\"theme\", 0).coerceIn(0, THEMES.size - 1)) }
+    var animBg by remember { mutableStateOf(prefs.getBoolean(\"animbg\", true)) }
     var busy by remember { mutableStateOf(false) }
     var shStatus by remember { mutableStateOf(shizukuStatus()) }
-    var robloxVersion by remember { mutableStateOf("-") }
+    var robloxVersion by remember { mutableStateOf(\"-\") }
     var tab by remember { mutableStateOf(0) }
 
-    var search by remember { mutableStateOf("") }
-    var k by remember { mutableStateOf("") }
-    var v by remember { mutableStateOf("") }
-    var pn by remember { mutableStateOf("") }
+    var search by remember { mutableStateOf(\"\") }
+    var k by remember { mutableStateOf(\"\") }
+    var v by remember { mutableStateOf(\"\") }
+    var pn by remember { mutableStateOf(\"\") }
     var renaming by remember { mutableStateOf<String?>(null) }
-    var newName by remember { mutableStateOf("") }
-    var editor by remember { mutableStateOf("") }
+    var newName by remember { mutableStateOf(\"\") }
+    var editor by remember { mutableStateOf(\"\") }
     var editorErr by remember { mutableStateOf<String?>(null) }
-    var output by remember { mutableStateOf("") }
+    var output by remember { mutableStateOf(\"\") }
 
     fun save() {
         prefs.edit()
-            .putString("flags", toJson(flags)).putString("presets", toJson(presets))
-            .putString("path3", path)
-            .putBoolean("restart", restart).putBoolean("fps", fps)
-            .putInt("theme", themeIdx).putBoolean("animbg", animBg).apply()
+            .putString(\"flags\", toJson(flags)).putString(\"presets\", toJson(presets))
+            .putString(\"path3\", path)
+            .putBoolean(\"restart\", restart).putBoolean(\"fps\", fps)
+            .putInt(\"theme\", themeIdx).putBoolean(\"animbg\", animBg).apply()
     }
 
     fun say(msg: String) { scope.launch { snack.currentSnackbarData?.dismiss(); snack.showSnackbar(msg) } }
@@ -383,50 +403,53 @@ fun App() {
     }
 
     LaunchedEffect(Unit) { while (true) { shStatus = shizukuStatus(); delay(2000) } }
-    val ready = shStatus == "Shizuku ready"
+    val ready = shStatus == \"Shizuku ready\"
 
     LaunchedEffect(ready) {
         if (ready) {
-            val (ok, out) = withContext(Dispatchers.IO) { run("dumpsys package $PKG | grep -m1 versionName") }
-            robloxVersion = if (ok && out.contains("=")) out.substringAfter("=").trim() else "Not found"
+            val (ok, out) = withContext(Dispatchers.IO) { run(\"dumpsys package $PKG | grep -m1 versionName\") }
+            robloxVersion = if (ok && out.contains(\"=\")) out.substringAfter(\"=\").trim() else \"Not found\"
         }
     }
 
+    // ----- Theme -----
     val theme = THEMES[themeIdx]
-    val pc by animateColorAsState(theme.primary, tween(600), label = "pc")
-    val sc by animateColorAsState(theme.secondary, tween(600), label = "sc")
-    val base = Color(0xFF090B11)
-    val panel = Color(0xFF121821)
+    val pc by animateColorAsState(theme.primary, tween(600), label = \"pc\")
+    val sc by animateColorAsState(theme.secondary, tween(600), label = \"sc\")
+    val base = Color(0xFF0E0D0C)
+    val panel = Color(0xFF171511)
     val scheme = darkColorScheme(
         primary = pc,
-        onPrimary = Color(0xFF0B101C),
+        onPrimary = Color(0xFF1D1207),
         primaryContainer = lerp(base, pc, 0.25f),
-        onPrimaryContainer = lerp(pc, Color.White, 0.7f),
+        onPrimaryContainer = lerp(pc, Color.White, 0.72f),
         secondary = sc,
-        onSecondary = Color(0xFF0B101C),
-        secondaryContainer = lerp(base, pc, 0.32f),
+        onSecondary = Color(0xFF1D1207),
+        secondaryContainer = lerp(base, pc, 0.3f),
         onSecondaryContainer = lerp(pc, Color.White, 0.45f),
         background = base,
-        onBackground = Color(0xFFEDE8E3),
+        onBackground = Color(0xFFEDE7E1),
         surface = base,
-        onSurface = Color(0xFFEDE8E3),
+        onSurface = Color(0xFFEDE7E1),
         surfaceVariant = panel,
-        onSurfaceVariant = Color(0xFFC9C4BE),
-        outline = lerp(Color(0xFF55525A), pc, 0.22f)
+        onSurfaceVariant = Color(0xFFD7C8B8),
+        outline = lerp(Color(0xFF5A4E42), pc, 0.2f)
     )
 
-    val inf = rememberInfiniteTransition(label = "inf")
-    val shift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "shift")
-    val pulse by inf.animateFloat(0.6f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
+    val inf = rememberInfiniteTransition(label = \"inf\")
+    val shift by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = \"shift\")
+    val pulse by inf.animateFloat(0.6f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Reverse), label = \"pulse\")
     val glow = if (animBg) shift else 0.3f
-    val statusColor by animateColorAsState(if (ready) Color(0xFF34D399) else Color(0xFFEF4444), tween(350), label = "chip")
+
+    val statusColor by animateColorAsState(if (ready) Color(0xFF34D399) else Color(0xFFEF4444), tween(350), label = \"chip\")
     val statusText = when {
-        ready -> "Shizuku ready"
-        shStatus.contains("Tap Grant") -> "Needs permission"
-        else -> "Shizuku off"
+        ready -> \"Shizuku ready\"
+        shStatus.contains(\"Tap Grant\") -> \"Needs permission\"
+        else -> \"Shizuku off\"
     }
-    val flagCount by animateIntAsState(flags.size, tween(600), label = "count")
-    val tabs = listOf("Home" to "🏠", "Flags" to "🚩", "Editor" to "📝", "Presets" to "💾", "Settings" to "⚙️")
+
+    val flagCount by animateIntAsState(flags.size, tween(600), label = \"count\")
+    val tabs = listOf(\"Home\" to \"🏠\", \"Flags\" to \"🚩\", \"Editor\" to \"📝\", \"Presets\" to \"💾\", \"Settings\" to \"⚙️\")
 
     MaterialTheme(colorScheme = scheme) {
         Box(
@@ -435,7 +458,7 @@ fun App() {
                 .background(base)
                 .background(
                     Brush.radialGradient(
-                        listOf(pc.copy(alpha = 0.28f), Color.Transparent),
+                        listOf(pc.copy(alpha = 0.26f), Color.Transparent),
                         center = Offset(150f + 700f * glow, 250f + 500f * glow),
                         radius = 1100f
                     )
@@ -454,7 +477,7 @@ fun App() {
                                 selected = tab == i,
                                 onClick = { tab = i },
                                 icon = {
-                                    val s by animateFloatAsState(if (tab == i) 1.28f else 1f, spring(dampingRatio = 0.4f), label = "ic")
+                                    val s by animateFloatAsState(if (tab == i) 1.28f else 1f, spring(dampingRatio = 0.4f), label = \"ic\")
                                     Text(emoji, fontSize = 20.sp, modifier = Modifier.graphicsLayer { scaleX = s; scaleY = s })
                                 },
                                 label = { Text(name, fontSize = 11.sp) }
@@ -478,14 +501,14 @@ fun App() {
                         ) {
                             Image(
                                 painterResource(id = R.mipmap.ic_launcher),
-                                contentDescription = "TacoStrap logo",
+                                contentDescription = \"TacoStrap logo\",
                                 modifier = Modifier
                                     .size(42.dp)
                                     .clip(RoundedCornerShape(14.dp))
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("TacoStrap", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                Text(\"TacoStrap\", fontSize = 24.sp, fontWeight = FontWeight.Bold)
                                 Text(tabs[tab].first, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row(
@@ -529,8 +552,8 @@ fun App() {
                                     .background(
                                         Brush.linearGradient(
                                             listOf(
-                                                pc.copy(alpha = 0.40f),
-                                                pc.copy(alpha = 0.16f),
+                                                pc.copy(alpha = 0.38f),
+                                                pc.copy(alpha = 0.17f),
                                                 Color.Transparent
                                             ),
                                             start = Offset.Zero,
@@ -546,14 +569,14 @@ fun App() {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column {
-                                            Text("Roblox flag control", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                                            Text("Injection ready", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                                            Text(\"Roblox flag control\", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                            Text(\"Injection ready\", fontWeight = FontWeight.Bold, fontSize = 24.sp)
                                         }
                                         Box(
                                             Modifier.size(44.dp).clip(CircleShape).background(pc.copy(alpha = 0.15f)),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("🚀", fontSize = 20.sp)
+                                            Text(\"🚀\", fontSize = 20.sp)
                                         }
                                     }
 
@@ -566,8 +589,8 @@ fun App() {
                                     )
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Box(Modifier.weight(1f)) { GlowStat("Active", "$flagCount") }
-                                        Box(Modifier.weight(1f)) { GlowStat("Version", robloxVersion, if (ready) pc else MaterialTheme.colorScheme.onSurfaceVariant) }
+                                        Box(Modifier.weight(1f)) { HeroMetric(\"Active\", \"$flagCount\") }
+                                        Box(Modifier.weight(1f)) { HeroMetric(\"Version\", robloxVersion, if (ready) pc else MaterialTheme.colorScheme.onSurfaceVariant) }
                                     }
                                 }
                             }
@@ -575,37 +598,37 @@ fun App() {
                     }
 
                     item {
-                        SectionTitle("Main actions")
+                        SectionTitle(\"Main actions\")
                     }
 
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            PressButton("Apply flags", { task { applyFlags(toJson(flags), path, restart, fps) } }, Modifier.fillMaxWidth().height(58.dp))
+                            PressButton(\"Apply flags\", { task { applyFlags(toJson(flags), path, restart, fps) } }, Modifier.fillMaxWidth().height(58.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PressButton("Launch", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
-                                PressButton("Reset", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
+                                PressButton(\"Launch\", { task { launchRoblox() } }, Modifier.weight(1f), tonal = true)
+                                PressButton(\"Reset\", { task { resetFlags(path) } }, Modifier.weight(1f), outlined = true)
                             }
                         }
                     }
 
                     item {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Box(Modifier.weight(1f)) { GlowStat("Restart", if (restart) "On" else "Off", if (restart) pc else MaterialTheme.colorScheme.onSurfaceVariant) }
-                            Box(Modifier.weight(1f)) { GlowStat("FPS cap", if (fps) "Off" else "On", if (fps) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary) }
+                            Box(Modifier.weight(1f)) { HeroMetric(\"Restart\", if (restart) \"On\" else \"Off\", if (restart) pc else MaterialTheme.colorScheme.onSurfaceVariant) }
+                            Box(Modifier.weight(1f)) { HeroMetric(\"FPS cap\", if (fps) \"Off\" else \"On\", if (fps) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary) }
                         }
                     }
 
                     item {
                         Panel {
-                            SectionTitle("Quick tools")
+                            SectionTitle(\"Quick tools\")
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                ActionTile("✔", "Verify file", "Check the current flag file and output", pc) {
+                                ActionTile(\"✔\", \"Verify file\", \"Check the current flag file and output\", pc) {
                                     task {
-                                        val (_, msg) = run("ls -l '$path'; cat '$path'")
-                                        msg.ifEmpty { "Nothing returned. File may not exist." }
+                                        val (_, msg) = run(\"ls -l '$path'; cat '$path'\")
+                                        msg.ifEmpty { \"Nothing returned. File may not exist.\" }
                                     }
                                 }
-                                ActionTile("🧹", "Clear cache", "Remove temporary Roblox cache folders", MaterialTheme.colorScheme.secondary) { task { clearCache() } }
+                                ActionTile(\"🧹\", \"Clear cache\", \"Remove temporary Roblox cache folders\", MaterialTheme.colorScheme.secondary) { task { clearCache() } }
                             }
                         }
                     }
@@ -618,77 +641,16 @@ fun App() {
                         ) {
                             Panel(container = MaterialTheme.colorScheme.primaryContainer) {
                                 Text(output, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                TextButton({ output = "" }) { Text("Dismiss") }
+                                TextButton({ output = \"\" }) { Text(\"Dismiss\") } 
                             }
                         }
                     }
 
-                    // Other tabs below preserved exactly but with same UI style is not needed as user asked for layout
                     item {
-                        Text("\n")
+                        Text(\"\\n\")
                     }
                 }
             }
         }
     }
 }
-
-// Keep original tabbed support below for all other sections when user navigates away from Home.
-// This branch preserves the original non-home UX while making Home the main high-end Voidstrap-style screen.
-
-@Composable
-private fun LegacyHomeContent(
-    flags: MutableMap<String, String>,
-    presets: MutableMap<String, String>,
-    path: String,
-    restart: Boolean,
-    fps: Boolean,
-    task: (()->String) -> Unit,
-    output: String,
-    setOutput: (String) -> Unit,
-    say: (String) -> Unit,
-    runCommand: (String) -> Pair<Boolean, String>,
-    shStatus: String,
-    setShStatus: (String) -> Unit,
-    ready: Boolean,
-    robloxVersion: String,
-    clip: ClipboardManager,
-    ctx: Context,
-    themeIdx: Int,
-    setThemeIdx: (Int) -> Unit,
-    animBg: Boolean,
-    setAnimBg: (Boolean) -> Unit,
-    save: () -> Unit,
-    toggleOpt: (Opt) -> Unit,
-    search: String,
-    setSearch: (String) -> Unit,
-    k: String,
-    setK: (String) -> Unit,
-    v: String,
-    setV: (String) -> Unit,
-    pn: String,
-    setPn: (String) -> Unit,
-    renaming: String?,
-    setRenaming: (String?) -> Unit,
-    newName: String,
-    setNewName: (String) -> Unit,
-    editor: String,
-    setEditor: (String) -> Unit,
-    editorErr: String?,
-    setEditorErr: (String?) -> Unit,
-    tab: Int,
-    setTab: (Int) -> Unit,
-    theme: AppTheme,
-    pc: Color,
-    sc: Color,
-    statusColor: Color,
-    statusText: String,
-    flagCount: Int,
-    tabs: List<Pair<String, String>>,
-    snack: SnackbarHostState,
-    busy: Boolean
-) {
-    // Unused placeholder kept to preserve compatibility with the original file structure.
-}
-
-// Space intentionally left for future legacy tab content if needed.
