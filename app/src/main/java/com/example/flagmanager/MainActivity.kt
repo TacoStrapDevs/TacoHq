@@ -82,25 +82,6 @@ private const val ROBLOX_PKG = "com.roblox.client"
 
 // ---------- Logic ----------
 
-private fun saveSelectedRegion(ctx: Context, region: String) {
-    val file = File(ctx.filesDir, "selected_region.json")
-    val json = JSONObject()
-    json.put("region", region)
-    file.writeText(json.toString())
-}
-
-private fun loadSelectedRegion(ctx: Context): String {
-    val file = File(ctx.filesDir, "selected_region.json")
-    if (!file.exists()) return "Singapore"
-
-    return try {
-        val json = JSONObject(file.readText())
-        json.optString("region", "Singapore")
-    } catch (e: Exception) {
-        "Singapore"
-    }
-}
-
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
     return o.keys().asSequence().associateWith { key ->
@@ -756,12 +737,6 @@ fun App() {
     var k by remember { mutableStateOf("") }
     var v by remember { mutableStateOf("") }
 
-    val context = LocalContext.current
-    var selectedRegion by remember { mutableStateOf(loadSelectedRegion(context)) }
-    var actualRegion by remember { mutableStateOf<String?>(null) }
-    var regionMenuExpanded by remember { mutableStateOf(false) }
-    val regionOptions = listOf("Singapore", "US East", "US West", "EU", "Asia")
-
     fun save() {
         prefs.edit()
             .putString("flags", toJson(flags))
@@ -1001,29 +976,23 @@ fun App() {
                                                     modifier = Modifier
                                                         .size(58.dp)
                                                         .clip(CircleShape)
-                                                        .background(Color.Black.copy(alpha = 0.18f))
-                                                        .border(1.dp, Color.White.copy(alpha = 0.1f), CircleShape),
+                                                        .background(Color.White.copy(alpha = 0.12f))
+                                                        .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Ico(Ic.Flag, Color(0xFFFFF8E7), 28.dp, 2.3f)
+                                                    Ico(Ic.Flag, Color(0xFFFFF6DE), 24.dp, 2.1f)
                                                 }
-
                                                 Column {
                                                     Text(
-                                                        "Server region",
-                                                        fontSize = 12.sp,
-                                                        color = Color(0xFFFFE6C2),
-                                                        letterSpacing = 0.7.sp
+                                                        text = "Fast flag manager",
+                                                        color = Color(0xFFFFF8E7),
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.SemiBold
                                                     )
                                                     Text(
-                                                        text = if (actualRegion != null) {
-                                                            "Actual: $actualRegion"
-                                                        } else {
-                                                            "Selected: $selectedRegion"
-                                                        },
-                                                        fontSize = 17.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = Color.White
+                                                        text = "Roblox client config",
+                                                        color = Color(0xFFFFE6C2),
+                                                        fontSize = 12.sp
                                                     )
                                                 }
                                             }
@@ -1063,41 +1032,6 @@ fun App() {
                                 item {
                                     Group {
                                         Item(
-                                            "Selected region",
-                                            "Tap to choose your preferred region",
-                                            onClick = { regionMenuExpanded = true }
-                                        ) {
-                                            Box {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    Text(
-                                                        selectedRegion,
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        fontWeight = FontWeight.Medium
-                                                    )
-                                                    Ico(Ic.Down, MaterialTheme.colorScheme.primary, 16.dp, 2.2f)
-                                                }
-                                                DropdownMenu(
-                                                    expanded = regionMenuExpanded,
-                                                    onDismissRequest = { regionMenuExpanded = false }
-                                                ) {
-                                                    regionOptions.forEach { option ->
-                                                        DropdownMenuItem(
-                                                            text = { Text(option) },
-                                                            onClick = {
-                                                                selectedRegion = option
-                                                                saveSelectedRegion(context, option)
-                                                                regionMenuExpanded = false
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Item(
                                             "Roblox version",
                                             if (ready || useRoot) robloxVersion else "Shizuku not ready"
                                         )
@@ -1129,13 +1063,16 @@ fun App() {
                                         SectionLabel("Live status")
                                         Item("Mode", if (useRoot) "Root mode" else "Shizuku mode")
                                         Item("Status", shStatus)
-                                        Item("Fallback", if (actualRegion != null) "Live region active" else "Using selected region")
                                     }
                                 }
                             }
                         }
                         1 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 item {
                                     Group {
                                         Item("Library", "Saved profiles and game folders")
@@ -1149,7 +1086,11 @@ fun App() {
                             }
                         }
                         2 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 item {
                                     Group {
                                         Item("Mods", "Configuration and live tweaks")
@@ -1159,156 +1100,60 @@ fun App() {
                         }
                         3 -> {
                             LazyColumn(
-                                Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                item {
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Btn("Apply", { doSave(false) }, Modifier.weight(1f), icon = Ic.Check)
-                                        Btn("Launch", { doSave(true) }, Modifier.weight(1f), icon = Ic.Play)
-                                    }
-                                }
-
-                                SECTIONS.forEach { (name, list) ->
-                                    item {
-                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            SectionLabel(name)
-                                            Group {
-                                                list.forEach { fs -> FlagSetting(fs, flags) { save() } }
-                                            }
-                                        }
-                                    }
-                                }
-
                                 item {
                                     Group {
                                         SectionLabel("Custom flag")
                                         Column(
-                                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                                             verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             OutlinedTextField(
-                                                k, { k = it },
-                                                label = { Text("Flag name") },
+                                                value = k,
+                                                onValueChange = { k = it },
+                                                modifier = Modifier.fillMaxWidth(),
                                                 singleLine = true,
-                                                shape = RoundedCornerShape(14.dp),
-                                                modifier = Modifier.fillMaxWidth()
+                                                label = { Text("Flag name") }
                                             )
                                             OutlinedTextField(
-                                                v, { v = it },
-                                                label = { Text("Value") },
+                                                value = v,
+                                                onValueChange = { v = it },
+                                                modifier = Modifier.fillMaxWidth(),
                                                 singleLine = true,
-                                                shape = RoundedCornerShape(14.dp),
-                                                modifier = Modifier.fillMaxWidth()
+                                                label = { Text("Value") }
                                             )
-                                            Btn(
-                                                "Add flag",
-                                                {
-                                                    if (k.isNotBlank()) {
-                                                        flags[k.trim()] = v.trim()
-                                                        k = ""
-                                                        v = ""
-                                                        save()
-                                                    }
-                                                },
-                                                Modifier.fillMaxWidth(),
-                                                icon = Ic.Plus
-                                            )
-                                        }
-                                    }
-                                }
-
-                                item {
-                                    Group {
-                                        SectionLabel("Import and export")
-                                        Row(
-                                            Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Btn(
-                                                "File",
-                                                { picker.launch(arrayOf("*/*")) },
-                                                Modifier.weight(1f),
-                                                kind = 1,
-                                                icon = Ic.Folder
-                                            )
-                                            Btn(
-                                                "Paste",
-                                                {
-                                                    val msg = runCatching {
-                                                        val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                                                        flags.putAll(parseFlags(text))
-                                                        save()
-                                                        "Imported from clipboard."
-                                                    }.getOrElse { "Failed: clipboard isn't valid JSON." }
-                                                    toast("other", msg)
-                                                },
-                                                Modifier.weight(1f),
-                                                kind = 1,
-                                                icon = Ic.Doc
-                                            )
-                                            Btn(
-                                                "Copy",
-                                                {
-                                                    clip.setPrimaryClip(ClipData.newPlainText("flags", toJson(flags)))
-                                                    toast("other", "Copied flags as JSON.")
-                                                },
-                                                Modifier.weight(1f),
-                                                kind = 1,
-                                                icon = Ic.Download
-                                            )
-                                        }
-                                    }
-                                }
-
-                                item { SectionLabel("Active flags (${flags.size})") }
-
-                                items(flags.keys.sorted()) { name ->
-                                    Group {
-                                        Item(name, flags[name]) {
-                                            Btn("Remove", { flags.remove(name); save() }, kind = 2, h = 36.dp)
+                                            Btn("Add flag", {
+                                                if (k.isNotBlank()) {
+                                                    flags[k.trim()] = v.trim()
+                                                    k = ""
+                                                    v = ""
+                                                    save()
+                                                }
+                                            }, Modifier.fillMaxWidth(), kind = 1)
                                         }
                                     }
                                 }
                             }
                         }
                         4 -> {
-                            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 item {
                                     Group {
-                                        Item("Settings", "Theme, motion, save behavior")
-                                        Item("Theme", THEMES[themeIdx].name) {
-                                            Btn(
-                                                "Next",
-                                                { themeIdx = (themeIdx + 1) % THEMES.size; save() },
-                                                kind = 1,
-                                                h = 36.dp
-                                            )
-                                        }
-                                        Item("Motion", if (motion) "On" else "Off") {
-                                            TacoSwitch(motion) { motion = it; save() }
-                                        }
-                                        Item("True black", if (trueBlack) "On" else "Off") {
-                                            TacoSwitch(trueBlack) { trueBlack = it; save() }
-                                        }
+                                        Item("Settings", "Theme, motion, and save behavior")
                                     }
                                 }
                             }
                         }
                     }
                 }
-
-                NavBar(navItems, page, { page = it })
             }
-
-            SnackbarHost(
-                hostState = snackbar,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp)
-            )
         }
     }
 }
