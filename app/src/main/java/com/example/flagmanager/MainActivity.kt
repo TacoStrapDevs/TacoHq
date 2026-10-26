@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -956,8 +957,8 @@ private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Colo
     Column(
         Modifier.weight(1f)
             .clip(shape)
-            .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.18f), cs.surfaceVariant)))
-            .border(1.dp, tint.copy(alpha = 0.25f), shape)
+            .background(Brush.linearGradient(listOf(Color(0xFF29231C), Color(0xFF171513))))
+            .border(1.dp, tint.copy(alpha = 0.32f), shape)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -969,7 +970,7 @@ private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Colo
             )
         }
         Spacer(Modifier.height(12.dp))
-        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, color = Color(0xFFF5F0E8), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -980,15 +981,15 @@ private fun RowScope.ActionTile(label: String, icon: Ic, onClick: () -> Unit) {
     Column(
         Modifier.weight(1f)
             .clip(shape)
-            .background(cs.surfaceVariant)
-            .border(1.dp, cs.outlineVariant, shape)
+            .background(Color(0xFF1D1A17))
+            .border(1.dp, Color(0xFF3D3328), shape)
             .clickable(onClick = onClick)
             .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         IconChip(icon, cs.primary, 42.dp)
         Spacer(Modifier.height(8.dp))
-        Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text(label, color = Color(0xFFF5F0E8), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
 
@@ -1491,104 +1492,176 @@ fun App() {
     fun HomePage() {
         val cs = MaterialTheme.colorScheme
         val flagCount = flags.size
+        val cardShape = RoundedCornerShape(22.dp)
         LazyColumn(
             state = homeState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                val heroShape = RoundedCornerShape(LocalCorner.current + 4.dp)
+                // Compact bootstrapper-style header: clear hierarchy, status, and no oversized empty card.
                 Column(
                     Modifier.fillMaxWidth()
-                        .clip(heroShape)
+                        .clip(RoundedCornerShape(28.dp))
                         .background(
                             Brush.linearGradient(
-                                listOf(pc.copy(alpha = 0.32f), sc.copy(alpha = 0.10f), cs.surfaceVariant)
+                                listOf(Color(0xFF34200D), Color(0xFF211A14), Color(0xFF171717))
                             )
                         )
                         .border(
                             1.dp,
-                            Brush.linearGradient(listOf(pc.copy(alpha = 0.6f), sc.copy(alpha = 0.12f))),
-                            heroShape
+                            Brush.linearGradient(
+                                listOf(Color(0xFFFFB547).copy(alpha = 0.72f), Color(0xFF65421D).copy(alpha = 0.35f))
+                            ),
+                            RoundedCornerShape(28.dp)
                         )
                         .padding(20.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("TacoStrap", fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            APP_VERSION, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            color = cs.primary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(cs.primary.copy(alpha = 0.16f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier.size(54.dp)
+                                .clip(RoundedCornerShape(17.dp))
+                                .background(Brush.linearGradient(listOf(Color(0xFFFFC15A), Color(0xFFEF741F)))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("T", color = Color(0xFF24170B), fontSize = 31.sp, fontWeight = FontWeight.Black)
+                        }
+                        Spacer(Modifier.width(13.dp))
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "TacoStrap",
+                                    color = Color(0xFFFFF8ED),
+                                    fontSize = 27.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = (-0.8).sp,
+                                    maxLines = 1
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "v$APP_VERSION",
+                                    color = Color(0xFFFFC15A),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clip(CircleShape)
+                                        .background(Color(0xFFFFB547).copy(alpha = 0.14f))
+                                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
+                            Text(
+                                "ROBLOX BOOTSTRAPPER",
+                                color = Color(0xFFB9A997),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(18.dp))
                     Text(
-                        "FastFlag manager and bootstrapper for Roblox",
-                        fontSize = 14.sp, color = cs.onSurfaceVariant
+                        "Your game. Your settings.",
+                        color = Color(0xFFFFF8ED),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    Spacer(Modifier.height(16.dp))
-                    StatusPill(
-                        if (ready) "Shizuku connected" else shStatus,
-                        if (ready) Good else if (ShizukuBus.ping) Amber else Bad
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        "Manage FastFlags, launch Roblox, and keep your setup in one place.",
+                        color = Color(0xFFC5B9AB),
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp
                     )
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatCard("Roblox", robloxVersion, Ic.Game, cs.primary)
-                        StatCard("Flags", "$flagCount", Ic.Flag, cs.primary)
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatCard(
-                            "Shizuku", shStatus, Ic.Bolt,
+                    Spacer(Modifier.height(17.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatusPill(
+                            if (ready) "Shizuku connected" else shStatus,
                             if (ready) Good else if (ShizukuBus.ping) Amber else Bad
                         )
-                        StatCard(
-                            "Root", if (rootAvailable) "Available" else "Not found", Ic.Star,
-                            if (rootAvailable) Good else cs.onSurfaceVariant
-                        )
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { page = 4 }) {
+                            Text("Settings", color = Color(0xFFFFC15A), fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
             item {
-                LaunchButton("Launch Roblox", { launchNow(applyBeforeLaunch) }, Modifier.fillMaxWidth())
+                // Primary action is visually dominant, similar to PC bootstrapper launch panels.
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(cardShape)
+                        .background(Brush.linearGradient(listOf(Color(0xFF29221A), Color(0xFF1C1A18))))
+                        .border(1.dp, Color(0xFFFFB547).copy(alpha = 0.26f), cardShape)
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("READY TO PLAY?", color = Color(0xFFFFC15A), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.6.sp)
+                            Spacer(Modifier.height(5.dp))
+                            Text("Launch Roblox", color = Color(0xFFFFF8ED), fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (ready) "Shizuku is ready for supported actions" else "Some file actions may need Shizuku",
+                                color = Color(0xFFB9B0A5),
+                                fontSize = 12.sp
+                            )
+                        }
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFFFFB547).copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) { Ico(Ic.Game, Color(0xFFFFC15A), 25.dp) }
+                    }
+                    Spacer(Modifier.height(15.dp))
+                    LaunchButton("PLAY NOW", { launchNow(applyBeforeLaunch) }, Modifier.fillMaxWidth())
+                }
             }
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatCard("ROBLOX VERSION", robloxVersion, Ic.Game, cs.primary)
+                    StatCard("SAVED FLAGS", "$flagCount", Ic.Flag, cs.primary)
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatCard("SHIZUKU", if (ready) "Connected" else shStatus, Ic.Bolt, if (ready) Good else if (ShizukuBus.ping) Amber else Bad)
+                    StatCard("ROOT ACCESS", if (rootAvailable) "Available" else "Not found", Ic.Star, if (rootAvailable) Good else cs.onSurfaceVariant)
+                }
+            }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("QUICK ACTIONS")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionTile("Apply", Ic.Save) {
+                        ActionTile("Apply flags", Ic.Save) {
                             scope.launch(Dispatchers.IO) {
                                 save()
                                 toast("flag", applyVerified(toJson(flags), path, fps, useRoot))
                             }
                         }
-                        ActionTile("Verify", Ic.Check) {
+                        ActionTile("Verify file", Ic.Check) {
                             scope.launch(Dispatchers.IO) {
                                 toast("flag", verifyFlags(toJson(flags), path, useRoot))
                                 val (_, out) = runCmd("ls -l ${shellQuote(path)}; cat ${shellQuote(path)}", useRoot)
                                 fileOut = out.ifEmpty { "Nothing returned." }
                             }
                         }
-                        ActionTile("Close", Ic.Close) {
+                        ActionTile("Stop game", Ic.Close) {
                             scope.launch(Dispatchers.IO) { toast("launch", forceStop(pkg, useRoot)) }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         ActionTile("Trim RAM", Ic.Memory) {
-                            scope.launch(Dispatchers.IO) {
-                                toast("other", trimMemory(pkg, TRIM_LEVELS[trimLevelIdx].second, useRoot))
-                            }
+                            scope.launch(Dispatchers.IO) { toast("other", trimMemory(pkg, TRIM_LEVELS[trimLevelIdx].second, useRoot)) }
                         }
-                        ActionTile("Cache", Ic.Trash) {
+                        ActionTile("Clear cache", Ic.Trash) {
                             scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
                         }
-                        ActionTile("Reset", Ic.Refresh) {
+                        ActionTile("Reset flags", Ic.Refresh) {
                             scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
                         }
                     }
@@ -1598,8 +1671,11 @@ fun App() {
                 item {
                     Group {
                         Text(
-                            fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                            fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                            fileOut,
+                            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
                         )
                     }
                 }
@@ -1615,18 +1691,13 @@ fun App() {
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Recent launches")
+                    SectionLabel("RECENT LAUNCHES")
                     Group {
                         if (recent.isEmpty()) {
-                            Item("Nothing yet", "Your launches show up here.", leading = Ic.Clock)
+                            Item("No launches yet", "Your recent Roblox launches will appear here.", leading = Ic.Clock)
                         }
                         recent.forEach { (n, t, ts) ->
-                            Item(
-                                n,
-                                if (t.isBlank()) relTime(ts) else "$t  -  ${relTime(ts)}",
-                                { playTarget(n, t) },
-                                leading = Ic.Clock
-                            ) {
+                            Item(n, if (t.isBlank()) relTime(ts) else "$t  -  ${relTime(ts)}", { playTarget(n, t) }, leading = Ic.Clock) {
                                 Ico(Ic.Play, cs.primary, 20.dp)
                             }
                         }
@@ -1640,7 +1711,7 @@ fun App() {
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Pinned games")
+                    SectionLabel("PINNED GAMES")
                     Group {
                         if (games.isEmpty()) {
                             Item("No pinned games", "Add games in the Games tab.", { page = 3 }) {
@@ -1657,10 +1728,10 @@ fun App() {
             }
             item {
                 Group {
-                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
+                    Item("Roblox FastFlag allowlist", "Check which flags Roblox currently allows", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
                         Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
-                    Item("What's new in $APP_VERSION", "Changelog", { changelog = true }, leading = Ic.Doc) {
+                    Item("What's new in $APP_VERSION", "View the changelog", { changelog = true }, leading = Ic.Doc) {
                         Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
                 }
@@ -2413,8 +2484,12 @@ fun App() {
                         AnimatedContent(
                             targetState = page,
                             transitionSpec = {
-                                (fadeIn() + slideInHorizontally { it / 18 }) togetherWith
-                                    (fadeOut() + slideOutHorizontally { -it / 24 })
+                                (fadeIn(animationSpec = tween(180)) + slideInHorizontally(
+                                    animationSpec = tween(180), initialOffsetX = { it / 30 }
+                                )) togetherWith
+                                    (fadeOut(animationSpec = tween(120)) + slideOutHorizontally(
+                                        animationSpec = tween(120), targetOffsetX = { -it / 40 }
+                                    ))
                             },
                             label = "TacoStrapPageTransition"
                         ) { targetPage ->
