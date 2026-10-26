@@ -781,7 +781,7 @@ private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun StatCard(label: String, value: String, icon: Ic, tint: Color) {
+private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Color) {
     val cs = MaterialTheme.colorScheme
     Column(
         Modifier.weight(1f)
@@ -1164,10 +1164,12 @@ fun App() {
         val sc by animateFloatAsState(
             if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "lgb"
         )
+        val pcol = pc
+        val scol = sc
         Row(
             modifier.height(h).graphicsLayer { scaleX = sc; scaleY = sc }
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(pc, sc)))
+                .background(Brush.linearGradient(listOf(pcol, scol)))
                 .clickable(interactionSource = src, indication = null, onClick = onClick)
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
