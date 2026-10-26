@@ -2735,3 +2735,558 @@ fun App() {
         }
     }
 }
+                        }
+                    }
+                }
+            }
+            Appear(10) {
+                Group {
+                    Item("Clear all flags", "Removes every flag from this profile", { confirmClear = true }, Ic.Trash) {
+                        Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SettingsPage() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PageHeader("Settings", "Make TacoStrap yours.")
+            TabStrip(
+                listOf(
+                    "Look" to Ic.Sliders, "Behavior" to Ic.Bolt, "Roblox" to Ic.Game,
+                    "Backup" to Ic.Download, "About" to Ic.Info
+                ),
+                setTab
+            ) { setTab = it }
+            when (setTab) {
+                0 -> {
+                    SectionLabel("Theme")
+                    Group {
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            THEMES.forEachIndexed { i, t -> Pill(t.name, themeIdx == i) { themeIdx = i; save() } }
+                        }
+                    }
+                    SectionLabel("Style")
+                    Group {
+                        SwitchItem("True black", "Pure black background for OLED screens", trueBlack) { trueBlack = it; save() }
+                        SwitchItem("Animated background", "Slow color glow behind the app", animBg) { animBg = it; save() }
+                        SwitchItem("Compact layout", "Tighter spacing between rows", compact) { compact = it; save() }
+                        SwitchItem("Motion", "Turn animations on or off", motion) { motion = it; save() }
+                    }
+                    SectionLabel("Sliders")
+                    Group {
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                            Text("Glow ${(glowAmt * 100).roundToInt()}%", fontSize = 14.sp, color = cs.onSurface)
+                            Slider(glowAmt, { glowAmt = it }, valueRange = 0f..0.3f, onValueChangeFinished = { save() })
+                        }
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                            Text("Corner radius ${cornerDp.roundToInt()} dp", fontSize = 14.sp, color = cs.onSurface)
+                            Slider(cornerDp, { cornerDp = it }, valueRange = 8f..32f, onValueChangeFinished = { save() })
+                        }
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                            Text("Text size ${(textScale * 100).roundToInt()}%", fontSize = 14.sp, color = cs.onSurface)
+                            Slider(textScale, { textScale = it }, valueRange = 0.85f..1.3f, onValueChangeFinished = { save() })
+                        }
+                    }
+                    Btn("Reset appearance", { confirmSettingsReset = true }, Modifier.fillMaxWidth(), kind = 2, icon = Ic.Refresh)
+                }
+                1 -> {
+                    SectionLabel("Launching")
+                    Group {
+                        SwitchItem("Restart Roblox on launch", "Force-stops Roblox before Save and Launch", restart) { restart = it; save() }
+                        SwitchItem("Unlock frame rate cap", "Also sets the Android game frame rate property when saving", fps) { fps = it; save() }
+                        SwitchItem("Apply flags before joining", "Writes flags and restarts Roblox before joining a game", applyBeforeGame) {
+                            applyBeforeGame = it; save()
+                        }
+                        SwitchItem("Confirm before reset", "Ask first when deleting the flag file", confirmReset) { confirmReset = it; save() }
+                    }
+                    SectionLabel("Access")
+                    Group {
+                        SwitchItem("Use root", "Run commands with su instead of Shizuku", useRoot) { useRoot = it; save() }
+                        Item("Shizuku", shStatus, leading = Ic.Shield) {
+                            Btn("Grant", { grant() }, kind = 1, h = 36.dp)
+                        }
+                        Item("Open Shizuku", "Start or check the Shizuku service", { openShizuku() }, Ic.Right) {
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        }
+                    }
+                    SectionLabel("Feel")
+                    Group {
+                        SwitchItem("Haptics", "Vibrate lightly when you tap", haptics) { haptics = it; save() }
+                        SwitchItem("Keep screen on", "Stops the screen from sleeping while TacoStrap is open", keepAwake) { keepAwake = it; save() }
+                    }
+                    SectionLabel("Messages")
+                    Group {
+                        SwitchItem("Flag messages", "Saved, applied and loaded", msgFlag) { msgFlag = it; save() }
+                        SwitchItem("Launch messages", "Launching and stopping Roblox", msgLaunch) { msgLaunch = it; save() }
+                        SwitchItem("Other messages", "Copy, pin and everything else", msgOther) { msgOther = it; save() }
+                    }
+                }
+                2 -> {
+                    SectionLabel("Roblox app")
+                    Group {
+                        Item("Package", pkg, { pkgInput = pkg; pkgDialog = true }, Ic.Game) {
+                            Ico(Ic.Pencil, cs.onSurfaceVariant, 20.dp)
+                        }
+                        Item("Version", leading = Ic.Info) { ValueText(robloxVersion) }
+                    }
+                    SectionLabel("Flag file")
+                    Group {
+                        Column(
+                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                path, { path = it.trim() }, label = { Text("Flag file path") }, singleLine = true,
+                                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Btn("Save path", { save(); toast("other", "Path saved.") }, kind = 1, h = 42.dp)
+                                Btn("Use default", { path = DEFAULT_PATH; save() }, kind = 2, h = 42.dp)
+                            }
+                        }
+                    }
+                }
+                3 -> {
+                    SectionLabel("Backup")
+                    Group {
+                        Item("Copy backup", "Flags, profiles and pinned games as JSON", {
+                            copyText("backup", backupJson(), "Copied backup.")
+                        }, Ic.Copy) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                        Item("Share backup", "Send the backup to another app", {
+                            share(backupJson(), "Share backup")
+                        }, Ic.Share) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                        Item("Restore from clipboard", "Replaces flags, profiles and games with a copied backup", {
+                            val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            try {
+                                val o = JSONObject(text)
+                                if (o.has("flags")) {
+                                    val f = parseFlags(o.getJSONObject("flags").toString())
+                                    flags.clear(); flags.putAll(f)
+                                }
+                                if (o.has("presets")) {
+                                    val p = parseFlags(o.getJSONObject("presets").toString())
+                                    presets.clear(); presets.putAll(p)
+                                }
+                                if (o.has("games")) {
+                                    val g = parseFlags(o.getJSONObject("games").toString())
+                                    games.clear(); games.putAll(g)
+                                }
+                                save()
+                                toast("other", "Backup restored.")
+                            } catch (e: Throwable) {
+                                toast("other", "Failed: clipboard isn't a TacoStrap backup.")
+                            }
+                        }, Ic.Download) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                    }
+                    SectionLabel("Danger zone")
+                    Group {
+                        Item("Clear all flags", "Removes every flag from this profile", { confirmClear = true }, Ic.Trash) {
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        }
+                    }
+                }
+                else -> {
+                    SectionLabel("About")
+                    Group {
+                        Item("TacoStrap", "FastFlag manager for Roblox", leading = Ic.Bolt)
+                        Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, Ic.Flag) {
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        }
+                        Item("Open source licenses", "Libraries used in this app", { licenses = true }, Ic.Doc) {
+                            Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun EditorScreen() {
+        val cs = MaterialTheme.colorScheme
+        Column(
+            Modifier.fillMaxSize().background(cs.background).statusBarsPadding().imePadding()
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconBtn(Ic.Back) { showEditor = false }
+                Spacer(Modifier.width(4.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Flag editor", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = cs.onBackground)
+                    Text("${flags.size} flags", fontSize = 13.sp, color = cs.onSurfaceVariant)
+                }
+                Btn("Save", { doSave(false) }, kind = 1, h = 38.dp)
+            }
+            TabStrip(
+                listOf("Current" to Ic.Flag, "Add" to Ic.Plus, "Known" to Ic.Search, "JSON" to Ic.Terminal),
+                edTab
+            ) { edTab = it }
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                when (edTab) {
+                    0 -> {
+                        OutlinedTextField(
+                            search, { search = it }, label = { Text("Search flags") }, singleLine = true,
+                            leadingIcon = { Ico(Ic.Search, cs.onSurfaceVariant, 20.dp) },
+                            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                        )
+                        val keys = flags.keys.sorted().filter { search.isBlank() || it.contains(search, ignoreCase = true) }
+                        Group {
+                            if (keys.isEmpty()) {
+                                Item("No flags", "Add some in the Add tab.", leading = Ic.Flag)
+                            }
+                            keys.take(200).forEach { name ->
+                                Row(
+                                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            name, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = cs.onSurface,
+                                            maxLines = 2, overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(flagKind(name), fontSize = 12.sp, color = cs.onSurfaceVariant)
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    NumBox(flags[name] ?: "", "Value", Modifier.width(120.dp), KeyboardType.Text) { t ->
+                                        flags[name] = t
+                                        save()
+                                    }
+                                    IconBtn(Ic.Trash) { flags.remove(name); save() }
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        Group {
+                            Column(
+                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedTextField(
+                                    k, { k = it.trim() }, label = { Text("Flag name") }, singleLine = true,
+                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth(),
+                                    supportingText = {
+                                        Text(
+                                            if (k.isBlank()) "Example: DFIntTaskSchedulerTargetFps"
+                                            else if (validFlag(k)) "${flagKind(k)} flag"
+                                            else "That name doesn't look like a Roblox flag."
+                                        )
+                                    }
+                                )
+                                OutlinedTextField(
+                                    v, { v = it }, label = { Text("Value") }, singleLine = true,
+                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                                )
+                                Btn("Add flag", {
+                                    if (k.isNotBlank() && v.isNotBlank()) {
+                                        flags[k] = v.trim()
+                                        k = ""
+                                        v = ""
+                                        save()
+                                        toast("flag", "Flag added.")
+                                    }
+                                }, Modifier.fillMaxWidth(), icon = Ic.Plus)
+                            }
+                        }
+                    }
+                    2 -> {
+                        OutlinedTextField(
+                            ksearch, { ksearch = it }, label = { Text("Search known flags") }, singleLine = true,
+                            leadingIcon = { Ico(Ic.Search, cs.onSurfaceVariant, 20.dp) },
+                            shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                        )
+                        val list = KNOWN.filter {
+                            ksearch.isBlank() || it.name.contains(ksearch, ignoreCase = true) ||
+                                it.desc.contains(ksearch, ignoreCase = true)
+                        }
+                        Group {
+                            if (list.isEmpty()) Item("No matches", "Try another search.", leading = Ic.Search)
+                            list.forEach { kn ->
+                                Item(kn.name, "${kn.desc}, sample ${kn.sample}", {
+                                    flags[kn.name] = kn.sample
+                                    save()
+                                    toast("flag", "Added ${kn.name}.")
+                                }, Ic.Flag) { Ico(Ic.Plus, cs.primary, 20.dp) }
+                            }
+                        }
+                    }
+                    else -> {
+                        Group {
+                            Column(
+                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedTextField(
+                                    jsonText, { jsonText = it }, label = { Text("Flags JSON") },
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                                )
+                                if (jsonMsg.isNotEmpty()) {
+                                    Text(jsonMsg, fontSize = 13.sp, color = cs.onSurfaceVariant)
+                                }
+                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Btn("Load current", { jsonText = toJson(flags); jsonMsg = "" }, kind = 1, h = 42.dp)
+                                    Btn("Replace", {
+                                        try {
+                                            val m = parseFlags(jsonText)
+                                            flags.clear(); flags.putAll(m); save()
+                                            jsonMsg = "Loaded ${m.size} flags."
+                                        } catch (e: Throwable) {
+                                            jsonMsg = "Failed: that isn't valid JSON."
+                                        }
+                                    }, kind = 1, h = 42.dp)
+                                    Btn("Merge", {
+                                        try {
+                                            val m = parseFlags(jsonText)
+                                            flags.putAll(m); save()
+                                            jsonMsg = "Merged ${m.size} flags."
+                                        } catch (e: Throwable) {
+                                            jsonMsg = "Failed: that isn't valid JSON."
+                                        }
+                                    }, kind = 2, h = 42.dp)
+                                    Btn("Copy", { copyText("flags", toJson(flags), "Copied JSON.") }, kind = 2, icon = Ic.Copy, h = 42.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    // ================= ROOT =================
+
+    MaterialTheme(colorScheme = scheme) {
+        CompositionLocalProvider(
+            LocalCorner provides cornerDp.dp,
+            LocalPad provides (if (compact) 10.dp else 16.dp),
+            LocalMotion provides motion,
+            LocalHaptic provides tick,
+            LocalDensity provides Density(LocalDensity.current.density, textScale)
+        ) {
+            BackHandler(enabled = showEditor || page != 0) {
+                if (showEditor) showEditor = false else page = 0
+            }
+
+            Box(Modifier.fillMaxSize().background(scheme.background)) {
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(pc.copy(alpha = (glowAmt * (0.5f + glow)).coerceIn(0f, 1f)), Color.Transparent)
+                        )
+                    )
+                )
+                Scaffold(
+                    containerColor = Color.Transparent,
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                    snackbarHost = { SnackbarHost(snackbar) },
+                    bottomBar = {
+                        if (!imeUp) {
+                            Column(
+                                Modifier.fillMaxWidth()
+                                    .background(scheme.background.copy(alpha = 0.92f))
+                                    .navigationBarsPadding()
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Btn("Save", { doSave(false) }, Modifier.weight(1f), kind = 1, loading = busy)
+                                    Btn("Save and Launch", { doSave(true) }, Modifier.weight(1f), icon = Ic.Play)
+                                }
+                                NavBar(navItems, page) { page = it }
+                            }
+                        }
+                    }
+                ) { inner ->
+                    Box(Modifier.fillMaxSize().padding(inner).statusBarsPadding()) {
+                        Crossfade(targetState = page, animationSpec = tween(pageAnim), label = "page") { p ->
+                            when (p) {
+                                0 -> HomePage()
+                                1 -> LibraryPage()
+                                2 -> ModsPage()
+                                3 -> FlagsPage()
+                                else -> SettingsPage()
+                            }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showEditor,
+                    enter = slideInHorizontally { it } + fadeIn(),
+                    exit = slideOutHorizontally { it } + fadeOut()
+                ) { EditorScreen() }
+            }
+
+            // ----- Dialogs -----
+
+            renaming?.let { old ->
+                AlertDialog(
+                    onDismissRequest = { renaming = null },
+                    title = { Text("Rename profile") },
+                    text = {
+                        OutlinedTextField(
+                            newName, { newName = it }, label = { Text("Profile name") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            val data = presets[old]
+                            if (data != null && newName.isNotBlank()) {
+                                presets.remove(old)
+                                presets[newName.trim()] = data
+                                save()
+                            }
+                            renaming = null
+                        }) { Text("Rename") }
+                    },
+                    dismissButton = { TextButton({ renaming = null }) { Text("Cancel") } }
+                )
+            }
+
+            gameRename?.let { old ->
+                AlertDialog(
+                    onDismissRequest = { gameRename = null },
+                    title = { Text("Rename game") },
+                    text = {
+                        OutlinedTextField(
+                            gameNewName, { gameNewName = it }, label = { Text("Game name") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            val id = games[old]
+                            if (id != null && gameNewName.isNotBlank()) {
+                                games.remove(old)
+                                games[gameNewName.trim()] = id
+                                save()
+                            }
+                            gameRename = null
+                        }) { Text("Rename") }
+                    },
+                    dismissButton = { TextButton({ gameRename = null }) { Text("Cancel") } }
+                )
+            }
+
+            if (pinDialog) {
+                AlertDialog(
+                    onDismissRequest = { pinDialog = false },
+                    title = { Text("Pin game") },
+                    text = {
+                        OutlinedTextField(
+                            pinName, { pinName = it }, label = { Text("Game name") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            val id = parsePlace(qj)?.first
+                            if (id != null && pinName.isNotBlank()) {
+                                games[pinName.trim()] = id
+                                save()
+                                toast("other", "Pinned ${pinName.trim()}.")
+                            }
+                            pinDialog = false
+                        }) { Text("Pin") }
+                    },
+                    dismissButton = { TextButton({ pinDialog = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (confirmClear) {
+                AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    title = { Text("Clear all flags?") },
+                    text = { Text("This removes every flag from the current profile. Saved profiles are not touched.") },
+                    confirmButton = {
+                        TextButton({ flags.clear(); save(); confirmClear = false }) { Text("Clear") }
+                    },
+                    dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (confirmResetDlg) {
+                AlertDialog(
+                    onDismissRequest = { confirmResetDlg = false },
+                    title = { Text("Delete the flag file?") },
+                    text = { Text("This removes the file from the device and stops Roblox.") },
+                    confirmButton = {
+                        TextButton({ confirmResetDlg = false; doReset() }) { Text("Delete") }
+                    },
+                    dismissButton = { TextButton({ confirmResetDlg = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (confirmSettingsReset) {
+                AlertDialog(
+                    onDismissRequest = { confirmSettingsReset = false },
+                    title = { Text("Reset appearance?") },
+                    text = { Text("Theme, spacing, text size and motion go back to their defaults.") },
+                    confirmButton = {
+                        TextButton({ confirmSettingsReset = false; resetAppearance() }) { Text("Reset") }
+                    },
+                    dismissButton = { TextButton({ confirmSettingsReset = false }) { Text("Cancel") } }
+                )
+            }
+
+            if (pkgDialog) {
+                AlertDialog(
+                    onDismissRequest = { pkgDialog = false },
+                    title = { Text("Roblox package") },
+                    text = {
+                        OutlinedTextField(
+                            pkgInput, { pkgInput = it.trim() }, label = { Text("Package name") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    },
+                    confirmButton = {
+                        TextButton({
+                            if (pkgInput.isNotBlank()) {
+                                pkg = pkgInput
+                                save()
+                            }
+                            pkgDialog = false
+                        }) { Text("Save") }
+                    },
+                    dismissButton = {
+                        Row {
+                            TextButton({ pkgInput = DEFAULT_PKG }) { Text("Default") }
+                            TextButton({ pkgDialog = false }) { Text("Cancel") }
+                        }
+                    }
+                )
+            }
+
+            if (licenses) {
+                AlertDialog(
+                    onDismissRequest = { licenses = false },
+                    title = { Text("Open source licenses") },
+                    text = {
+                        Text("TacoStrap is built with Kotlin, Jetpack Compose and the Shizuku API. See each project for its license terms.")
+                    },
+                    confirmButton = { TextButton({ licenses = false }) { Text("Close") } }
+                )
+            }
+        }
+    }
+}
