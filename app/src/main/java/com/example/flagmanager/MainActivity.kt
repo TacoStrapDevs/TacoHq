@@ -1156,20 +1156,20 @@ fun App() {
     fun LaunchGradientButton(
         text: String,
         onClick: () -> Unit,
+        colorA: Color,
+        colorB: Color,
         modifier: Modifier = Modifier,
         h: Dp = 56.dp
     ) {
         val src = remember { MutableInteractionSource() }
         val pressed by src.collectIsPressedAsState()
-        val sc by animateFloatAsState(
+        val scale by animateFloatAsState(
             if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "lgb"
         )
-        val pcol = pc
-        val scol = sc
         Row(
-            modifier.height(h).graphicsLayer { scaleX = sc; scaleY = sc }
+            modifier.height(h).graphicsLayer { scaleX = scale; scaleY = scale }
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(pcol, scol)))
+                .background(Brush.linearGradient(listOf(colorA, colorB)))
                 .clickable(interactionSource = src, indication = null, onClick = onClick)
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1232,6 +1232,7 @@ fun App() {
                 LaunchGradientButton(
                     "Launch Roblox",
                     { scope.launch(Dispatchers.IO) { toast("launch", launchPkg(pkg, useRoot)) } },
+                    pc, sc,
                     Modifier.fillMaxWidth()
                 )
             }
