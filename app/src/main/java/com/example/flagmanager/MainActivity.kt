@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -80,7 +81,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Base64
 
-private const val APP_VERSION = "4.0"
+private const val APP_VERSION = "4.1"
 private const val DEFAULT_PKG = "com.roblox.client"
 private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
@@ -573,6 +574,10 @@ private fun Ico(kind: Ic, tint: Color, sz: Dp = 24.dp, stroke: Float = 1.9f) {
 
 // ---------- Reusable UI ----------
 
+/** Accent gradient used on buttons, switches, pills and the selected nav tab. */
+private fun accentBrush(cs: ColorScheme): Brush =
+    Brush.linearGradient(listOf(cs.primary, lerp(cs.primary, cs.secondary, 0.6f)))
+
 @Composable
 private fun Appear(index: Int, content: @Composable () -> Unit) {
     if (!LocalMotion.current) {
@@ -586,20 +591,49 @@ private fun Appear(index: Int, content: @Composable () -> Unit) {
     }
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(360)) + slideInVertically(tween(360)) { it / 8 }
+        enter = fadeIn(tween(420)) + slideInVertically(tween(420)) { it / 6 }
     ) { content() }
 }
 
+/** Glass-style card: soft vertical gradient with a thin accent-tinted border. */
 @Composable
 private fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(LocalCorner.current)
     Column(
         modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(LocalCorner.current))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(cs.surfaceVariant, lerp(cs.surfaceVariant, cs.background, 0.35f))
+                )
+            )
+            .border(
+                1.dp,
+                Brush.linearGradient(
+                    listOf(
+                        cs.primary.copy(alpha = 0.30f),
+                        cs.outlineVariant,
+                        cs.secondary.copy(alpha = 0.18f)
+                    )
+                ),
+                shape
+            )
             .animateContentSize()
             .padding(vertical = 4.dp),
         content = content
     )
+}
+
+/** Rounded square with a tinted gradient and an icon in the middle. */
+@Composable
+private fun IconChip(icon: Ic, tint: Color, size: Dp = 40.dp) {
+    Box(
+        Modifier.size(size)
+            .clip(RoundedCornerShape(size * 0.32f))
+            .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.30f), tint.copy(alpha = 0.10f)))),
+        contentAlignment = Alignment.Center
+    ) { Ico(icon, tint, size * 0.52f, 2f) }
 }
 
 @Composable
@@ -607,13 +641,18 @@ private fun Item(
     title: String,
     sub: String? = null,
     onClick: (() -> Unit)? = null,
+    leading: Ic? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val m = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
     Row(
-        Modifier.fillMaxWidth().then(m).padding(horizontal = 20.dp, vertical = LocalPad.current),
+        Modifier.fillMaxWidth().then(m).padding(horizontal = 18.dp, vertical = LocalPad.current),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (leading != null) {
+            IconChip(leading, MaterialTheme.colorScheme.primary, 38.dp)
+            Spacer(Modifier.width(14.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             if (sub != null) {
@@ -641,42 +680,68 @@ private fun ValueText(text: String) {
 @Composable
 private fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val track by animateColorAsState(if (checked) cs.primary else Color(0xFF3A3632), tween(220), label = "swt")
-    val thumb by animateColorAsState(if (checked) cs.onPrimary else Color(0xFF9A948C), tween(220), label = "swc")
+    val on by animateFloatAsState(if (checked) 1f else 0f, tween(260), label = "swon")
+    val thumb by animateColorAsState(
+        if (checked) Color(0xFFFFFFFF) else Color(0xFF9A948C), tween(220), label = "swc"
+    )
     val x by animateDpAsState(
-        if (checked) 25.dp else 4.dp, spring(dampingRatio = 0.7f, stiffness = 500f), label = "swx"
+        if (checked) 25.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "swx"
     )
     Box(
-        Modifier.width(54.dp).height(31.dp).clip(CircleShape).background(track)
+        Modifier.width(54.dp).height(31.dp).clip(CircleShape).background(Color(0xFF3A3632))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                 onChange(!checked)
             }
     ) {
+        Box(
+            Modifier.matchParentSize()
+                .graphicsLayer { alpha = on }
+                .background(accentBrush(cs))
+        )
         Box(Modifier.offset(x = x, y = 3.5.dp).size(24.dp).clip(CircleShape).background(thumb))
     }
 }
 
 @Composable
-private fun SwitchItem(title: String, sub: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Item(title, sub, { onChange(!checked) }) { TacoSwitch(checked, onChange) }
+private fun SwitchItem(
+    title: String,
+    sub: String?,
+    checked: Boolean,
+    leading: Ic? = null,
+    onChange: (Boolean) -> Unit
+) {
+    Item(title, sub, { onChange(!checked) }, leading = leading) { TacoSwitch(checked, onChange) }
 }
 
 @Composable
 private fun SectionLabel(text: String) {
-    Text(
-        text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 8.dp, top = 8.dp)
-    )
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.padding(start = 8.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(width = 4.dp, height = 14.dp).clip(CircleShape)
+                .background(Brush.verticalGradient(listOf(cs.primary, cs.secondary)))
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp,
+            color = cs.primary
+        )
+    }
 }
 
 @Composable
 private fun PageHeader(title: String, sub: String? = null) {
+    val cs = MaterialTheme.colorScheme
     Column(Modifier.padding(horizontal = 4.dp, vertical = 14.dp)) {
-        Text(title, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
+        Text(title, fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier.size(width = 40.dp, height = 4.dp).clip(CircleShape)
+                .background(Brush.horizontalGradient(listOf(cs.primary, cs.secondary)))
+        )
         if (sub != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(sub, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            Text(sub, fontSize = 15.sp, color = cs.onSurfaceVariant)
         }
     }
 }
@@ -689,13 +754,14 @@ private fun ChoiceBox(current: String, options: List<String>, onPick: (Int) -> U
         Row(
             Modifier.clip(RoundedCornerShape(14.dp))
                 .background(cs.background.copy(alpha = 0.55f))
+                .border(1.dp, cs.outlineVariant, RoundedCornerShape(14.dp))
                 .clickable { open = true }
                 .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(current, fontSize = 14.sp, maxLines = 1, modifier = Modifier.widthIn(max = 130.dp))
             Spacer(Modifier.width(4.dp))
-            Ico(Ic.Down, cs.onSurfaceVariant, 16.dp, 2.2f)
+            Ico(Ic.Down, cs.primary, 16.dp, 2.2f)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEachIndexed { i, o ->
@@ -735,14 +801,9 @@ private fun Btn(
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(
-        if (pressed) 0.96f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "btn"
+        if (pressed) 0.95f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "btn"
     )
     val cs = MaterialTheme.colorScheme
-    val bg = when (kind) {
-        0 -> cs.primary
-        1 -> cs.primary.copy(alpha = 0.16f)
-        else -> Color.Transparent
-    }
     val fg = when (kind) {
         0 -> cs.onPrimary
         1 -> cs.primary
@@ -752,8 +813,20 @@ private fun Btn(
         modifier.height(h)
             .graphicsLayer { scaleX = sc; scaleY = sc }
             .clip(CircleShape)
-            .background(bg)
-            .then(if (kind == 2) Modifier.border(1.dp, cs.outline, CircleShape) else Modifier)
+            .then(
+                when (kind) {
+                    0 -> Modifier.background(accentBrush(cs))
+                    1 -> Modifier.background(cs.primary.copy(alpha = 0.16f))
+                    else -> Modifier
+                }
+            )
+            .then(
+                when (kind) {
+                    1 -> Modifier.border(1.dp, cs.primary.copy(alpha = 0.35f), CircleShape)
+                    2 -> Modifier.border(1.dp, cs.outline, CircleShape)
+                    else -> Modifier
+                }
+            )
             .clickable(interactionSource = src, indication = null, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -783,13 +856,14 @@ private fun IconBtn(
 @Composable
 private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val bg by animateColorAsState(if (selected) cs.primary else Color.Transparent, tween(220), label = "pbg")
+    val a by animateFloatAsState(if (selected) 1f else 0f, tween(240), label = "pa")
     val fg by animateColorAsState(if (selected) cs.onPrimary else cs.onSurface, tween(220), label = "pfg")
     Box(
-        Modifier.clip(CircleShape).background(bg)
+        Modifier.clip(CircleShape)
             .border(1.dp, if (selected) Color.Transparent else cs.outline, CircleShape)
             .clickable(onClick = onClick)
     ) {
+        Box(Modifier.matchParentSize().graphicsLayer { alpha = a }.background(accentBrush(cs)))
         Text(
             text, Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg
@@ -800,22 +874,24 @@ private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Color) {
     val cs = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(LocalCorner.current * 3 / 4)
     Column(
         Modifier.weight(1f)
-            .clip(RoundedCornerShape(LocalCorner.current * 3 / 4))
-            .background(cs.surfaceVariant)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.18f), cs.surfaceVariant)))
+            .border(1.dp, tint.copy(alpha = 0.25f), shape)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Ico(icon, tint, 18.dp, 2f)
-            Spacer(Modifier.width(8.dp))
+            IconChip(icon, tint, 30.dp)
+            Spacer(Modifier.width(10.dp))
             Text(
                 label.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.8.sp, color = cs.onSurfaceVariant
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Text(value, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(12.dp))
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -827,14 +903,121 @@ private fun EmptyHint(title: String, sub: String) {
             Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Ico(Ic.Info, cs.onSurfaceVariant, 28.dp)
-            Spacer(Modifier.height(10.dp))
-            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            IconChip(Ic.Info, cs.primary, 52.dp)
+            Spacer(Modifier.height(12.dp))
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
                 sub, fontSize = 13.sp, color = cs.onSurfaceVariant,
                 textAlign = TextAlign.Center, lineHeight = 18.sp
             )
+        }
+    }
+}
+
+/** Status dot with a soft expanding ring. */
+@Composable
+private fun PulseDot(color: Color, dot: Dp = 10.dp) {
+    val t = rememberInfiniteTransition(label = "pulse")
+    val ring by t.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1700, easing = LinearEasing), RepeatMode.Restart),
+        label = "ring"
+    )
+    val r = if (LocalMotion.current) ring else 0f
+    Box(Modifier.size(dot * 2.6f), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(dot * (1f + 1.5f * r))
+                .graphicsLayer { alpha = 0.55f * (1f - r) }
+                .clip(CircleShape)
+                .background(color)
+        )
+        Box(Modifier.size(dot).clip(CircleShape).background(color))
+    }
+}
+
+@Composable
+private fun StatusPill(text: String, color: Color) {
+    Row(
+        Modifier.clip(CircleShape)
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.35f), CircleShape)
+            .padding(start = 4.dp, end = 14.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        PulseDot(color, 8.dp)
+        Spacer(Modifier.width(2.dp))
+        Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+    }
+}
+
+private fun packIcon(name: String): Ic = when (name) {
+    "Performance" -> Ic.Bolt
+    "Quality" -> Ic.Star
+    "Potato" -> Ic.Down
+    "Competitive" -> Ic.Flag
+    else -> Ic.Layers
+}
+
+/** Floating pill navigation. The selected tab grows, fills with the accent and shows its label. */
+@Composable
+private fun FloatingNav(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(30.dp)
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(shape)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(lerp(cs.surfaceVariant, cs.primary, 0.07f), cs.surfaceVariant)
+                    )
+                )
+                .border(
+                    1.dp,
+                    Brush.linearGradient(
+                        listOf(
+                            cs.primary.copy(alpha = 0.40f),
+                            cs.outlineVariant,
+                            cs.secondary.copy(alpha = 0.28f)
+                        )
+                    ),
+                    shape
+                )
+                .padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items.forEachIndexed { i, (label, ic) ->
+                NavTab(label, ic, i == selected) { onSelect(i) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.NavTab(label: String, icon: Ic, selected: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val a by animateFloatAsState(
+        if (selected) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "nta"
+    )
+    val w by animateFloatAsState(
+        if (selected) 1.8f else 1f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "ntw"
+    )
+    val tint by animateColorAsState(
+        if (selected) cs.onPrimary else cs.onSurfaceVariant, tween(220), label = "ntc"
+    )
+    Box(
+        Modifier.weight(w).height(48.dp).clip(CircleShape)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(Modifier.matchParentSize().graphicsLayer { alpha = a }.background(accentBrush(cs)))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Ico(icon, tint, 22.dp)
+            if (selected) {
+                Spacer(Modifier.width(6.dp))
+                Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
         }
     }
 }
@@ -1176,25 +1359,39 @@ fun App() {
         colorA: Color,
         colorB: Color,
         modifier: Modifier = Modifier,
-        h: Dp = 56.dp
+        h: Dp = 60.dp
     ) {
         val src = remember { MutableInteractionSource() }
         val pressed by src.collectIsPressedAsState()
         val scale by animateFloatAsState(
             if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "lgb"
         )
+        val flowT = rememberInfiniteTransition(label = "lgf")
+        val flow by flowT.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing), RepeatMode.Restart),
+            label = "lgfv"
+        )
+        val f = if (motion) flow else 0f
+        val brush = Brush.linearGradient(
+            colors = listOf(colorA, colorB, colorA),
+            start = Offset(f * 700f, 0f),
+            end = Offset(f * 700f + 700f, 0f),
+            tileMode = TileMode.Repeated
+        )
         Row(
             modifier.height(h).graphicsLayer { scaleX = scale; scaleY = scale }
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(colorA, colorB)))
+                .background(brush)
+                .border(1.dp, Color.White.copy(alpha = 0.28f), CircleShape)
                 .clickable(interactionSource = src, indication = null, onClick = onClick)
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Ico(Ic.Play, Color(0xFF1A1206), 20.dp, 2.2f)
+            Ico(Ic.Play, Color(0xFF1A1206), 22.dp, 2.2f)
             Spacer(Modifier.width(10.dp))
-            Text(text, color = Color(0xFF1A1206), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(text, color = Color(0xFF1A1206), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 
@@ -1206,28 +1403,51 @@ fun App() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Appear(0) {
-                Row(Modifier.padding(horizontal = 4.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
-                        Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("TacoStrap", fontSize = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                APP_VERSION, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-                                color = cs.onSurfaceVariant,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(cs.surfaceVariant)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                val heroShape = RoundedCornerShape(LocalCorner.current + 4.dp)
+                Box(
+                    Modifier.fillMaxWidth()
+                        .clip(heroShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(pc.copy(alpha = 0.30f), sc.copy(alpha = 0.10f), cs.surfaceVariant)
                             )
+                        )
+                        .border(
+                            1.dp,
+                            Brush.linearGradient(listOf(pc.copy(alpha = 0.65f), sc.copy(alpha = 0.12f))),
+                            heroShape
+                        )
+                        .padding(18.dp)
+                ) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
+                                Modifier.size(56.dp).clip(RoundedCornerShape(16.dp))
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("TacoStrap", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        APP_VERSION, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                        color = cs.primary,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(cs.primary.copy(alpha = 0.16f))
+                                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text("FastFlag manager for Roblox", fontSize = 14.sp, color = cs.onSurfaceVariant)
+                            }
                         }
-                        Text("FastFlag manager for Roblox", fontSize = 14.sp, color = cs.onSurfaceVariant)
+                        Spacer(Modifier.height(14.dp))
+                        StatusPill(
+                            if (ready) "Shizuku connected" else shStatus,
+                            if (ready) Good else if (ShizukuBus.ping) Amber else Bad
+                        )
                     }
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (ready) Good else Bad))
                 }
             }
             Appear(1) {
@@ -1286,7 +1506,7 @@ fun App() {
             if (activeProfile.isNotEmpty()) {
                 Appear(4) {
                     Group {
-                        Item("Active profile", activeProfile, { page = 2 }) {
+                        Item("Active profile", activeProfile, { page = 2 }, leading = Ic.Layers) {
                             Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                         }
                     }
@@ -1311,11 +1531,11 @@ fun App() {
             }
             Appear(6) {
                 Group {
-                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
-                        Ico(Ic.Globe, cs.onSurfaceVariant, 20.dp)
+                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
+                        Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
-                    Item("What's new in $APP_VERSION", "Changelog", { changelog = true }) {
-                        Ico(Ic.Doc, cs.onSurfaceVariant, 20.dp)
+                    Item("What's new in $APP_VERSION", "Changelog", { changelog = true }, leading = Ic.Doc) {
+                        Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
                 }
             }
@@ -1557,6 +1777,8 @@ fun App() {
                                 Modifier.padding(start = 20.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                IconChip(packIcon(p.name), cs.primary, 44.dp)
+                                Spacer(Modifier.width(14.dp))
                                 Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
                                     Text(p.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                                     Text(
@@ -1780,16 +2002,17 @@ fun App() {
                                     SwitchItem(
                                         "Dynamic color",
                                         "Use your wallpaper colors on Android 12 and up.",
-                                        dynColor
+                                        dynColor,
+                                        leading = Ic.Palette
                                     ) { dynColor = it; save() }
                                 }
                             }
                             SectionLabel("Surface")
                             Group {
-                                SwitchItem("True black", "Pure black background for OLED screens.", trueBlack) { trueBlack = it; save() }
-                                SwitchItem("Animated background", "A faint accent glow that drifts slowly.", animBg) { animBg = it; save() }
-                                SwitchItem("Compact lists", "Tighter spacing between rows.", compact) { compact = it; save() }
-                                SwitchItem("Motion", "Turn off for no animations or transitions.", motion) { motion = it; save() }
+                                SwitchItem("True black", "Pure black background for OLED screens.", trueBlack, leading = Ic.Star) { trueBlack = it; save() }
+                                SwitchItem("Animated background", "A faint accent glow that drifts slowly.", animBg, leading = Ic.Bolt) { animBg = it; save() }
+                                SwitchItem("Compact lists", "Tighter spacing between rows.", compact, leading = Ic.Sort) { compact = it; save() }
+                                SwitchItem("Motion", "Turn off for no animations or transitions.", motion, leading = Ic.Play) { motion = it; save() }
                             }
                             SectionLabel("Shape")
                             Group {
@@ -1818,11 +2041,11 @@ fun App() {
                         1 -> {
                             SectionLabel("Connection")
                             Group {
-                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion")
-                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }) {
+                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion", leading = Ic.Game)
+                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }, leading = Ic.Folder) {
                                     Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                                 }
-                                Item("Shizuku", shStatus) {
+                                Item("Shizuku", shStatus, leading = Ic.Bolt) {
                                     Btn("Grant", {
                                         try {
                                             Shizuku.requestPermission(1001)
@@ -1835,7 +2058,8 @@ fun App() {
                                     "Use root",
                                     if (rootAvailable) "Apply flags with superuser instead of Shizuku."
                                     else "No root detected on this device.",
-                                    useRoot
+                                    useRoot,
+                                    leading = Ic.Warn
                                 ) { useRoot = it; save() }
                             }
                             SectionLabel("Flag file")
@@ -1857,13 +2081,15 @@ fun App() {
                                 SwitchItem(
                                     "Write file on save",
                                     "Writes your flags to the flag file when you tap Save.",
-                                    applyOnSave
+                                    applyOnSave,
+                                    leading = Ic.Save
                                 ) { applyOnSave = it; save() }
-                                SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart) { restart = it; save() }
+                                SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart, leading = Ic.Refresh) { restart = it; save() }
                                 SwitchItem(
                                     "Disable frame-rate cap",
                                     "Always lifts Android's game frame cap when you save. Done automatically for limits above 60 FPS.",
-                                    fps
+                                    fps,
+                                    leading = Ic.Bolt
                                 ) { fps = it; save() }
                                 Item("Clear Roblox cache", "Frees up space", {
                                     scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
@@ -1872,17 +2098,20 @@ fun App() {
                             SectionLabel("Messages")
                             Group {
                                 Item("Errors always show, whatever you turn off here.")
-                                SwitchItem("FastFlag messages", "Confirms when flags are saved, applied or imported.", msgFlag) { msgFlag = it; save() }
-                                SwitchItem("Launch messages", "Confirms when Roblox or a game is launched.", msgLaunch) { msgLaunch = it; save() }
-                                SwitchItem("Other messages", "Confirms copies, backups and other actions.", msgOther) { msgOther = it; save() }
+                                SwitchItem("FastFlag messages", "Confirms when flags are saved, applied or imported.", msgFlag, leading = Ic.Flag) { msgFlag = it; save() }
+                                SwitchItem("Launch messages", "Confirms when Roblox or a game is launched.", msgLaunch, leading = Ic.Play) { msgLaunch = it; save() }
+                                SwitchItem("Other messages", "Confirms copies, backups and other actions.", msgOther, leading = Ic.Bell) { msgOther = it; save() }
                             }
                         }
                         2 -> {
                             SectionLabel("Backup and restore")
                             Group {
-                                Item("Export", "Flags, profiles and pinned games as one JSON file.") {
-                                    share(backupJson(), "Export backup")
-                                }
+                                Item(
+                                    "Export",
+                                    "Flags, profiles and pinned games as one JSON file.",
+                                    { share(backupJson(), "Export backup") },
+                                    leading = Ic.Save
+                                ) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
                                 Item("Import", "Restores a backup from the clipboard.", {
                                     val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
                                     val msg = runCatching {
@@ -1895,7 +2124,7 @@ fun App() {
                                         "Backup imported."
                                     }.getOrElse { "Failed: copy a backup to the clipboard first." }
                                     toast("other", msg)
-                                }) { Ico(Ic.Download, cs.onSurfaceVariant, 20.dp) }
+                                }, leading = Ic.Download) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
                             }
                             SectionLabel("Tools")
                             Group {
@@ -1904,23 +2133,23 @@ fun App() {
                                         "Shizuku: $shStatus\nRoot available: $rootAvailable (in use: $useRoot)\n" +
                                         "Package: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}\nProfiles: ${presets.size}"
                                     copyText("diagnostics", report)
-                                }) { Ico(Ic.Copy, cs.onSurfaceVariant, 20.dp) }
+                                }, leading = Ic.Doc) { Ico(Ic.Copy, cs.onSurfaceVariant, 20.dp) }
                             }
                         }
                         else -> {
                             SectionLabel("About")
                             Group {
-                                Item("Changelog", "What's new in $APP_VERSION", { changelog = true }) {
-                                    Ico(Ic.Doc, cs.onSurfaceVariant, 20.dp)
+                                Item("Changelog", "What's new in $APP_VERSION", { changelog = true }, leading = Ic.Doc) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                                 }
-                                Item("Licenses", "Open source notices", { licenses = true }) {
-                                    Ico(Ic.Info, cs.onSurfaceVariant, 20.dp)
+                                Item("Licenses", "Open source notices", { licenses = true }, leading = Ic.Info) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                                 }
-                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }) {
-                                    Ico(Ic.Globe, cs.onSurfaceVariant, 20.dp)
+                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                                 }
-                                Item("Shizuku website", "Set up wireless debugging", { openUrl(SHIZUKU_URL) }) {
-                                    Ico(Ic.Globe, cs.onSurfaceVariant, 20.dp)
+                                Item("Shizuku website", "Set up wireless debugging", { openUrl(SHIZUKU_URL) }, leading = Ic.Globe) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                                 }
                             }
                             Text(
@@ -1953,6 +2182,13 @@ fun App() {
                             radius = 1100f
                         )
                     )
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(sc.copy(alpha = glowAmt * 0.8f), Color.Transparent),
+                            center = Offset(900f - 500f * glow, 1900f),
+                            radius = 1000f
+                        )
+                    )
             ) {
                 Scaffold(
                     containerColor = Color.Transparent,
@@ -1965,29 +2201,7 @@ fun App() {
                             )
                         }
                     },
-                    bottomBar = {
-                        Column(
-                            Modifier.background(MaterialTheme.colorScheme.surfaceVariant).navigationBarsPadding()
-                        ) {
-                            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                            NavigationBar(
-                                containerColor = Color.Transparent,
-                                tonalElevation = 0.dp
-                            ) {
-                                navItems.forEachIndexed { i, (label, ic) ->
-                                    NavigationBarItem(
-                                        selected = page == i,
-                                        onClick = { page = i },
-                                        icon = { Ico(ic, if (page == i) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, 24.dp) },
-                                        label = { Text(label, fontSize = 12.sp) },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    bottomBar = { FloatingNav(navItems, page) { page = it } }
                 ) { pad ->
                     Box(Modifier.padding(pad).fillMaxSize()) {
                         Crossfade(targetState = page, animationSpec = tween(pageAnim), label = "page") { p ->
@@ -2009,6 +2223,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Welcome to TacoStrap $APP_VERSION") },
                     text = {
                         Text(
@@ -2032,6 +2247,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { renaming = null },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Rename profile") },
                     text = { OutlinedTextField(newName, { newName = it }, singleLine = true) },
                     confirmButton = {
@@ -2056,6 +2272,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { duplicating = null },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Duplicate") },
                     text = { OutlinedTextField(dupName, { dupName = it }, singleLine = true, label = { Text("New name") }) },
                     confirmButton = {
@@ -2081,6 +2298,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { confirmClear = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Clear all flags?") },
                     text = { Text("This removes all ${flags.size} flags from the list. Saved profiles are kept.") },
                     confirmButton = {
@@ -2096,6 +2314,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { pkgDialog = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Package name") },
                     text = {
                         OutlinedTextField(
@@ -2117,6 +2336,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { showJson = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("JSON tools") },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2150,6 +2370,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { urlDialog = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Import flags from URL") },
                     text = {
                         OutlinedTextField(
@@ -2184,6 +2405,7 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { licenses = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("Licenses") },
                     text = { Text("TacoStrap is built with Jetpack Compose and Shizuku (Apache License 2.0).") },
                     confirmButton = { TextButton({ licenses = false }) { Text("Close") } }
@@ -2194,10 +2416,19 @@ fun App() {
                 AlertDialog(
                     onDismissRequest = { changelog = false },
                     shape = RoundedCornerShape(28.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     title = { Text("What's new in $APP_VERSION") },
                     text = {
                         Text(
                             "New in $APP_VERSION:\n" +
+                                "  - Fancier look: floating navigation, glass cards, gradient buttons and switches\n" +
+                                "  - Animated status pill and a flowing launch button\n" +
+                                "  - Icon chips on settings rows and flag packs\n" +
+                                "  - Frame rate cap is lifted automatically above 60 FPS\n" +
+                                "  - Packs replace each other instead of stacking\n" +
+                                "  - Settings tabs are reachable again\n" +
+                                "  - Export no longer opens the share sheet by itself\n\n" +
+                                "Earlier, in 4.0:\n" +
                                 "  - Redesigned home dashboard with status cards\n" +
                                 "  - Flag editor with search, sorting and type filters\n" +
                                 "  - Per-flag actions: copy name, copy value, duplicate, delete\n" +
@@ -2208,10 +2439,7 @@ fun App() {
                                 "  - Verify file after apply\n" +
                                 "  - Import flags from URL (needs INTERNET permission)\n" +
                                 "  - Dynamic color on Android 12+, two new accent themes\n" +
-                                "  - Changelog and first-run onboarding\n" +
-                                "  - Frame rate cap is lifted automatically above 60 FPS\n" +
-                                "  - Packs replace each other instead of stacking\n" +
-                                "  - Settings tabs are reachable again"
+                                "  - Changelog and first-run onboarding"
                         )
                     },
                     confirmButton = { TextButton({ changelog = false }) { Text("Close") } }
