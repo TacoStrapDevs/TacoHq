@@ -84,6 +84,7 @@ private const val APP_VERSION = "4.0"
 private const val DEFAULT_PKG = "com.roblox.client"
 private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
+private const val FPS_FLAG = "DFIntTaskSchedulerTargetFps"
 private const val ALLOWLIST_URL =
     "https://devforum.roblox.com/t/allowlist-for-local-client-configuration-via-fast-flags/3966569"
 private const val SHIZUKU_URL = "https://shizuku.rikka.app"
@@ -140,9 +141,13 @@ fun isRootAvailable(): Boolean = suSh("id").first
 fun applyFlags(json: String, path: String, fps: Boolean, root: Boolean): String {
     val b64 = Base64.getEncoder().encodeToString(json.toByteArray())
     val dir = path.substringBeforeLast('/')
+    // A target above 60 needs Android's default game frame rate cap lifted, so do it
+    // automatically instead of relying on the separate Settings toggle.
+    val target = runCatching { parseFlags(json)[FPS_FLAG]?.toIntOrNull() }.getOrNull() ?: 0
+    val liftCap = fps || target > 60
     val cmd = buildString {
         append("mkdir -p '$dir' && echo '$b64' | base64 -d > '$path' && chmod 644 '$path'")
-        if (fps) append(" && setprop $FPS_PROP true")
+        if (liftCap) append(" && setprop $FPS_PROP true")
     }
     val (ok, msg) = runCmd(cmd, root)
     return if (ok) "Applied ${parseFlags(json).size} flags to $path" else "Failed: $msg"
@@ -241,7 +246,7 @@ private val FS_TEXTURE = FS.Choice(
     )
 )
 private val FS_AA = FS.Choice(
-    "Anti aliasing", "Smooths jagged edges",
+    "Anti aliasing", "Smooths jagged edges. Higher values cost a lot of frame rate",
     listOf(
         Opt("Automatic", emptyMap()),
         Opt("Off", mapOf("FIntDebugForceMSAASamples" to "1")),
@@ -262,13 +267,13 @@ private val FS_SKY = FS.Toggle("Gray sky", "Replaces the sky with plain gray", m
 private val FS_SHADOWS = FS.Toggle("Disable shadows", "Turns off Roblox shadows", mapOf("FIntRenderShadowIntensity" to "0"))
 private val FS_POSTFX = FS.Toggle("Disable post-processing", "Turns off bloom and color effects", mapOf("FFlagDisablePostFx" to "True"))
 private val FS_FPS = FS.Choice(
-    "Frame rate limit", "Above 60 turns off vsync and the Android frame rate cap",
+    "Frame rate limit", "Above 60 also lifts the Android frame rate cap when you save",
     listOf(Opt("Default", emptyMap())) +
-        listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf("DFIntTaskSchedulerTargetFps" to "$it")) }
+        listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) }
 )
 private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corner", mapOf("FFlagDebugDisplayFPS" to "True"))
 private val FS_QUALITY = FS.Choice(
-    "Graphics quality override", "Locks the Roblox graphics level",
+    "Graphics quality override", "Locks the Roblox graphics level. Lower is faster in games",
     listOf(Opt("Default", emptyMap())) +
         listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) }
 )
@@ -289,7 +294,7 @@ private val FS_GRASSDIST = FS.Range(
 )
 private val FS_BLUR = FS.Toggle("Remove blur", "No blur behind Roblox menus", mapOf("FIntRobloxGuiBlurIntensity" to "0"))
 private val FS_PRELOAD = FS.Toggle(
-    "Faster loading", "Preloads more assets to load games faster",
+    "Faster loading", "Preloads more assets to load games faster. Can use a lot of memory",
     mapOf("DFIntNumAssetsMaxToPreload" to "2147483647", "DFIntAssetPreloading" to "2147483647")
 )
 private val FS_MTU = FS.Num("MTU size", "Bytes sent per network packet", "DFIntConnectionMTUSize")
@@ -316,11 +321,12 @@ private val PACKS = listOf(
         texSet("2") + mapOf("FIntDebugForceMSAASamples" to "2")
     ),
     Pack(
-        "Performance", "Lowest textures, no shadows or post-processing",
+        "Performance", "Lowest textures, quality level 3, no shadows or post-processing",
         texSet("0") + mapOf(
             "FIntDebugForceMSAASamples" to "1",
             "FIntRenderShadowIntensity" to "0",
-            "FFlagDisablePostFx" to "True"
+            "FFlagDisablePostFx" to "True",
+            "FIntRomarkStartWithGraphicQualityLevel" to "3"
         )
     ),
     Pack(
@@ -342,7 +348,7 @@ private val PACKS = listOf(
     Pack(
         "Competitive", "Maximum frame rate. No shadows, no blur, no grass, 240 FPS cap",
         mapOf(
-            "DFIntTaskSchedulerTargetFps" to "240",
+            FPS_FLAG to "240",
             "FIntRenderShadowIntensity" to "0",
             "FIntRobloxGuiBlurIntensity" to "0",
             "FIntFRMMinGrassDistance" to "0",
@@ -352,6 +358,17 @@ private val PACKS = listOf(
         )
     )
 )
+
+// Every key a pack can touch, except the FPS target and counter (those are your own choices).
+private val PACK_KEYS: Set<String> =
+    PACKS.flatMap { it.sets.keys }.toSet() - setOf(FPS_FLAG, "FFlagDebugDisplayFPS")
+
+// Applying a pack replaces the previous pack's settings instead of stacking on top of them,
+// so leftovers like 4x anti aliasing or high textures don't survive a switch to Performance.
+private fun MutableMap<String, String>.applyPack(p: Pack) {
+    PACK_KEYS.forEach { remove(it) }
+    putAll(p.sets)
+}
 
 // ---------- Shared UI state ----------
 
@@ -1355,8 +1372,8 @@ fun App() {
                         ) {
                             ChoiceBox(PACKS[quickIdx].name, PACKS.map { it.name }) { quickIdx = it }
                             Btn("Apply", {
-                                flags.putAll(PACKS[quickIdx].sets); activeProfile = ""; save()
-                                toast("flag", "Added ${PACKS[quickIdx].name} flags.")
+                                flags.applyPack(PACKS[quickIdx]); activeProfile = ""; save()
+                                toast("flag", "Applied ${PACKS[quickIdx].name} pack.")
                             }, h = 44.dp)
                         }
                     }
@@ -1552,7 +1569,7 @@ fun App() {
                                     )
                                 }
                                 Btn("Apply", {
-                                    flags.putAll(p.sets); activeProfile = ""; save()
+                                    flags.applyPack(p); activeProfile = ""; save()
                                     toast("flag", "Applied ${p.name}.")
                                 }, kind = 1, h = 40.dp)
                             }
@@ -1711,6 +1728,14 @@ fun App() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             PageHeader("Settings")
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("Appearance", "Connection", "Backup", "About").forEachIndexed { i, label ->
+                    Pill(label, setTab == i) { setTab = i }
+                }
+            }
             Crossfade(targetState = setTab, animationSpec = tween(pageAnim), label = "setTab") { t ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (t) {
@@ -1835,7 +1860,11 @@ fun App() {
                                     applyOnSave
                                 ) { applyOnSave = it; save() }
                                 SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart) { restart = it; save() }
-                                SwitchItem("Disable frame-rate cap", "Sets a system property when you save.", fps) { fps = it; save() }
+                                SwitchItem(
+                                    "Disable frame-rate cap",
+                                    "Always lifts Android's game frame cap when you save. Done automatically for limits above 60 FPS.",
+                                    fps
+                                ) { fps = it; save() }
                                 Item("Clear Roblox cache", "Frees up space", {
                                     scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
                                 }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
@@ -2179,7 +2208,10 @@ fun App() {
                                 "  - Verify file after apply\n" +
                                 "  - Import flags from URL (needs INTERNET permission)\n" +
                                 "  - Dynamic color on Android 12+, two new accent themes\n" +
-                                "  - Changelog and first-run onboarding"
+                                "  - Changelog and first-run onboarding\n" +
+                                "  - Frame rate cap is lifted automatically above 60 FPS\n" +
+                                "  - Packs replace each other instead of stacking\n" +
+                                "  - Settings tabs are reachable again"
                         )
                     },
                     confirmButton = { TextButton({ changelog = false }) { Text("Close") } }
