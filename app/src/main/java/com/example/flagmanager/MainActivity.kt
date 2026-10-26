@@ -8,30 +8,41 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,10 +56,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,14 +75,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Base64
 
-private const val APP_VERSION = "5.2"
+private const val APP_VERSION = "4.1"
 private const val DEFAULT_PKG = "com.roblox.client"
 private const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 private const val FPS_PROP = "debug.graphics.game_default_frame_rate.disabled"
@@ -77,15 +90,7 @@ private const val ALLOWLIST_URL =
     "https://devforum.roblox.com/t/allowlist-for-local-client-configuration-via-fast-flags/3966569"
 private const val SHIZUKU_URL = "https://shizuku.rikka.app"
 
-private var autoLaunchedOnce = false
-
 // ---------- Shell / logic ----------
-
-/** Safely quote a value inserted into a shell command. */
-private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
-
-private fun validPackageName(pkg: String): Boolean =
-    pkg.matches(Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+"))
 
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text)
@@ -135,29 +140,22 @@ fun runCmd(cmd: String, root: Boolean): Pair<Boolean, String> = if (root) suSh(c
 fun isRootAvailable(): Boolean = suSh("id").first
 
 fun applyFlags(json: String, path: String, fps: Boolean, root: Boolean): String {
-    val parsed = runCatching { parseFlags(json) }.getOrElse {
-        return "Failed: invalid JSON (${it.message ?: "parse error"})."
-    }
-    if (path.isBlank() || path.contains("\n") || path.contains("\r")) {
-        return "Failed: enter a valid flag-file path."
-    }
-    val b64 = Base64.getEncoder().encodeToString(json.toByteArray(Charsets.UTF_8))
-    val dir = path.substringBeforeLast('/', ".")
-    // A target above 60 needs Android's default game frame rate cap lifted.
-    val target = parsed[FPS_FLAG]?.toIntOrNull() ?: 0
+    val b64 = Base64.getEncoder().encodeToString(json.toByteArray())
+    val dir = path.substringBeforeLast('/')
+    // A target above 60 needs Android's default game frame rate cap lifted, so do it
+    // automatically instead of relying on the separate Settings toggle.
+    val target = runCatching { parseFlags(json)[FPS_FLAG]?.toIntOrNull() }.getOrNull() ?: 0
     val liftCap = fps || target > 60
-    val qDir = shellQuote(dir)
-    val qPath = shellQuote(path)
     val cmd = buildString {
-        append("mkdir -p $qDir && echo '$b64' | base64 -d > $qPath && chmod 644 $qPath")
+        append("mkdir -p '$dir' && echo '$b64' | base64 -d > '$path' && chmod 644 '$path'")
         if (liftCap) append(" && setprop $FPS_PROP true")
     }
     val (ok, msg) = runCmd(cmd, root)
-    return if (ok) "Applied ${parsed.size} flags to $path" else "Failed: $msg"
+    return if (ok) "Applied ${parseFlags(json).size} flags to $path" else "Failed: $msg"
 }
 
 fun readFlagFile(path: String, root: Boolean): String {
-    val (_, out) = runCmd("cat ${shellQuote(path)} 2>/dev/null", root)
+    val (_, out) = runCmd("cat '$path' 2>/dev/null", root)
     return out
 }
 
@@ -171,64 +169,23 @@ fun verifyFlags(json: String, path: String, root: Boolean): String {
     else "Verify warning: ${missing.size} flags differ on disk."
 }
 
-fun applyVerified(json: String, path: String, fps: Boolean, root: Boolean): String {
-    val a = applyFlags(json, path, fps, root)
-    if (a.startsWith("Failed")) return a
-    return a + "\n" + verifyFlags(json, path, root)
-}
-
 fun resetFlags(path: String, pkg: String, root: Boolean): String {
-    if (!validPackageName(pkg)) return "Failed: invalid Roblox package name."
-    val (ok, msg) = runCmd("rm -f ${shellQuote(path)}; setprop $FPS_PROP false; am force-stop ${shellQuote(pkg)}", root)
+    val (ok, msg) = runCmd("rm -f '$path'; setprop $FPS_PROP false; am force-stop $pkg", root)
     return if (ok) "Removed flag file. Reopen Roblox." else "Failed: $msg"
 }
 
 fun launchPkg(pkg: String, root: Boolean): String {
-    if (!validPackageName(pkg)) return "Failed: invalid Roblox package name."
-    val (ok, msg) = runCmd("monkey -p ${shellQuote(pkg)} -c android.intent.category.LAUNCHER 1", root)
+    val (ok, msg) = runCmd("monkey -p $pkg -c android.intent.category.LAUNCHER 1", root)
     return if (ok) "Launched Roblox." else "Failed: $msg"
 }
 
-fun launchLink(uri: String, pkg: String, root: Boolean): String {
-    if (uri.contains('\'') || uri.contains(' ')) return "Failed: that link has invalid characters."
-    // Try Roblox directly first, then fall back to whatever app handles the link.
-    val (ok1, msg1) = runCmd("am start -a android.intent.action.VIEW -d '$uri' -p $pkg", root)
-    if (ok1 && !msg1.contains("Error")) return "Opening in Roblox."
-    val (ok2, msg2) = runCmd("am start -a android.intent.action.VIEW -d '$uri'", root)
-    if (ok2 && !msg2.contains("Error")) return "Opening link."
-    val reason = msg2.ifEmpty { msg1.ifEmpty { "could not open the link" } }
-    return "Failed: $reason"
-}
-
-fun normalizeLink(input: String): String? {
-    val t = input.trim()
-    return when {
-        t.isEmpty() -> null
-        t.all { it.isDigit() } -> "roblox://placeId=$t"
-        t.startsWith("roblox://") -> t
-        t.startsWith("http://") || t.startsWith("https://") -> t
-        t.contains("roblox.com") -> "https://$t"
-        else -> null
-    }
-}
-
-fun extractPlaceId(input: String): String? = Regex("""\d{4,}""").find(input)?.value
-
-fun forceStop(pkg: String, root: Boolean): String {
-    if (!validPackageName(pkg)) return "Failed: invalid Roblox package name."
-    val (ok, msg) = runCmd("am force-stop ${shellQuote(pkg)}", root)
-    return if (ok) "Closed Roblox." else "Failed: $msg"
-}
-
-fun trimMemory(pkg: String, level: String, root: Boolean): String {
-    if (!validPackageName(pkg) || level !in setOf("HIDDEN", "BACKGROUND", "MODERATE", "LOW", "CRITICAL", "RUNNING_MODERATE", "RUNNING_LOW", "RUNNING_CRITICAL")) return "Failed: invalid package or trim level."
-    val (ok, msg) = runCmd("am send-trim-memory ${shellQuote(pkg)} $level", root)
-    return if (ok) "Trimmed memory." else "Failed: ${msg.ifEmpty { "is Roblox running?" }}"
+fun launchGame(id: String, root: Boolean): String {
+    val (ok, msg) = runCmd("am start -a android.intent.action.VIEW -d 'roblox://placeId=$id'", root)
+    return if (ok) "Launching game $id." else "Failed: $msg"
 }
 
 fun clearCache(pkg: String, root: Boolean): String {
-    if (!validPackageName(pkg)) return "Failed: invalid package name."
-    val (ok, msg) = runCmd("rm -rf ${shellQuote("/sdcard/Android/data/$pkg/cache/")}*", root)
+    val (ok, msg) = runCmd("rm -rf /sdcard/Android/data/$pkg/cache/*", root)
     return if (ok) "Cleared Roblox cache." else "Failed: $msg"
 }
 
@@ -246,26 +203,6 @@ fun fetchText(url: String): Pair<Boolean, String> = try {
     Pair(false, e.message ?: "Network error")
 }
 
-private fun loadRecent(s: String): List<Triple<String, String, Long>> = runCatching {
-    val a = JSONArray(s)
-    (0 until a.length()).map { i ->
-        val o = a.getJSONObject(i)
-        Triple(o.getString("n"), o.getString("t"), o.getLong("ts"))
-    }
-}.getOrDefault(emptyList())
-
-private fun recentJson(l: List<Triple<String, String, Long>>): String {
-    val a = JSONArray()
-    l.forEach { e ->
-        val o = JSONObject()
-        o.put("n", e.first)
-        o.put("t", e.second)
-        o.put("ts", e.third)
-        a.put(o)
-    }
-    return a.toString()
-}
-
 // ---------- Models ----------
 
 private data class AppTheme(val name: String, val primary: Color, val secondary: Color)
@@ -280,14 +217,6 @@ private val THEMES = listOf(
     AppTheme("Mint", Color(0xFF6FE3B8), Color(0xFF1FA97A)),
     AppTheme("Rose", Color(0xFFF48FB1), Color(0xFFDC4C7E))
 )
-
-private val TRIM_LEVELS = listOf(
-    "Light" to "RUNNING_MODERATE",
-    "Medium" to "RUNNING_LOW",
-    "Strong" to "RUNNING_CRITICAL"
-)
-private val TRIM_INTERVALS = listOf(30, 60, 120, 300)
-private val TRIM_LABELS = listOf("30 seconds", "1 minute", "2 minutes", "5 minutes")
 
 private data class Opt(val label: String, val sets: Map<String, String>)
 private data class Pack(val name: String, val desc: String, val sets: Map<String, String>)
@@ -336,27 +265,10 @@ private val FS_RENDER = FS.Choice(
     )
 )
 private val FS_SKY = FS.Toggle("Gray sky", "Replaces the sky with plain gray", mapOf("FFlagDebugSkyGray" to "True"))
-private val FS_SHADOWS = FS.Toggle("Disable shadows", "Requests reduced Roblox shadow rendering; Roblox may ignore unsupported flags.", mapOf("FIntRenderShadowIntensity" to "0"))
-private val FS_POSTFX = FS.Toggle("Disable post-processing", "Requests fewer bloom and color effects; Roblox may ignore unsupported flags.", mapOf("FFlagDisablePostFx" to "True"))
-// These toggles reuse the same flags as the existing graphics controls and profiles.
-// They modify the flag editor's saved JSON; the game must support the flag for an in-game effect.
-private val FS_LOW_TEXTURES = FS.Toggle(
-    "Low texture quality",
-    "Uses the lowest texture override to reduce graphics memory pressure where supported.",
-    texSet("0")
-)
-private val FS_LOW_QUALITY = FS.Toggle(
-    "Low graphics quality",
-    "Requests Roblox graphics quality level 1 for lower rendering load where supported.",
-    mapOf("FIntRomarkStartWithGraphicQualityLevel" to "1")
-)
-private val FS_LOW_AA = FS.Toggle(
-    "Reduce anti-aliasing",
-    "Uses the lowest anti-aliasing setting to reduce GPU work where supported.",
-    mapOf("FIntDebugForceMSAASamples" to "1")
-)
+private val FS_SHADOWS = FS.Toggle("Disable shadows", "Turns off Roblox shadows", mapOf("FIntRenderShadowIntensity" to "0"))
+private val FS_POSTFX = FS.Toggle("Disable post-processing", "Turns off bloom and color effects", mapOf("FFlagDisablePostFx" to "True"))
 private val FS_FPS = FS.Choice(
-    "Frame rate limit", "Above 60 also lifts the Android frame rate cap when you apply",
+    "Frame rate limit", "Above 60 also lifts the Android frame rate cap when you save",
     listOf(Opt("Default", emptyMap())) +
         listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) }
 )
@@ -398,7 +310,6 @@ private val FS_LOD = FS.Choice(
 
 private val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Graphics" to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SKY, FS_SHADOWS, FS_POSTFX, FS_LOD),
-    "FPS boost toggles" to listOf(FS_LOW_TEXTURES, FS_LOW_QUALITY, FS_LOW_AA, FS_SHADOWS, FS_POSTFX, FS_NOGRASS, FS_BLUR),
     "Performance" to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
     "World detail" to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
     "Interface" to listOf(FS_BLUR),
@@ -453,7 +364,8 @@ private val PACKS = listOf(
 private val PACK_KEYS: Set<String> =
     PACKS.flatMap { it.sets.keys }.toSet() - setOf(FPS_FLAG, "FFlagDebugDisplayFPS")
 
-// Applying a pack replaces the previous pack's settings instead of stacking on top of them.
+// Applying a pack replaces the previous pack's settings instead of stacking on top of them,
+// so leftovers like 4x anti aliasing or high textures don't survive a switch to Performance.
 private fun MutableMap<String, String>.applyPack(p: Pack) {
     PACK_KEYS.forEach { remove(it) }
     putAll(p.sets)
@@ -463,6 +375,7 @@ private fun MutableMap<String, String>.applyPack(p: Pack) {
 
 private val LocalCorner = compositionLocalOf { 24.dp }
 private val LocalPad = compositionLocalOf { 16.dp }
+private val LocalMotion = compositionLocalOf { true }
 
 private val Amber = Color(0xFFE8B84A)
 private val Good = Color(0xFF5BC27A)
@@ -479,8 +392,7 @@ object ShizukuBus {
 private enum class Ic {
     Home, Grid, Layers, Flag, Sliders, Right, Down, Up, Back, Close, Plus,
     Info, Warn, Play, Check, Download, Folder, Bell, Game, Doc, Search,
-    Copy, Trash, Sort, Refresh, Star, Save, Palette, More, Globe, Bolt,
-    Memory, Clock
+    Copy, Trash, Sort, Refresh, Star, Save, Palette, More, Globe, Bolt
 }
 
 private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
@@ -656,28 +568,34 @@ private fun Ico(kind: Ic, tint: Color, sz: Dp = 24.dp, stroke: Float = 1.9f) {
             Ic.Bolt -> {
                 pl(tint, st, s, 13f, 3f, 6f, 13.5f, 11f, 13.5f, 10.5f, 21f, 18f, 10f, 13f, 10f, 13f, 3f)
             }
-            Ic.Memory -> {
-                drawRoundRect(tint, Offset(7f * s, 7f * s), Size(10f * s, 10f * s), CornerRadius(2f * s), style = st)
-                listOf(10f, 14f).forEach { q ->
-                    pl(tint, st, s, q, 3.5f, q, 7f)
-                    pl(tint, st, s, q, 17f, q, 20.5f)
-                    pl(tint, st, s, 3.5f, q, 7f, q)
-                    pl(tint, st, s, 17f, q, 20.5f, q)
-                }
-            }
-            Ic.Clock -> {
-                drawCircle(tint, 9f * s, Offset(12f * s, 12f * s), style = st)
-                pl(tint, st, s, 12f, 7f, 12f, 12f, 15.5f, 14f)
-            }
         }
     }
 }
 
-// ---------- Reusable UI (no animations, built for smooth scrolling) ----------
+// ---------- Reusable UI ----------
 
+/** Accent gradient used on buttons, switches, pills and the selected nav tab. */
 private fun accentBrush(cs: ColorScheme): Brush =
     Brush.linearGradient(listOf(cs.primary, lerp(cs.primary, cs.secondary, 0.6f)))
 
+@Composable
+private fun Appear(index: Int, content: @Composable () -> Unit) {
+    if (!LocalMotion.current) {
+        content()
+        return
+    }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(index * 55L)
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(420)) + slideInVertically(tween(420)) { it / 6 }
+    ) { content() }
+}
+
+/** Glass-style card: soft vertical gradient with a thin accent-tinted border. */
 @Composable
 private fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val cs = MaterialTheme.colorScheme
@@ -690,12 +608,24 @@ private fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScop
                     listOf(cs.surfaceVariant, lerp(cs.surfaceVariant, cs.background, 0.35f))
                 )
             )
-            .border(1.dp, cs.outlineVariant, shape)
+            .border(
+                1.dp,
+                Brush.linearGradient(
+                    listOf(
+                        cs.primary.copy(alpha = 0.30f),
+                        cs.outlineVariant,
+                        cs.secondary.copy(alpha = 0.18f)
+                    )
+                ),
+                shape
+            )
+            .animateContentSize()
             .padding(vertical = 4.dp),
         content = content
     )
 }
 
+/** Rounded square with a tinted gradient and an icon in the middle. */
 @Composable
 private fun IconChip(icon: Ic, tint: Color, size: Dp = 40.dp) {
     Box(
@@ -750,20 +680,25 @@ private fun ValueText(text: String) {
 @Composable
 private fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     val cs = MaterialTheme.colorScheme
+    val on by animateFloatAsState(if (checked) 1f else 0f, tween(260), label = "swon")
+    val thumb by animateColorAsState(
+        if (checked) Color(0xFFFFFFFF) else Color(0xFF9A948C), tween(220), label = "swc"
+    )
+    val x by animateDpAsState(
+        if (checked) 25.dp else 4.dp, spring(dampingRatio = 0.6f, stiffness = 500f), label = "swx"
+    )
     Box(
-        Modifier.width(54.dp).height(31.dp).clip(CircleShape)
-            .then(
-                if (checked) Modifier.background(accentBrush(cs))
-                else Modifier.background(Color(0xFF3A3632))
-            )
+        Modifier.width(54.dp).height(31.dp).clip(CircleShape).background(Color(0xFF3A3632))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                 onChange(!checked)
             }
     ) {
         Box(
-            Modifier.offset(x = if (checked) 25.dp else 4.dp, y = 3.5.dp).size(24.dp).clip(CircleShape)
-                .background(if (checked) Color.White else Color(0xFF9A948C))
+            Modifier.matchParentSize()
+                .graphicsLayer { alpha = on }
+                .background(accentBrush(cs))
         )
+        Box(Modifier.offset(x = x, y = 3.5.dp).size(24.dp).clip(CircleShape).background(thumb))
     }
 }
 
@@ -781,7 +716,7 @@ private fun SwitchItem(
 @Composable
 private fun SectionLabel(text: String) {
     val cs = MaterialTheme.colorScheme
-    Row(Modifier.padding(start = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(start = 8.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(width = 4.dp, height = 14.dp).clip(CircleShape)
                 .background(Brush.verticalGradient(listOf(cs.primary, cs.secondary)))
@@ -797,7 +732,7 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun PageHeader(title: String, sub: String? = null) {
     val cs = MaterialTheme.colorScheme
-    Column(Modifier.padding(horizontal = 4.dp, vertical = 10.dp)) {
+    Column(Modifier.padding(horizontal = 4.dp, vertical = 14.dp)) {
         Text(title, fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
         Spacer(Modifier.height(6.dp))
         Box(
@@ -863,6 +798,11 @@ private fun Btn(
     icon: Ic? = null,
     h: Dp = 48.dp
 ) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(
+        if (pressed) 0.95f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "btn"
+    )
     val cs = MaterialTheme.colorScheme
     val fg = when (kind) {
         0 -> cs.onPrimary
@@ -871,6 +811,7 @@ private fun Btn(
     }
     Row(
         modifier.height(h)
+            .graphicsLayer { scaleX = sc; scaleY = sc }
             .clip(CircleShape)
             .then(
                 when (kind) {
@@ -886,7 +827,7 @@ private fun Btn(
                     else -> Modifier
                 }
             )
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = src, indication = null, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -896,25 +837,6 @@ private fun Btn(
             Spacer(Modifier.width(8.dp))
         }
         Text(text, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun LaunchButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val cs = MaterialTheme.colorScheme
-    Row(
-        modifier.height(62.dp)
-            .clip(CircleShape)
-            .background(Brush.horizontalGradient(listOf(cs.primary, cs.secondary)))
-            .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        Ico(Ic.Play, cs.onPrimary, 22.dp, 2.2f)
-        Spacer(Modifier.width(10.dp))
-        Text(text, color = cs.onPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 
@@ -934,18 +856,17 @@ private fun IconBtn(
 @Composable
 private fun Pill(text: String, selected: Boolean, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
+    val a by animateFloatAsState(if (selected) 1f else 0f, tween(240), label = "pa")
+    val fg by animateColorAsState(if (selected) cs.onPrimary else cs.onSurface, tween(220), label = "pfg")
     Box(
         Modifier.clip(CircleShape)
-            .then(
-                if (selected) Modifier.background(accentBrush(cs))
-                else Modifier.border(1.dp, cs.outline, CircleShape)
-            )
+            .border(1.dp, if (selected) Color.Transparent else cs.outline, CircleShape)
             .clickable(onClick = onClick)
     ) {
+        Box(Modifier.matchParentSize().graphicsLayer { alpha = a }.background(accentBrush(cs)))
         Text(
             text, Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-            fontSize = 13.sp, fontWeight = FontWeight.Medium,
-            color = if (selected) cs.onPrimary else cs.onSurface
+            fontSize = 13.sp, fontWeight = FontWeight.Medium, color = fg
         )
     }
 }
@@ -957,8 +878,8 @@ private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Colo
     Column(
         Modifier.weight(1f)
             .clip(shape)
-            .background(Brush.linearGradient(listOf(Color(0xFF29231C), Color(0xFF171513))))
-            .border(1.dp, tint.copy(alpha = 0.32f), shape)
+            .background(Brush.linearGradient(listOf(tint.copy(alpha = 0.18f), cs.surfaceVariant)))
+            .border(1.dp, tint.copy(alpha = 0.25f), shape)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -970,26 +891,7 @@ private fun RowScope.StatCard(label: String, value: String, icon: Ic, tint: Colo
             )
         }
         Spacer(Modifier.height(12.dp))
-        Text(value, color = Color(0xFFF5F0E8), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun RowScope.ActionTile(label: String, icon: Ic, onClick: () -> Unit) {
-    val cs = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(LocalCorner.current * 3 / 4)
-    Column(
-        Modifier.weight(1f)
-            .clip(shape)
-            .background(Color(0xFF1D1A17))
-            .border(1.dp, Color(0xFF3D3328), shape)
-            .clickable(onClick = onClick)
-            .padding(vertical = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        IconChip(icon, cs.primary, 42.dp)
-        Spacer(Modifier.height(8.dp))
-        Text(label, color = Color(0xFFF5F0E8), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1013,17 +915,38 @@ private fun EmptyHint(title: String, sub: String) {
     }
 }
 
+/** Status dot with a soft expanding ring. */
+@Composable
+private fun PulseDot(color: Color, dot: Dp = 10.dp) {
+    val t = rememberInfiniteTransition(label = "pulse")
+    val ring by t.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1700, easing = LinearEasing), RepeatMode.Restart),
+        label = "ring"
+    )
+    val r = if (LocalMotion.current) ring else 0f
+    Box(Modifier.size(dot * 2.6f), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(dot * (1f + 1.5f * r))
+                .graphicsLayer { alpha = 0.55f * (1f - r) }
+                .clip(CircleShape)
+                .background(color)
+        )
+        Box(Modifier.size(dot).clip(CircleShape).background(color))
+    }
+}
+
 @Composable
 private fun StatusPill(text: String, color: Color) {
     Row(
         Modifier.clip(CircleShape)
             .background(color.copy(alpha = 0.14f))
             .border(1.dp, color.copy(alpha = 0.35f), CircleShape)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(start = 4.dp, end = 14.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(9.dp).clip(CircleShape).background(color))
-        Spacer(Modifier.width(8.dp))
+        PulseDot(color, 8.dp)
+        Spacer(Modifier.width(2.dp))
         Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
     }
 }
@@ -1036,7 +959,7 @@ private fun packIcon(name: String): Ic = when (name) {
     else -> Ic.Layers
 }
 
-/** Floating pill navigation. The selected tab fills with the accent and shows its label. */
+/** Floating pill navigation. The selected tab grows, fills with the accent and shows its label. */
 @Composable
 private fun FloatingNav(items: List<Pair<String, Ic>>, selected: Int, onSelect: (Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
@@ -1074,13 +997,21 @@ private fun FloatingNav(items: List<Pair<String, Ic>>, selected: Int, onSelect: 
 @Composable
 private fun RowScope.NavTab(label: String, icon: Ic, selected: Boolean, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val tint = if (selected) cs.onPrimary else cs.onSurfaceVariant
+    val a by animateFloatAsState(
+        if (selected) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "nta"
+    )
+    val w by animateFloatAsState(
+        if (selected) 1.8f else 1f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "ntw"
+    )
+    val tint by animateColorAsState(
+        if (selected) cs.onPrimary else cs.onSurfaceVariant, tween(220), label = "ntc"
+    )
     Box(
-        Modifier.weight(if (selected) 1.8f else 1f).height(48.dp).clip(CircleShape)
-            .then(if (selected) Modifier.background(accentBrush(cs)) else Modifier)
-            .clickable(onClick = onClick),
+        Modifier.weight(w).height(48.dp).clip(CircleShape)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
+        Box(Modifier.matchParentSize().graphicsLayer { alpha = a }.background(accentBrush(cs)))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Ico(icon, tint, 22.dp)
             if (selected) {
@@ -1194,33 +1125,20 @@ fun App() {
             runCatching { putAll(parseFlags(prefs.getString("games", "{}")!!)) }
         }
     }
-    val instances = remember {
-        mutableStateMapOf<String, String>().apply {
-            runCatching { putAll(parseFlags(prefs.getString("instances", "{}")!!)) }
-        }
-    }
-    val recent = remember {
-        mutableStateListOf<Triple<String, String, Long>>().apply {
-            addAll(loadRecent(prefs.getString("recent", "[]")!!))
-        }
-    }
 
     var path by remember { mutableStateOf(prefs.getString("path2", DEFAULT_PATH)!!) }
     var pkg by remember { mutableStateOf(prefs.getString("pkg", DEFAULT_PKG)!!) }
     var restart by remember { mutableStateOf(prefs.getBoolean("restart", true)) }
     var fps by remember { mutableStateOf(prefs.getBoolean("fps", false)) }
     var useRoot by remember { mutableStateOf(prefs.getBoolean("root", false)) }
-    var applyBeforeLaunch by remember { mutableStateOf(prefs.getBoolean("applyLaunch", true)) }
-    var autoLaunch by remember { mutableStateOf(prefs.getBoolean("autoLaunch", false)) }
-    val autoLaunchOnOpen = remember { prefs.getBoolean("autoLaunch", false) }
-    var trimAuto by remember { mutableStateOf(prefs.getBoolean("trimAuto", false)) }
-    var trimInterval by remember { mutableStateOf(prefs.getInt("trimInterval", 60)) }
-    var trimLevelIdx by remember { mutableStateOf(prefs.getInt("trimLvl", 1).coerceIn(0, TRIM_LEVELS.size - 1)) }
+    var applyOnSave by remember { mutableStateOf(prefs.getBoolean("applyOnSave", true)) }
     var themeIdx by remember { mutableStateOf(prefs.getInt("theme", 0).coerceIn(0, THEMES.size - 1)) }
     var dynColor by remember { mutableStateOf(prefs.getBoolean("dyn", false)) }
+    var animBg by remember { mutableStateOf(prefs.getBoolean("animbg", true)) }
     var trueBlack by remember { mutableStateOf(prefs.getBoolean("trueBlack", false)) }
     var compact by remember { mutableStateOf(prefs.getBoolean("compact", false)) }
-    var glowAmt by remember { mutableStateOf(prefs.getFloat("glow3", 0.10f)) }
+    var motion by remember { mutableStateOf(prefs.getBoolean("motion", true)) }
+    var glowAmt by remember { mutableStateOf(prefs.getFloat("glow2", 0.10f)) }
     var cornerDp by remember { mutableStateOf(prefs.getFloat("corner2", 24f)) }
     var msgFlag by remember { mutableStateOf(prefs.getBoolean("msgFlag", true)) }
     var msgLaunch by remember { mutableStateOf(prefs.getBoolean("msgLaunch", true)) }
@@ -1242,9 +1160,7 @@ fun App() {
     var v by remember { mutableStateOf("") }
     var pn by remember { mutableStateOf("") }
     var gn by remember { mutableStateOf("") }
-    var gl by remember { mutableStateOf("") }
-    var inName by remember { mutableStateOf("") }
-    var inPkg by remember { mutableStateOf("") }
+    var gid by remember { mutableStateOf("") }
     var fileOut by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<String?>(null) }
     var newName by remember { mutableStateOf("") }
@@ -1260,35 +1176,26 @@ fun App() {
     var jsonMsg by remember { mutableStateOf("") }
     var urlDialog by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf("") }
-    var onboarding by remember { mutableStateOf(!prefs.getBoolean("seen5", false)) }
-
-    val homeState = rememberLazyListState()
-    val flagsState = rememberLazyListState()
-    val presetsState = rememberLazyListState()
-    val gamesState = rememberLazyListState()
-    val settingsState = rememberLazyListState()
+    var onboarding by remember { mutableStateOf(!prefs.getBoolean("seen4", false)) }
 
     fun save() {
         prefs.edit()
             .putString("flags", toJson(flags))
             .putString("presets", toJson(presets))
             .putString("games", toJson(games))
-            .putString("instances", toJson(instances))
             .putString("path2", path)
             .putString("pkg", pkg)
             .putBoolean("restart", restart)
             .putBoolean("fps", fps)
             .putBoolean("root", useRoot)
-            .putBoolean("applyLaunch", applyBeforeLaunch)
-            .putBoolean("autoLaunch", autoLaunch)
-            .putBoolean("trimAuto", trimAuto)
-            .putInt("trimInterval", trimInterval)
-            .putInt("trimLvl", trimLevelIdx)
+            .putBoolean("applyOnSave", applyOnSave)
             .putInt("theme", themeIdx)
             .putBoolean("dyn", dynColor)
+            .putBoolean("animbg", animBg)
             .putBoolean("trueBlack", trueBlack)
             .putBoolean("compact", compact)
-            .putFloat("glow3", glowAmt)
+            .putBoolean("motion", motion)
+            .putFloat("glow2", glowAmt)
             .putFloat("corner2", cornerDp)
             .putBoolean("msgFlag", msgFlag)
             .putBoolean("msgLaunch", msgLaunch)
@@ -1303,7 +1210,7 @@ fun App() {
             "launch" -> msgLaunch
             else -> msgOther
         }
-        if (allowed || msg.startsWith("Failed") || msg.contains("Verify")) {
+        if (allowed || msg.startsWith("Failed") || msg.startsWith("Verify")) {
             scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
                 snackbar.showSnackbar(msg)
@@ -1311,43 +1218,19 @@ fun App() {
         }
     }
 
-    fun pushRecent(name: String, target: String) {
-        val entry = Triple(name, target, System.currentTimeMillis())
-        recent.removeAll { it.first == name && it.second == target }
-        recent.add(0, entry)
-        while (recent.size > 8) recent.removeAt(recent.size - 1)
-        prefs.edit().putString("recent", recentJson(recent)).apply()
-    }
-
-    fun clearRecent() {
-        recent.clear()
-        prefs.edit().putString("recent", "[]").apply()
-    }
-
-    fun launchNow(applyFirst: Boolean) {
+    fun doSave(launch: Boolean) {
+        save()
         scope.launch(Dispatchers.IO) {
-            if (applyFirst) {
-                val msg = applyVerified(toJson(flags), path, fps, useRoot)
-                toast("flag", msg)
-                if (msg.startsWith("Failed")) return@launch
+            val json = toJson(flags)
+            val msg = if (applyOnSave) applyFlags(json, path, fps, useRoot) else "Saved in app."
+            toast("flag", msg)
+            if (!msg.startsWith("Failed") && applyOnSave) {
+                toast("flag", verifyFlags(json, path, useRoot))
             }
-            if (restart) runCmd("am force-stop ${shellQuote(pkg)} && sleep 1", useRoot)
-            val r = launchPkg(pkg, useRoot)
-            toast("launch", r)
-            if (!r.startsWith("Failed")) pushRecent("Roblox", "")
-        }
-    }
-
-    fun playTarget(name: String, target: String) {
-        scope.launch(Dispatchers.IO) {
-            val r = if (target.isBlank()) {
-                launchPkg(pkg, useRoot)
-            } else {
-                val uri = normalizeLink(target)
-                if (uri == null) "Failed: not a valid place ID or link." else launchLink(uri, pkg, useRoot)
+            if (launch && !msg.startsWith("Failed")) {
+                if (restart) runCmd("am force-stop $pkg && sleep 1", useRoot)
+                toast("launch", launchPkg(pkg, useRoot))
             }
-            toast("launch", r)
-            if (!r.startsWith("Failed")) pushRecent(name, target)
         }
     }
 
@@ -1361,7 +1244,6 @@ fun App() {
         put("flags", JSONObject(flags.toMap()))
         put("presets", JSONObject(presets.toMap()))
         put("games", JSONObject(games.toMap()))
-        put("instances", JSONObject(instances.toMap()))
     }.toString(2)
 
     fun share(text: String, title: String) {
@@ -1377,9 +1259,6 @@ fun App() {
         toast("other", "Copied to clipboard.")
     }
 
-    fun relTime(ts: Long): String =
-        DateUtils.getRelativeTimeSpanString(ts, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
-
     LaunchedEffect(Unit) {
         while (true) {
             shStatus = shizukuStatus()
@@ -1387,7 +1266,7 @@ fun App() {
             ShizukuBus.granted = runCatching {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             }.getOrDefault(false)
-            delay(2000)
+            delay(1500)
         }
     }
 
@@ -1400,36 +1279,16 @@ fun App() {
     LaunchedEffect(ready, useRoot, pkg) {
         if (ready || useRoot) {
             val (ok, out) = withContext(Dispatchers.IO) {
-                runCmd("dumpsys package ${shellQuote(pkg)} | grep -m1 versionName", useRoot)
+                runCmd("dumpsys package $pkg | grep -m1 versionName", useRoot)
             }
             robloxVersion = if (ok && out.contains("=")) out.substringAfter("=").trim() else "Not found"
         }
     }
 
-    // Automatic memory trimmer. Runs while TacoStrap's process is alive.
-    LaunchedEffect(trimAuto, trimInterval, trimLevelIdx, pkg, useRoot, ready) {
-        if (trimAuto && (ready || useRoot)) {
-            while (true) {
-                delay(trimInterval * 1000L)
-                withContext(Dispatchers.IO) {
-                    runCmd("am send-trim-memory ${shellQuote(pkg)} ${TRIM_LEVELS[trimLevelIdx].second}", useRoot)
-                }
-            }
-        }
-    }
-
-    // Launch Roblox once when TacoStrap opens, only if the option was already on at startup.
-    LaunchedEffect(ready) {
-        if (autoLaunchOnOpen && ready && !autoLaunchedOnce) {
-            autoLaunchedOnce = true
-            launchNow(true)
-        }
-    }
-
     // ----- Theme -----
     val theme = THEMES[themeIdx]
-    val pc = theme.primary
-    val sc = theme.secondary
+    val pc by animateColorAsState(theme.primary, tween(500), label = "pc")
+    val sc by animateColorAsState(theme.secondary, tween(500), label = "sc")
     val base = if (trueBlack) Color.Black else Color(0xFF121110)
     val sv = lerp(if (trueBlack) Color(0xFF141414) else Color(0xFF1D1B19), pc, 0.04f)
     val customScheme = darkColorScheme(
@@ -1456,232 +1315,196 @@ fun App() {
         else -> customScheme
     }
 
+    val inf = rememberInfiniteTransition(label = "inf")
+    val shift by inf.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "shift"
+    )
+    val glow = if (animBg && motion) shift else 0.5f
+    val flagCount by animateIntAsState(flags.size, tween(500), label = "count")
     val navItems = listOf(
         "Home" to Ic.Home, "Flags" to Ic.Flag, "Presets" to Ic.Layers,
         "Games" to Ic.Game, "Settings" to Ic.Sliders
     )
+    val pageAnim = if (motion) 260 else 0
 
-    val sortedFlags by remember {
-        derivedStateOf {
-            flags.keys
-                .filter { it.contains(search, ignoreCase = true) }
-                .filter { name ->
-                    val value = flags[name] ?: ""
-                    val isBool = value.equals("true", true) || value.equals("false", true)
-                    val isNum = value.toIntOrNull() != null
-                    when (filterMode) {
-                        1 -> isBool
-                        2 -> isNum
-                        3 -> !isBool && !isNum
-                        else -> true
-                    }
-                }
-                .sortedWith(
-                    when (sortMode) {
-                        1 -> compareByDescending<String> { it.lowercase() }
-                        2 -> compareBy<String>({ (flags[it] ?: "").lowercase() }, { it.lowercase() })
-                        else -> compareBy<String> { it.lowercase() }
-                    }
-                )
+    val sortedFlags = flags.keys
+        .filter { it.contains(search, ignoreCase = true) }
+        .filter { name ->
+            val value = flags[name] ?: ""
+            val isBool = value.equals("true", true) || value.equals("false", true)
+            val isNum = value.toIntOrNull() != null
+            when (filterMode) {
+                1 -> isBool
+                2 -> isNum
+                3 -> !isBool && !isNum
+                else -> true
+            }
         }
-    }
+        .sortedWith(
+            when (sortMode) {
+                1 -> compareByDescending<String> { it.lowercase() }
+                2 -> compareBy({ (flags[it] ?: "").lowercase() }, { it.lowercase() })
+                else -> compareBy { it.lowercase() }
+            }
+        )
 
     // ================= PAGES =================
 
     @Composable
+    fun LaunchGradientButton(
+        text: String,
+        onClick: () -> Unit,
+        colorA: Color,
+        colorB: Color,
+        modifier: Modifier = Modifier,
+        h: Dp = 60.dp
+    ) {
+        val src = remember { MutableInteractionSource() }
+        val pressed by src.collectIsPressedAsState()
+        val scale by animateFloatAsState(
+            if (pressed) 0.97f else 1f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "lgb"
+        )
+        val flowT = rememberInfiniteTransition(label = "lgf")
+        val flow by flowT.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing), RepeatMode.Restart),
+            label = "lgfv"
+        )
+        val f = if (motion) flow else 0f
+        val brush = Brush.linearGradient(
+            colors = listOf(colorA, colorB, colorA),
+            start = Offset(f * 700f, 0f),
+            end = Offset(f * 700f + 700f, 0f),
+            tileMode = TileMode.Repeated
+        )
+        Row(
+            modifier.height(h).graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(CircleShape)
+                .background(brush)
+                .border(1.dp, Color.White.copy(alpha = 0.28f), CircleShape)
+                .clickable(interactionSource = src, indication = null, onClick = onClick)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Ico(Ic.Play, Color(0xFF1A1206), 22.dp, 2.2f)
+            Spacer(Modifier.width(10.dp))
+            Text(text, color = Color(0xFF1A1206), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+
+    @Composable
     fun HomePage() {
         val cs = MaterialTheme.colorScheme
-        val flagCount = flags.size
-        val cardShape = RoundedCornerShape(22.dp)
-        LazyColumn(
-            state = homeState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                // Compact bootstrapper-style header: clear hierarchy, status, and no oversized empty card.
-                Column(
+            Appear(0) {
+                val heroShape = RoundedCornerShape(LocalCorner.current + 4.dp)
+                Box(
                     Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(28.dp))
+                        .clip(heroShape)
                         .background(
                             Brush.linearGradient(
-                                listOf(Color(0xFF34200D), Color(0xFF211A14), Color(0xFF171717))
+                                listOf(pc.copy(alpha = 0.30f), sc.copy(alpha = 0.10f), cs.surfaceVariant)
                             )
                         )
                         .border(
                             1.dp,
-                            Brush.linearGradient(
-                                listOf(Color(0xFFFFB547).copy(alpha = 0.72f), Color(0xFF65421D).copy(alpha = 0.35f))
-                            ),
-                            RoundedCornerShape(28.dp)
+                            Brush.linearGradient(listOf(pc.copy(alpha = 0.65f), sc.copy(alpha = 0.12f))),
+                            heroShape
                         )
-                        .padding(20.dp)
+                        .padding(18.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            Modifier.size(54.dp)
-                                .clip(RoundedCornerShape(17.dp))
-                                .background(Brush.linearGradient(listOf(Color(0xFFFFC15A), Color(0xFFEF741F)))),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("T", color = Color(0xFF24170B), fontSize = 31.sp, fontWeight = FontWeight.Black)
-                        }
-                        Spacer(Modifier.width(13.dp))
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "TacoStrap",
-                                    color = Color(0xFFFFF8ED),
-                                    fontSize = 27.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = (-0.8).sp,
-                                    maxLines = 1
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "v$APP_VERSION",
-                                    color = Color(0xFFFFC15A),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.clip(CircleShape)
-                                        .background(Color(0xFFFFB547).copy(alpha = 0.14f))
-                                        .padding(horizontal = 8.dp, vertical = 5.dp)
-                                )
-                            }
-                            Text(
-                                "ROBLOX BOOTSTRAPPER",
-                                color = Color(0xFFB9A997),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.5.sp
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painterResource(id = R.mipmap.ic_launcher), "TacoStrap logo",
+                                Modifier.size(56.dp).clip(RoundedCornerShape(16.dp))
                             )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("TacoStrap", fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        APP_VERSION, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                        color = cs.primary,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(cs.primary.copy(alpha = 0.16f))
+                                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Text("FastFlag manager for Roblox", fontSize = 14.sp, color = cs.onSurfaceVariant)
+                            }
                         }
-                    }
-                    Spacer(Modifier.height(18.dp))
-                    Text(
-                        "Your game. Your settings.",
-                        color = Color(0xFFFFF8ED),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(5.dp))
-                    Text(
-                        "Manage FastFlags, launch Roblox, and keep your setup in one place.",
-                        color = Color(0xFFC5B9AB),
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp
-                    )
-                    Spacer(Modifier.height(17.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                        Spacer(Modifier.height(14.dp))
                         StatusPill(
                             if (ready) "Shizuku connected" else shStatus,
                             if (ready) Good else if (ShizukuBus.ping) Amber else Bad
                         )
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { page = 4 }) {
-                            Text("Settings", color = Color(0xFFFFC15A), fontWeight = FontWeight.SemiBold)
-                        }
                     }
                 }
             }
-            item {
-                // Primary action is visually dominant, similar to PC bootstrapper launch panels.
-                Column(
+            Appear(1) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatCard("Roblox", robloxVersion, Ic.Game, cs.primary)
+                        StatCard("Flags", "$flagCount", Ic.Flag, cs.primary)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatCard(
+                            "Shizuku", shStatus, Ic.Bolt,
+                            if (ready) Good else if (ShizukuBus.ping) Amber else Bad
+                        )
+                        StatCard("Root", if (rootAvailable) "Available" else "Not found", Ic.Warn, if (rootAvailable) Good else cs.onSurfaceVariant)
+                    }
+                }
+            }
+            Appear(2) {
+                LaunchGradientButton(
+                    "Launch Roblox",
+                    { scope.launch(Dispatchers.IO) { toast("launch", launchPkg(pkg, useRoot)) } },
+                    pc, sc,
                     Modifier.fillMaxWidth()
-                        .clip(cardShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF29221A), Color(0xFF1C1A18))))
-                        .border(1.dp, Color(0xFFFFB547).copy(alpha = 0.26f), cardShape)
-                        .padding(16.dp)
+                )
+            }
+            Appear(3) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("READY TO PLAY?", color = Color(0xFFFFC15A), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.6.sp)
-                            Spacer(Modifier.height(5.dp))
-                            Text("Launch Roblox", color = Color(0xFFFFF8ED), fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (ready) "Shizuku is ready for supported actions" else "Some file actions may need Shizuku",
-                                color = Color(0xFFB9B0A5),
-                                fontSize = 12.sp
-                            )
+                    Btn("Save and launch", { doSave(true) }, kind = 1, h = 42.dp)
+                    Btn("Apply only", { doSave(false) }, kind = 2, h = 42.dp)
+                    Btn("Verify file", {
+                        scope.launch(Dispatchers.IO) {
+                            toast("flag", verifyFlags(toJson(flags), path, useRoot))
+                            val (_, out) = runCmd("ls -l '$path'; cat '$path'", useRoot)
+                            fileOut = out.ifEmpty { "Nothing returned." }
                         }
-                        Box(
-                            Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFFFFB547).copy(alpha = 0.14f)),
-                            contentAlignment = Alignment.Center
-                        ) { Ico(Ic.Game, Color(0xFFFFC15A), 25.dp) }
-                    }
-                    Spacer(Modifier.height(15.dp))
-                    LaunchButton("PLAY NOW", { launchNow(applyBeforeLaunch) }, Modifier.fillMaxWidth())
-                }
-            }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatCard("ROBLOX VERSION", robloxVersion, Ic.Game, cs.primary)
-                    StatCard("SAVED FLAGS", "$flagCount", Ic.Flag, cs.primary)
-                }
-            }
-            item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatCard("SHIZUKU", if (ready) "Connected" else shStatus, Ic.Bolt, if (ready) Good else if (ShizukuBus.ping) Amber else Bad)
-                    StatCard("ROOT ACCESS", if (rootAvailable) "Available" else "Not found", Ic.Star, if (rootAvailable) Good else cs.onSurfaceVariant)
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("QUICK ACTIONS")
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionTile("Apply flags", Ic.Save) {
-                            scope.launch(Dispatchers.IO) {
-                                save()
-                                toast("flag", applyVerified(toJson(flags), path, fps, useRoot))
-                            }
-                        }
-                        ActionTile("Verify file", Ic.Check) {
-                            scope.launch(Dispatchers.IO) {
-                                toast("flag", verifyFlags(toJson(flags), path, useRoot))
-                                val (_, out) = runCmd("ls -l ${shellQuote(path)}; cat ${shellQuote(path)}", useRoot)
-                                fileOut = out.ifEmpty { "Nothing returned." }
-                            }
-                        }
-                        ActionTile("Stop game", Ic.Close) {
-                            scope.launch(Dispatchers.IO) { toast("launch", forceStop(pkg, useRoot)) }
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionTile("Trim RAM", Ic.Memory) {
-                            scope.launch(Dispatchers.IO) { toast("other", trimMemory(pkg, TRIM_LEVELS[trimLevelIdx].second, useRoot)) }
-                        }
-                        ActionTile("Clear cache", Ic.Trash) {
-                            scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
-                        }
-                        ActionTile("Reset flags", Ic.Refresh) {
-                            scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
-                        }
-                    }
+                    }, kind = 2, h = 42.dp)
+                    Btn("Reset", {
+                        scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
+                    }, kind = 2, h = 42.dp)
+                    Btn("Clear cache", {
+                        scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
+                    }, kind = 2, h = 42.dp)
                 }
             }
             if (fileOut.isNotEmpty()) {
-                item {
-                    Group {
-                        Text(
-                            fileOut,
-                            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        )
-                    }
+                Group {
+                    Text(
+                        fileOut, Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                    )
                 }
             }
             if (activeProfile.isNotEmpty()) {
-                item {
+                Appear(4) {
                     Group {
                         Item("Active profile", activeProfile, { page = 2 }, leading = Ic.Layers) {
                             Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
@@ -1689,29 +1512,9 @@ fun App() {
                     }
                 }
             }
-            item {
+            Appear(5) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("RECENT LAUNCHES")
-                    Group {
-                        if (recent.isEmpty()) {
-                            Item("No launches yet", "Your recent Roblox launches will appear here.", leading = Ic.Clock)
-                        }
-                        recent.forEach { (n, t, ts) ->
-                            Item(n, if (t.isBlank()) relTime(ts) else "$t  -  ${relTime(ts)}", { playTarget(n, t) }, leading = Ic.Clock) {
-                                Ico(Ic.Play, cs.primary, 20.dp)
-                            }
-                        }
-                        if (recent.isNotEmpty()) {
-                            Item("Clear history", null, { clearRecent() }) {
-                                Ico(Ic.Trash, cs.onSurfaceVariant, 20.dp)
-                            }
-                        }
-                    }
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("PINNED GAMES")
+                    SectionLabel("Pinned games")
                     Group {
                         if (games.isEmpty()) {
                             Item("No pinned games", "Add games in the Games tab.", { page = 3 }) {
@@ -1719,19 +1522,19 @@ fun App() {
                             }
                         }
                         games.keys.sorted().take(4).forEach { name ->
-                            Item(name, "Place ID ${games[name]}", { playTarget(name, games[name] ?: "") }) {
-                                Ico(Ic.Play, cs.primary, 20.dp)
-                            }
+                            Item(name, "Place ID ${games[name]}", {
+                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                            }) { Ico(Ic.Play, cs.primary, 20.dp) }
                         }
                     }
                 }
             }
-            item {
+            Appear(6) {
                 Group {
-                    Item("Roblox FastFlag allowlist", "Check which flags Roblox currently allows", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
+                    Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
                         Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
-                    Item("What's new in $APP_VERSION", "View the changelog", { changelog = true }, leading = Ic.Doc) {
+                    Item("What's new in $APP_VERSION", "Changelog", { changelog = true }, leading = Ic.Doc) {
                         Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
                     }
                 }
@@ -1743,12 +1546,19 @@ fun App() {
     fun FlagsPage() {
         val cs = MaterialTheme.colorScheme
         LazyColumn(
-            state = flagsState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            item { PageHeader("FastFlags", "Quick settings, the full editor and JSON tools.") }
+            item {
+                Column(Modifier.padding(horizontal = 4.dp, vertical = 14.dp)) {
+                    Text("FastFlags", fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp)
+                    Text(
+                        "Quick settings, the full editor and JSON tools.",
+                        fontSize = 15.sp, color = cs.onSurfaceVariant
+                    )
+                }
+            }
             item {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -1757,12 +1567,12 @@ fun App() {
                     Ico(Ic.Warn, Amber, 20.dp)
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        "These toggles edit your saved FastFlags. Tap Apply on Home, then restart Roblox. Only flags Roblox supports can affect in-game FPS.",
+                        "Roblox may ignore flags outside its allowlist.",
                         Modifier.weight(1f), fontSize = 13.sp, color = cs.onSurfaceVariant
                     )
                 }
             }
-            SECTIONS.forEach { (title, list) ->
+            SECTIONS.forEachIndexed { idx, (title, list) ->
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SectionLabel(title)
@@ -1783,7 +1593,7 @@ fun App() {
                             ChoiceBox(PACKS[quickIdx].name, PACKS.map { it.name }) { quickIdx = it }
                             Btn("Apply", {
                                 flags.applyPack(PACKS[quickIdx]); activeProfile = ""; save()
-                                toast("flag", "Added ${PACKS[quickIdx].name} pack.")
+                                toast("flag", "Applied ${PACKS[quickIdx].name} pack.")
                             }, h = 44.dp)
                         }
                     }
@@ -1816,10 +1626,6 @@ fun App() {
                             }
                         }
                     }
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         search, { search = it }, label = { Text("Search ${flags.size} flags") }, singleLine = true,
                         leadingIcon = { Ico(Ic.Search, cs.onSurfaceVariant, 20.dp) },
@@ -1833,14 +1639,31 @@ fun App() {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text("Sort", fontSize = 12.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
                         ChoiceBox(
                             when (sortMode) { 1 -> "Z to A"; 2 -> "By value"; else -> "A to Z" },
                             listOf("A to Z", "Z to A", "By value")
                         ) { sortMode = it }
-                        Pill("All", filterMode == 0) { filterMode = 0 }
-                        Pill("Booleans", filterMode == 1) { filterMode = 1 }
-                        Pill("Numbers", filterMode == 2) { filterMode = 2 }
-                        Pill("Text", filterMode == 3) { filterMode = 3 }
+                        FilterChip(
+                            selected = filterMode == 0,
+                            onClick = { filterMode = 0 },
+                            label = { Text("All", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = filterMode == 1,
+                            onClick = { filterMode = 1 },
+                            label = { Text("Booleans", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = filterMode == 2,
+                            onClick = { filterMode = 2 },
+                            label = { Text("Numbers", fontSize = 12.sp) }
+                        )
+                        FilterChip(
+                            selected = filterMode == 3,
+                            onClick = { filterMode = 3 },
+                            label = { Text("Text", fontSize = 12.sp) }
+                        )
                     }
                     Text(
                         "${sortedFlags.size} shown",
@@ -1852,7 +1675,7 @@ fun App() {
                 item {
                     EmptyHint(
                         if (search.isEmpty() && filterMode == 0) "No flags yet" else "No matches",
-                        if (search.isEmpty() && filterMode == 0) "Add a flag above or apply a pack from the Presets tab."
+                        if (search.isEmpty() && filterMode == 0) "Add a flag above or apply a preset from the Presets tab."
                         else "Try a different search or filter."
                     )
                 }
@@ -1923,14 +1746,13 @@ fun App() {
                     Btn("Import clipboard", {
                         val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
                         val msg = runCatching {
-                            val m = parseFlags(text)
-                            flags.putAll(m); save()
-                            "Imported ${m.size} flags from clipboard."
+                            flags.putAll(parseFlags(text)); save()
+                            "Imported ${parseFlags(text).size} flags from clipboard."
                         }.getOrElse { "Failed: clipboard isn't valid JSON." }
                         toast("flag", msg)
                     }, kind = 2, h = 40.dp)
                     Btn("Share", { share(toJson(flags), "Share flags") }, kind = 2, h = 40.dp)
-                    Btn("JSON tools", { jsonText = toJson(flags); jsonMsg = ""; showJson = true }, kind = 1, h = 40.dp)
+                    Btn("Open JSON tools", { jsonText = toJson(flags); jsonMsg = ""; showJson = true }, kind = 1, h = 40.dp)
                     Btn("Import URL", { urlInput = ""; urlDialog = true }, kind = 2, h = 40.dp)
                     Btn("Clear all", { confirmClear = true }, kind = 2, h = 40.dp)
                 }
@@ -1941,105 +1763,115 @@ fun App() {
     @Composable
     fun PresetsPage() {
         val cs = MaterialTheme.colorScheme
-        LazyColumn(
-            state = presetsState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { PageHeader("Presets", "One-tap flag packs and your own profiles.") }
-            item { SectionLabel("Flag packs") }
-            PACKS.forEach { p ->
-                item {
-                    Group {
-                        Row(
-                            Modifier.padding(start = 20.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconChip(packIcon(p.name), cs.primary, 44.dp)
-                            Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
-                                Text(p.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                                Text(p.desc, fontSize = 13.sp, lineHeight = 18.sp, color = cs.onSurfaceVariant)
-                                Text(
-                                    "${p.sets.size} flags",
-                                    fontSize = 12.sp, color = cs.primary, fontWeight = FontWeight.Medium
-                                )
-                            }
-                            Btn("Apply", {
-                                flags.applyPack(p); activeProfile = ""; save()
-                                toast("flag", "Added ${p.name} pack.")
-                            }, kind = 1, h = 40.dp)
-                        }
-                    }
-                }
-            }
-            item { SectionLabel("Profiles") }
-            item {
-                Group {
-                    Column(
-                        Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text("Save current flags as a profile", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                pn, { pn = it }, label = { Text("Profile name") }, singleLine = true,
-                                shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
-                            )
-                            Btn("Save", {
-                                if (pn.isNotBlank()) {
-                                    presets[pn.trim()] = toJson(flags); pn = ""; save()
-                                    toast("flag", "Profile saved.")
+            PageHeader("Presets", "One-tap flag packs and your own profiles.")
+            Appear(1) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Flag packs")
+                    PACKS.forEach { p ->
+                        Group {
+                            Row(
+                                Modifier.padding(start = 20.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconChip(packIcon(p.name), cs.primary, 44.dp)
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f).padding(vertical = 10.dp)) {
+                                    Text(p.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        p.desc, fontSize = 13.sp, lineHeight = 18.sp,
+                                        color = cs.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "${p.sets.size} flags",
+                                        fontSize = 12.sp, color = cs.primary, fontWeight = FontWeight.Medium
+                                    )
                                 }
-                            }, icon = Ic.Save)
+                                Btn("Apply", {
+                                    flags.applyPack(p); activeProfile = ""; save()
+                                    toast("flag", "Applied ${p.name}.")
+                                }, kind = 1, h = 40.dp)
+                            }
                         }
                     }
                 }
             }
-            if (presets.isEmpty()) {
-                item { EmptyHint("No profiles yet", "Save one above, then load it any time.") }
-            }
-            items(presets.keys.sorted(), key = { it }) { name ->
-                val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
-                Group {
-                    Item(name, "$count flags" + if (activeProfile == name) "  -  active" else "")
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton({
-                            runCatching {
-                                flags.clear()
-                                flags.putAll(parseFlags(presets[name]!!))
-                                activeProfile = name
-                                save()
-                                toast("flag", "Loaded $name.")
+            Appear(2) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Profiles")
+                    Group {
+                        Column(
+                            Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text("Save current flags as a profile", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    pn, { pn = it }, label = { Text("Profile name") }, singleLine = true,
+                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
+                                )
+                                Btn("Save", {
+                                    if (pn.isNotBlank()) {
+                                        presets[pn.trim()] = toJson(flags); pn = ""; save()
+                                        toast("flag", "Profile saved.")
+                                    }
+                                }, icon = Ic.Save)
                             }
-                        }) { Text("Load") }
-                        TextButton({ renaming = name; newName = name }) { Text("Rename") }
-                        TextButton({ duplicating = name; dupName = name + "_copy" }) { Text("Duplicate") }
-                        TextButton({ copyText("profile $name", presets[name] ?: "{}") }) { Text("Export") }
-                        TextButton({
-                            presets.remove(name)
-                            if (activeProfile == name) activeProfile = ""
-                            save()
-                        }) { Text("Delete", color = Bad) }
+                        }
+                    }
+                    if (presets.isEmpty()) {
+                        EmptyHint("No profiles yet", "Save one above, then load it any time.")
+                    }
+                    presets.keys.sorted().forEach { name ->
+                        val count = runCatching { parseFlags(presets[name] ?: "{}").size }.getOrDefault(0)
+                        Group {
+                            Item(
+                                name,
+                                "$count flags" + if (activeProfile == name) "  -  active" else "",
+                                { page = 2 }
+                            )
+                            Row(
+                                Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton({
+                                    runCatching {
+                                        flags.clear()
+                                        flags.putAll(parseFlags(presets[name]!!))
+                                        activeProfile = name
+                                        save()
+                                        toast("flag", "Loaded $name.")
+                                    }
+                                }) { Text("Load") }
+                                TextButton({ renaming = name; newName = name }) { Text("Rename") }
+                                TextButton({ duplicating = name; dupName = name + "_copy" }) { Text("Duplicate") }
+                                TextButton({ copyText("profile $name", presets[name] ?: "{}") }) { Text("Export") }
+                                TextButton({
+                                    presets.remove(name)
+                                    if (activeProfile == name) activeProfile = ""
+                                    save()
+                                }) { Text("Delete", color = Bad) }
+                            }
+                        }
+                    }
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Btn("Import profile (clipboard)", {
+                            val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                            val msg = runCatching {
+                                val m = parseFlags(text)
+                                val pname = "Imported profile"
+                                presets[pname] = toJson(m)
+                                save()
+                                "Imported ${m.size} flags as a profile."
+                            }.getOrElse { "Failed: clipboard isn't valid JSON." }
+                            toast("flag", msg)
+                        }, kind = 2, h = 40.dp)
                     }
                 }
-            }
-            item {
-                Btn("Import profile from clipboard", {
-                    val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                    val msg = runCatching {
-                        val m = parseFlags(text)
-                        presets["Imported profile"] = toJson(m)
-                        save()
-                        "Imported ${m.size} flags as a profile."
-                    }.getOrElse { "Failed: clipboard isn't valid JSON." }
-                    toast("flag", msg)
-                }, kind = 2, h = 44.dp)
             }
         }
     }
@@ -2047,66 +1879,62 @@ fun App() {
     @Composable
     fun GamesPage() {
         val cs = MaterialTheme.colorScheme
-        LazyColumn(
-            state = gamesState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { PageHeader("Games", "Launch by place ID or link, and pin favorites.") }
-            item {
+            PageHeader("Games", "Pin experiences and jump straight in.")
+            Appear(1) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionLabel("Quick launch")
+                    SectionLabel("Add a game")
                     Group {
                         Column(
                             Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             OutlinedTextField(
-                                gn, { gn = it }, label = { Text("Name (optional)") }, singleLine = true,
+                                gn, { gn = it }, label = { Text("Name") }, singleLine = true,
                                 shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                             )
-                            OutlinedTextField(
-                                gl, { gl = it }, label = { Text("Place ID or Roblox link") }, singleLine = true,
-                                shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
-                            )
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Btn("Launch", {
-                                    val raw = gl.trim()
-                                    val label = gn.trim().ifEmpty { "Link launch" }
-                                    if (normalizeLink(raw) == null) {
-                                        toast("other", "Failed: enter a place ID or a Roblox link.")
-                                    } else {
-                                        playTarget(label, raw)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    gid, { gid = it.filter { c -> c.isDigit() } }, label = { Text("Place ID") },
+                                    singleLine = true, shape = RoundedCornerShape(14.dp),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Btn("Add", {
+                                    if (gn.isNotBlank() && gid.isNotBlank()) {
+                                        games[gn.trim()] = gid; gn = ""; gid = ""; save()
+                                        toast("other", "Game added.")
                                     }
-                                }, Modifier.weight(1f), icon = Ic.Play)
-                                Btn("Pin", {
-                                    val raw = gl.trim()
-                                    val id = extractPlaceId(raw)
-                                    if (id == null) {
-                                        toast("other", "Failed: could not find a place ID.")
-                                    } else {
-                                        games[gn.trim().ifEmpty { "Game $id" }] = id
-                                        gn = ""; gl = ""; save()
-                                        toast("other", "Game pinned.")
-                                    }
-                                }, Modifier.weight(1f), kind = 1, icon = Ic.Plus)
+                                }, icon = Ic.Plus)
                             }
                         }
                     }
                 }
             }
-            item { SectionLabel("Pinned (${games.size})") }
-            if (games.isEmpty()) {
-                item { EmptyHint("No games yet", "Paste a place ID or a game link above, then tap Pin.") }
-            }
-            items(games.keys.sorted(), key = { it }) { name ->
-                Group {
-                    Item(name, "Place ID ${games[name]}", { playTarget(name, games[name] ?: "") }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Btn("Play", { playTarget(name, games[name] ?: "") }, kind = 1, h = 36.dp)
-                            Spacer(Modifier.width(6.dp))
-                            IconBtn(Ic.Trash, { games.remove(name); save() }, cs.onSurfaceVariant, 36.dp)
+            Appear(2) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SectionLabel("Pinned (${games.size})")
+                    if (games.isEmpty()) {
+                        EmptyHint("No games yet", "Add one above. Find the place ID in the Roblox URL.")
+                    }
+                    Group {
+                        games.keys.sorted().forEach { name ->
+                            Item(name, "Place ID ${games[name]}", {
+                                scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                            }) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Btn("Play", {
+                                        scope.launch(Dispatchers.IO) { toast("launch", launchGame(games[name] ?: "", useRoot)) }
+                                    }, kind = 1, h = 36.dp)
+                                    Spacer(Modifier.width(6.dp))
+                                    IconBtn(Ic.Trash, {
+                                        games.remove(name); save()
+                                    }, cs.onSurfaceVariant, 36.dp)
+                                }
+                            }
                         }
                     }
                 }
@@ -2117,325 +1945,219 @@ fun App() {
     @Composable
     fun SettingsPage() {
         val cs = MaterialTheme.colorScheme
-        LazyColumn(
-            state = settingsState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { PageHeader("Settings") }
-            item {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("Appearance", "Roblox", "Bootstrapper", "Backup", "About").forEachIndexed { i, label ->
-                        Pill(label, setTab == i) { setTab = i }
-                    }
+            PageHeader("Settings")
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("Appearance", "Connection", "Backup", "About").forEachIndexed { i, label ->
+                    Pill(label, setTab == i) { setTab = i }
                 }
             }
-            when (setTab) {
-                0 -> {
-                    item { SectionLabel("Accent") }
-                    item {
-                        Group {
-                            Row(
-                                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                THEMES.forEachIndexed { i, th ->
-                                    val sel = themeIdx == i
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier.clickable { themeIdx = i; dynColor = false; save() }
-                                    ) {
-                                        Box(
-                                            Modifier.size(46.dp)
-                                                .clip(CircleShape)
-                                                .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
-                                                .then(if (sel) Modifier.border(2.dp, cs.onSurface, CircleShape) else Modifier),
-                                            contentAlignment = Alignment.Center
-                                        ) { if (sel) Ico(Ic.Check, Color(0xFF1A1206), 20.dp, 2.4f) }
-                                        Spacer(Modifier.height(6.dp))
-                                        Text(
-                                            th.name, fontSize = 12.sp,
-                                            color = if (sel) cs.onSurface else cs.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (Build.VERSION.SDK_INT >= 31) {
-                        item { SectionLabel("System") }
-                        item {
+            Crossfade(targetState = setTab, animationSpec = tween(pageAnim), label = "setTab") { t ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (t) {
+                        0 -> {
+                            SectionLabel("Accent")
                             Group {
-                                SwitchItem(
-                                    "Dynamic color",
-                                    "Use your wallpaper colors on Android 12 and up.",
-                                    dynColor, leading = Ic.Palette
-                                ) { dynColor = it; save() }
-                            }
-                        }
-                    }
-                    item { SectionLabel("Surface") }
-                    item {
-                        Group {
-                            SwitchItem("True black", "Pure black background for OLED screens.", trueBlack, leading = Ic.Star) { trueBlack = it; save() }
-                            SwitchItem("Compact lists", "Tighter spacing between rows.", compact, leading = Ic.Sort) { compact = it; save() }
-                        }
-                    }
-                    item { SectionLabel("Shape") }
-                    item {
-                        Group {
-                            Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
-                                Row {
-                                    Text("Background glow", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                                    ValueText("${(glowAmt * 200).toInt()}%")
-                                }
-                                Slider(
-                                    value = glowAmt, onValueChange = { glowAmt = it },
-                                    valueRange = 0f..0.5f, onValueChangeFinished = { save() }
-                                )
-                            }
-                            Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
-                                Row {
-                                    Text("Corner roundness", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                                    ValueText("${cornerDp.toInt()} dp")
-                                }
-                                Slider(
-                                    value = cornerDp, onValueChange = { cornerDp = it },
-                                    valueRange = 6f..40f, onValueChangeFinished = { save() }
-                                )
-                            }
-                        }
-                    }
-                    item { SectionLabel("Messages") }
-                    item {
-                        Group {
-                            Item("Errors always show, whatever you turn off here.")
-                            SwitchItem("FastFlag messages", "Confirms when flags are applied, imported or changed.", msgFlag, leading = Ic.Flag) { msgFlag = it; save() }
-                            SwitchItem("Launch messages", "Confirms when Roblox or a game is launched.", msgLaunch, leading = Ic.Play) { msgLaunch = it; save() }
-                            SwitchItem("Other messages", "Confirms copies, backups and other actions.", msgOther, leading = Ic.Bell) { msgOther = it; save() }
-                        }
-                    }
-                }
-                1 -> {
-                    item { SectionLabel("Connection") }
-                    item {
-                        Group {
-                            Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion", leading = Ic.Game)
-                            Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }, leading = Ic.Folder) {
-                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
-                            }
-                            Item("Shizuku", shStatus, leading = Ic.Bolt) {
-                                Btn("Grant", {
-                                    try {
-                                        Shizuku.requestPermission(1001)
-                                    } catch (e: Throwable) {
-                                        toast("other", "Failed: start Shizuku first.")
-                                    }
-                                }, kind = 1, h = 36.dp)
-                            }
-                            SwitchItem(
-                                "Use root",
-                                if (rootAvailable) "Apply flags with superuser instead of Shizuku."
-                                else "No root detected on this device.",
-                                useRoot, leading = Ic.Warn
-                            ) { useRoot = it; save() }
-                        }
-                    }
-                    item { SectionLabel("Flag file") }
-                    item {
-                        Group {
-                            Column(
-                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                OutlinedTextField(
-                                    path, { path = it; save() }, label = { Text("Flag file path") },
-                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
-                                )
-                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Pill("Default", path == DEFAULT_PATH) { path = DEFAULT_PATH; save() }
-                                    val appPath = "/data/data/$pkg/files/ClientSettings/ClientAppSettings.json"
-                                    Pill("App data (root)", path == appPath) { path = appPath; save() }
-                                }
-                            }
-                            SwitchItem(
-                                "Disable frame-rate cap",
-                                "Always lifts Android's game frame cap when you apply. Done automatically for limits above 60 FPS.",
-                                fps, leading = Ic.Bolt
-                            ) { fps = it; save() }
-                        }
-                    }
-                }
-                2 -> {
-                    item { SectionLabel("Launch") }
-                    item {
-                        Group {
-                            SwitchItem(
-                                "Apply flags before launching",
-                                "Writes and verifies your flags every time you launch from Home.",
-                                applyBeforeLaunch, leading = Ic.Flag
-                            ) { applyBeforeLaunch = it; save() }
-                            SwitchItem(
-                                "Restart Roblox before launching",
-                                "Force-stops Roblox first so new flags are always read.",
-                                restart, leading = Ic.Refresh
-                            ) { restart = it; save() }
-                            SwitchItem(
-                                "Launch Roblox when TacoStrap opens",
-                                "Takes effect the next time you open TacoStrap, once Shizuku is connected.",
-                                autoLaunch, leading = Ic.Play
-                            ) { autoLaunch = it; save() }
-                        }
-                    }
-                    item { SectionLabel("Memory trimmer") }
-                    item {
-                        Group {
-                            SwitchItem(
-                                "Automatic trimming",
-                                "Asks Roblox to release memory on a timer. Runs while TacoStrap is alive in the background.",
-                                trimAuto, leading = Ic.Memory
-                            ) { trimAuto = it; save() }
-                            Item("Interval", "How often to trim") {
-                                ChoiceBox(
-                                    TRIM_LABELS[TRIM_INTERVALS.indexOf(trimInterval).coerceAtLeast(0)],
-                                    TRIM_LABELS
-                                ) { trimInterval = TRIM_INTERVALS[it]; save() }
-                            }
-                            Item("Strength", "Stronger levels free more memory") {
-                                ChoiceBox(TRIM_LEVELS[trimLevelIdx].first, TRIM_LEVELS.map { it.first }) {
-                                    trimLevelIdx = it; save()
-                                }
-                            }
-                            Item("Trim now", "Runs one trim immediately", {
-                                scope.launch(Dispatchers.IO) {
-                                    toast("other", trimMemory(pkg, TRIM_LEVELS[trimLevelIdx].second, useRoot))
-                                }
-                            }, leading = Ic.Bolt) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
-                        }
-                    }
-                    item { SectionLabel("Cleanup") }
-                    item {
-                        Group {
-                            Item("Clear Roblox cache", "Frees up space", {
-                                scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
-                            }, leading = Ic.Trash) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
-                            Item("Close Roblox", "Force-stops the app", {
-                                scope.launch(Dispatchers.IO) { toast("launch", forceStop(pkg, useRoot)) }
-                            }, leading = Ic.Close) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
-                            Item("Delete flag file", "Removes the file and stops Roblox", {
-                                scope.launch(Dispatchers.IO) { toast("flag", resetFlags(path, pkg, useRoot)) }
-                            }, leading = Ic.Refresh) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
-                        }
-                    }
-                    item { SectionLabel("Instances") }
-                    item {
-                        Group {
-                            val all = listOf("Roblox" to DEFAULT_PKG) +
-                                instances.keys.sorted().map { n -> n to (instances[n] ?: "") }
-                            all.forEach { (n, p) ->
-                                Item(
-                                    n,
-                                    p + if (pkg == p) "  -  active" else "",
-                                    { pkg = p; save() },
-                                    leading = Ic.Game
+                                Row(
+                                    Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
-                                    if (pkg == p) {
-                                        Ico(Ic.Check, cs.primary, 20.dp)
-                                    } else if (n != "Roblox") {
-                                        IconBtn(Ic.Trash, { instances.remove(n); save() }, sz = 36.dp)
+                                    THEMES.forEachIndexed { i, th ->
+                                        val sel = themeIdx == i
+                                        val s by animateFloatAsState(
+                                            if (sel) 1.1f else 1f, spring(dampingRatio = 0.6f), label = "sw"
+                                        )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.clickable(
+                                                interactionSource = remember { MutableInteractionSource() }, indication = null
+                                            ) { themeIdx = i; dynColor = false; save() }
+                                        ) {
+                                            Box(
+                                                Modifier.size(44.dp)
+                                                    .graphicsLayer { scaleX = s; scaleY = s }
+                                                    .clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(th.primary, th.secondary)))
+                                                    .then(if (sel) Modifier.border(2.dp, cs.onSurface, CircleShape) else Modifier),
+                                                contentAlignment = Alignment.Center
+                                            ) { if (sel) Ico(Ic.Check, Color(0xFF1A1206), 20.dp, 2.4f) }
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                th.name, fontSize = 12.sp,
+                                                color = if (sel) cs.onSurface else cs.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
-                            Column(
-                                Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text("Add an instance, such as a Roblox clone", fontSize = 14.sp, color = cs.onSurfaceVariant)
-                                OutlinedTextField(
-                                    inName, { inName = it }, label = { Text("Name") }, singleLine = true,
-                                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
-                                        inPkg, { inPkg = it }, label = { Text("Package") }, singleLine = true,
-                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f)
+                            if (Build.VERSION.SDK_INT >= 31) {
+                                SectionLabel("System")
+                                Group {
+                                    SwitchItem(
+                                        "Dynamic color",
+                                        "Use your wallpaper colors on Android 12 and up.",
+                                        dynColor,
+                                        leading = Ic.Palette
+                                    ) { dynColor = it; save() }
+                                }
+                            }
+                            SectionLabel("Surface")
+                            Group {
+                                SwitchItem("True black", "Pure black background for OLED screens.", trueBlack, leading = Ic.Star) { trueBlack = it; save() }
+                                SwitchItem("Animated background", "A faint accent glow that drifts slowly.", animBg, leading = Ic.Bolt) { animBg = it; save() }
+                                SwitchItem("Compact lists", "Tighter spacing between rows.", compact, leading = Ic.Sort) { compact = it; save() }
+                                SwitchItem("Motion", "Turn off for no animations or transitions.", motion, leading = Ic.Play) { motion = it; save() }
+                            }
+                            SectionLabel("Shape")
+                            Group {
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Background glow", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${(glowAmt * 200).toInt()}%")
+                                    }
+                                    Slider(
+                                        value = glowAmt, onValueChange = { glowAmt = it },
+                                        valueRange = 0f..0.5f, onValueChangeFinished = { save() }
                                     )
-                                    Btn("Add", {
-                                        if (inName.isNotBlank() && inPkg.isNotBlank()) {
-                                            instances[inName.trim()] = inPkg.trim()
-                                            inName = ""; inPkg = ""; save()
-                                            toast("other", "Instance added.")
-                                        }
-                                    }, icon = Ic.Plus)
+                                }
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                                    Row {
+                                        Text("Corner roundness", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                        ValueText("${cornerDp.toInt()} dp")
+                                    }
+                                    Slider(
+                                        value = cornerDp, onValueChange = { cornerDp = it },
+                                        valueRange = 6f..40f, onValueChangeFinished = { save() }
+                                    )
                                 }
                             }
                         }
-                    }
-                }
-                3 -> {
-                    item { SectionLabel("Backup and restore") }
-                    item {
-                        Group {
-                            Item(
-                                "Export", "Flags, profiles, games and instances as one JSON file.",
-                                { share(backupJson(), "Export backup") }, leading = Ic.Save
-                            ) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
-                            Item("Import", "Restores a backup from the clipboard.", {
-                                val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                                val msg = runCatching {
-                                    val o = JSONObject(text)
-                                    o.optJSONObject("flags")?.let { j -> flags.clear(); flags.putAll(parseFlags(j.toString())) }
-                                    o.optJSONObject("presets")?.let { j -> presets.clear(); presets.putAll(parseFlags(j.toString())) }
-                                    o.optJSONObject("games")?.let { j -> games.clear(); games.putAll(parseFlags(j.toString())) }
-                                    o.optJSONObject("instances")?.let { j -> instances.clear(); instances.putAll(parseFlags(j.toString())) }
-                                    activeProfile = ""
-                                    save()
-                                    "Backup imported."
-                                }.getOrElse { "Failed: copy a backup to the clipboard first." }
-                                toast("other", msg)
-                            }, leading = Ic.Download) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                        1 -> {
+                            SectionLabel("Connection")
+                            Group {
+                                Item("Roblox", if (robloxVersion == "Not found") "Not found" else "Installed, version $robloxVersion", leading = Ic.Game)
+                                Item("Package name", pkg, { pkgInput = pkg; pkgDialog = true }, leading = Ic.Folder) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Shizuku", shStatus, leading = Ic.Bolt) {
+                                    Btn("Grant", {
+                                        try {
+                                            Shizuku.requestPermission(1001)
+                                        } catch (e: Throwable) {
+                                            toast("other", "Failed: start Shizuku first.")
+                                        }
+                                    }, kind = 1, h = 36.dp)
+                                }
+                                SwitchItem(
+                                    "Use root",
+                                    if (rootAvailable) "Apply flags with superuser instead of Shizuku."
+                                    else "No root detected on this device.",
+                                    useRoot,
+                                    leading = Ic.Warn
+                                ) { useRoot = it; save() }
+                            }
+                            SectionLabel("Flag file")
+                            Group {
+                                Column(
+                                    Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        path, { path = it; save() }, label = { Text("Flag file path") },
+                                        shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Pill("Default", path == DEFAULT_PATH) { path = DEFAULT_PATH; save() }
+                                        val appPath = "/data/data/$pkg/files/ClientSettings/ClientAppSettings.json"
+                                        Pill("App data (root)", path == appPath) { path = appPath; save() }
+                                    }
+                                }
+                                SwitchItem(
+                                    "Write file on save",
+                                    "Writes your flags to the flag file when you tap Save.",
+                                    applyOnSave,
+                                    leading = Ic.Save
+                                ) { applyOnSave = it; save() }
+                                SwitchItem("Restart on Save and Launch", "Force-stops Roblox before launching.", restart, leading = Ic.Refresh) { restart = it; save() }
+                                SwitchItem(
+                                    "Disable frame-rate cap",
+                                    "Always lifts Android's game frame cap when you save. Done automatically for limits above 60 FPS.",
+                                    fps,
+                                    leading = Ic.Bolt
+                                ) { fps = it; save() }
+                                Item("Clear Roblox cache", "Frees up space", {
+                                    scope.launch(Dispatchers.IO) { toast("other", clearCache(pkg, useRoot)) }
+                                }) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                            }
+                            SectionLabel("Messages")
+                            Group {
+                                Item("Errors always show, whatever you turn off here.")
+                                SwitchItem("FastFlag messages", "Confirms when flags are saved, applied or imported.", msgFlag, leading = Ic.Flag) { msgFlag = it; save() }
+                                SwitchItem("Launch messages", "Confirms when Roblox or a game is launched.", msgLaunch, leading = Ic.Play) { msgLaunch = it; save() }
+                                SwitchItem("Other messages", "Confirms copies, backups and other actions.", msgOther, leading = Ic.Bell) { msgOther = it; save() }
+                            }
                         }
-                    }
-                    item { SectionLabel("Tools") }
-                    item {
-                        Group {
-                            Item("Diagnostics", "A report you can copy for support", {
-                                val report = "TacoStrap $APP_VERSION\nAndroid ${Build.VERSION.SDK_INT}\n" +
-                                    "Shizuku: $shStatus\nRoot available: $rootAvailable (in use: $useRoot)\n" +
-                                    "Package: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}\nProfiles: ${presets.size}"
-                                copyText("diagnostics", report)
-                            }, leading = Ic.Doc) { Ico(Ic.Copy, cs.onSurfaceVariant, 20.dp) }
+                        2 -> {
+                            SectionLabel("Backup and restore")
+                            Group {
+                                Item(
+                                    "Export",
+                                    "Flags, profiles and pinned games as one JSON file.",
+                                    { share(backupJson(), "Export backup") },
+                                    leading = Ic.Save
+                                ) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                                Item("Import", "Restores a backup from the clipboard.", {
+                                    val text = clip.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+                                    val msg = runCatching {
+                                        val o = JSONObject(text)
+                                        o.optJSONObject("flags")?.let { j -> flags.clear(); flags.putAll(parseFlags(j.toString())) }
+                                        o.optJSONObject("presets")?.let { j -> presets.clear(); presets.putAll(parseFlags(j.toString())) }
+                                        o.optJSONObject("games")?.let { j -> games.clear(); games.putAll(parseFlags(j.toString())) }
+                                        activeProfile = ""
+                                        save()
+                                        "Backup imported."
+                                    }.getOrElse { "Failed: copy a backup to the clipboard first." }
+                                    toast("other", msg)
+                                }, leading = Ic.Download) { Ico(Ic.Right, cs.onSurfaceVariant, 20.dp) }
+                            }
+                            SectionLabel("Tools")
+                            Group {
+                                Item("Diagnostics", "A report you can copy for support", {
+                                    val report = "TacoStrap $APP_VERSION\nAndroid ${Build.VERSION.SDK_INT}\n" +
+                                        "Shizuku: $shStatus\nRoot available: $rootAvailable (in use: $useRoot)\n" +
+                                        "Package: $pkg ($robloxVersion)\nPath: $path\nFlags: ${flags.size}\nProfiles: ${presets.size}"
+                                    copyText("diagnostics", report)
+                                }, leading = Ic.Doc) { Ico(Ic.Copy, cs.onSurfaceVariant, 20.dp) }
+                            }
                         }
-                    }
-                }
-                else -> {
-                    item { SectionLabel("About") }
-                    item {
-                        Group {
-                            Item("Changelog", "What's new in $APP_VERSION", { changelog = true }, leading = Ic.Doc) {
-                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                        else -> {
+                            SectionLabel("About")
+                            Group {
+                                Item("Changelog", "What's new in $APP_VERSION", { changelog = true }, leading = Ic.Doc) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Licenses", "Open source notices", { licenses = true }, leading = Ic.Info) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
+                                Item("Shizuku website", "Set up wireless debugging", { openUrl(SHIZUKU_URL) }, leading = Ic.Globe) {
+                                    Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
+                                }
                             }
-                            Item("Licenses", "Open source notices", { licenses = true }, leading = Ic.Info) {
-                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
-                            }
-                            Item("Roblox allowlist", "Flags Roblox allows on PC", { openUrl(ALLOWLIST_URL) }, leading = Ic.Globe) {
-                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
-                            }
-                            Item("Shizuku website", "Set up wireless debugging", { openUrl(SHIZUKU_URL) }, leading = Ic.Globe) {
-                                Ico(Ic.Right, cs.onSurfaceVariant, 20.dp)
-                            }
+                            Text(
+                                "TacoStrap for Android $APP_VERSION",
+                                Modifier.fillMaxWidth().padding(top = 8.dp),
+                                fontSize = 13.sp, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
+                            )
                         }
-                    }
-                    item {
-                        Text(
-                            "TacoStrap for Android $APP_VERSION",
-                            Modifier.fillMaxWidth().padding(top = 8.dp),
-                            fontSize = 13.sp, color = cs.onSurfaceVariant, textAlign = TextAlign.Center
-                        )
                     }
                 }
             }
@@ -2447,7 +2169,8 @@ fun App() {
     MaterialTheme(colorScheme = scheme) {
         CompositionLocalProvider(
             LocalCorner provides cornerDp.dp,
-            LocalPad provides (if (compact) 10.dp else 16.dp)
+            LocalPad provides (if (compact) 10.dp else 16.dp),
+            LocalMotion provides motion
         ) {
             Box(
                 Modifier.fillMaxSize()
@@ -2455,14 +2178,14 @@ fun App() {
                     .background(
                         Brush.radialGradient(
                             colors = listOf(pc.copy(alpha = glowAmt), Color.Transparent),
-                            center = Offset(700f, -80f),
+                            center = Offset(300f + 480f * glow, -80f),
                             radius = 1100f
                         )
                     )
                     .background(
                         Brush.radialGradient(
                             colors = listOf(sc.copy(alpha = glowAmt * 0.8f), Color.Transparent),
-                            center = Offset(300f, 1900f),
+                            center = Offset(900f - 500f * glow, 1900f),
                             radius = 1000f
                         )
                     )
@@ -2481,19 +2204,8 @@ fun App() {
                     bottomBar = { FloatingNav(navItems, page) { page = it } }
                 ) { pad ->
                     Box(Modifier.padding(pad).fillMaxSize()) {
-                        AnimatedContent(
-                            targetState = page,
-                            transitionSpec = {
-                                (fadeIn(animationSpec = tween(180)) + slideInHorizontally(
-                                    animationSpec = tween(180), initialOffsetX = { it / 30 }
-                                )) togetherWith
-                                    (fadeOut(animationSpec = tween(120)) + slideOutHorizontally(
-                                        animationSpec = tween(120), targetOffsetX = { -it / 40 }
-                                    ))
-                            },
-                            label = "TacoStrapPageTransition"
-                        ) { targetPage ->
-                            when (targetPage) {
+                        Crossfade(targetState = page, animationSpec = tween(pageAnim), label = "page") { p ->
+                            when (p) {
                                 0 -> HomePage()
                                 1 -> FlagsPage()
                                 2 -> PresetsPage()
@@ -2515,18 +2227,17 @@ fun App() {
                     title = { Text("Welcome to TacoStrap $APP_VERSION") },
                     text = {
                         Text(
-                            "TacoStrap writes a ClientAppSettings.json file that Roblox reads on launch, " +
-                                "and works as a small bootstrapper: launch, close, trim memory, clear cache and open games by link.\n\n" +
+                            "TacoStrap writes a ClientAppSettings.json file that Roblox reads on launch.\n\n" +
                                 "You need one of these for it to work:\n" +
                                 "  - Shizuku running on the device, with permission granted to this app, or\n" +
-                                "  - Root access (Settings, Roblox, Use root).\n\n" +
+                                "  - Root access (toggle it in Settings, Connection).\n\n" +
                                 "Check the status cards on the Home tab. If Shizuku is not running, start it first, then tap Grant."
                         )
                     },
                     confirmButton = {
                         TextButton({
                             onboarding = false
-                            prefs.edit().putBoolean("seen5", true).apply()
+                            prefs.edit().putBoolean("seen4", true).apply()
                         }) { Text("Got it") }
                     }
                 )
@@ -2635,9 +2346,7 @@ fun App() {
                                 textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
                                 shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()
                             )
-                            if (jsonMsg.isNotEmpty()) {
-                                Text(jsonMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
-                            }
+                            if (jsonMsg.isNotEmpty()) Text(jsonMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
                         }
                     },
                     confirmButton = {
@@ -2711,17 +2420,26 @@ fun App() {
                     title = { Text("What's new in $APP_VERSION") },
                     text = {
                         Text(
-                            "Fixed in $APP_VERSION:\n" +
-                                "  - Removed the dead write-on-save setting. Use Apply or Launch on Home\n" +
-                                "  - Links now try Roblox first, then fall back to any app that can open them\n" +
-                                "  - Launch on open no longer fires when you flip the switch\n" +
-                                "  - Apply now saves your flags before writing the file\n\n" +
-                                "New in 5.0:\n" +
-                                "  - Smoother page transitions with remembered scroll positions\n" +
-                                "  - Bootstrapper tools: launch, close, memory trimmer, cache cleaner\n" +
-                                "  - Launch by place ID or Roblox link, recent launches history\n" +
-                                "  - Instances: save and switch between Roblox package names\n" +
-                                "  - Apply flags before launching, and optional launch on open"
+                            "New in $APP_VERSION:\n" +
+                                "  - Fancier look: floating navigation, glass cards, gradient buttons and switches\n" +
+                                "  - Animated status pill and a flowing launch button\n" +
+                                "  - Icon chips on settings rows and flag packs\n" +
+                                "  - Frame rate cap is lifted automatically above 60 FPS\n" +
+                                "  - Packs replace each other instead of stacking\n" +
+                                "  - Settings tabs are reachable again\n" +
+                                "  - Export no longer opens the share sheet by itself\n\n" +
+                                "Earlier, in 4.0:\n" +
+                                "  - Redesigned home dashboard with status cards\n" +
+                                "  - Flag editor with search, sorting and type filters\n" +
+                                "  - Per-flag actions: copy name, copy value, duplicate, delete\n" +
+                                "  - New packs: Potato and Competitive\n" +
+                                "  - Active profile indicator\n" +
+                                "  - Profile duplicate and export\n" +
+                                "  - Proper Shizuku permission handling and root detection\n" +
+                                "  - Verify file after apply\n" +
+                                "  - Import flags from URL (needs INTERNET permission)\n" +
+                                "  - Dynamic color on Android 12+, two new accent themes\n" +
+                                "  - Changelog and first-run onboarding"
                         )
                     },
                     confirmButton = { TextButton({ changelog = false }) { Text("Close") } }
