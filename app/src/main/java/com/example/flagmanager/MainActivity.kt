@@ -185,16 +185,6 @@ const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
 const val EXE_PATH = "/data/data/com.roblox.client/files/exe/ClientSettings/ClientAppSettings.json"
 
-/** Native Memory Bridge for Pure Offset live RAM patching via C++ (JNI) */
-object NativeMemoryBridge {
-    init {
-        runCatching { System.loadLibrary("tacostrap_native") }
-    }
-    external fun nativeInit(pid: Int): Boolean
-    external fun nativeSetMaxFPS(fpsOffset: Long, maxFps: Double): Boolean
-    external fun nativeSetWalkspeed(humanoidAddress: Long, walkspeedOffset: Long, speed: Float): Boolean
-}
-
 /** Parses a flat JSON object into string->string. Booleans become "True"/"False". */
 fun parseFlags(text: String): Map<String, String> {
     val o = JSONObject(text.ifBlank { "{}" })
