@@ -104,7 +104,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -176,7 +175,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /* ======================================================================
- *  1. ENGINE: JSON helpers + multi-path deployment + Native JNI Bridge
+ *  1. ENGINE: JSON helpers + multi-path deployment
  * ====================================================================== */
 
 const val APP_VERSION = "5.8"
@@ -184,15 +183,6 @@ const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
 const val EXE_PATH = "/data/data/com.roblox.client/files/exe/ClientSettings/ClientAppSettings.json"
-
-object NativeMemoryBridge {
-    init {
-        runCatching { System.loadLibrary("tacostrap_native") }
-    }
-    external fun nativeInit(pid: Int): Boolean
-    external fun nativeSetMaxFPS(fpsOffset: Long, maxFps: Double): Boolean
-    external fun nativeSetWalkspeed(humanoidAddress: Long, walkspeedOffset: Long, speed: Float): Boolean
-}
 
 fun parseFlags(text: String): Map<String, String> {
     val o = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
@@ -1646,7 +1636,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 }
 
 /* ======================================================================
- *  5. FLAGS SCREEN & PURE OFFSET (LIVE MEMORY PATCHING)
+ *  5. FLAGS SCREEN
  * ====================================================================== */
 
 sealed class FS(val title: String, val sub: String) {
@@ -1746,7 +1736,7 @@ fun FlagsScreen(state: TacoState) {
     LaunchedEffect(Unit) { delay(300); loaded = true }
 
     val draft = state.draftFlags
-    val categories = listOf("All") + SECTIONS.map { it.first } + "Custom" + "Pure Offset"
+    val categories = listOf("All") + SECTIONS.map { it.first } + "Custom"
     val pending = state.pendingCount()
 
     val managedKeys = remember { SECTIONS.flatMap { (_, l) -> l.flatMap { fsKeys(it) } }.toSet() }
@@ -1808,45 +1798,6 @@ fun FlagsScreen(state: TacoState) {
         if (!loaded) {
             items(6) { ShimmerBox(Modifier.fillMaxWidth().height(56.dp)) }
             return@LazyColumn
-        }
-
-        if (category == "Pure Offset") {
-            item(key = "sec_pure_offset") { SectionLabel("Pure Offset (Live RAM)") }
-            item(key = "pure_offset_card") {
-                Column(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(state.cardCornerRadius.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
-                        .border(1.dp, accent.neon.copy(0.5f), RoundedCornerShape(state.cardCornerRadius.dp))
-                        .padding(18.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Pure Offset Mode", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                            Text("Live native RAM memory patching (via JNI/C++)", fontSize = 12.sp, color = TacoPalette.Muted)
-                        }
-                        TacoSwitch(state.pureOffsetEnabled, { state.pureOffsetEnabled = it; state.persist() })
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = state.pureMaxFps, onValueChange = { state.pureMaxFps = it; state.persist() },
-                        label = { Text("Target Max FPS (Double)") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = state.fpsOffset, onValueChange = { state.fpsOffset = it; state.persist() },
-                        label = { Text("libroblox.so FPS Offset (Hex/Dec, e.g. 0x1A2B)") }, singleLine = true,
-                        colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    TacoButton("Apply Live Memory Patch", {
-                        state.applyPureOffsets()
-                    }, Modifier.fillMaxWidth(), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
-                }
-            }
         }
 
         if (category == "All" || SECTIONS.any { it.first == category }) {
@@ -2833,7 +2784,6 @@ fun SettingsScreen(state: TacoState) {
                         "· Custom App Font Selector (Sans, Mono, Serif, Cursive)\n" +
                         "· Frosted glassmorphism cards with custom corner rounding\n" +
                         "· Adjustable card transparency & neon accent glow shaders\n" +
-                        "· Native Pure Offset live RAM memory patching\n" +
                         "· Griddle dial with multi-stage neon particle sizzle\n" +
                         "· Universal allowlist bypass for all fast flags & desyncs\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
@@ -2944,11 +2894,6 @@ class TacoState(
     // Million-Dollar Appearance Customizations
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
     var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
-
-    // Pure Offset settings
-    var pureOffsetEnabled by mutableStateOf(prefs.getBoolean("pureOffsetEnabled", false))
-    var pureMaxFps by mutableStateOf(prefs.getString("pureMaxFps", "120.0") ?: "120.0")
-    var fpsOffset by mutableStateOf(prefs.getString("fpsOffset", "0x0") ?: "0x0")
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
@@ -3116,39 +3061,6 @@ class TacoState(
 
     fun targetLabel(): String = targetGame?.let { "$it (#${games[it]?.placeId})" } ?: "Home (Roblox app)"
 
-    fun applyPureOffsets() {
-        scope.launch(Dispatchers.IO) {
-            val (ok, out) = runCmd("pidof $pkg", useRoot)
-            val pid = out.trim().toIntOrNull()
-            if (pid == null || pid <= 0) {
-                notify("Pure Offset failed: Roblox process not found. Launch Roblox first!")
-                return@launch
-            }
-            val initOk = NativeMemoryBridge.nativeInit(pid)
-            if (!initOk) {
-                notify("Pure Offset failed: could not locate libroblox.so for PID $pid")
-                return@launch
-            }
-            val offsetVal = runCatching {
-                val s = fpsOffset.trim()
-                if (s.startsWith("0x", true)) s.substring(2).toLong(16) else s.toLong()
-            }.getOrDefault(0L)
-
-            if (offsetVal == 0L) {
-                notify("Pure Offset failed: invalid or zero FPS offset.")
-                return@launch
-            }
-
-            val fpsVal = pureMaxFps.toDoubleOrNull() ?: 120.0
-            val success = NativeMemoryBridge.nativeSetMaxFPS(offsetVal, fpsVal)
-            if (success) {
-                notify("Pure Offset applied successfully (PID $pid, MaxFPS: $fpsVal)")
-            } else {
-                notify("Pure Offset failed to write memory at offset.")
-            }
-        }
-    }
-
     fun launchGameById(placeId: String) {
         scope.launch {
             val g = games.values.firstOrNull { it.placeId == placeId }
@@ -3162,11 +3074,6 @@ class TacoState(
             }
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
             notify(launchMsg, "launch")
-
-            if (pureOffsetEnabled) {
-                delay(2500)
-                applyPureOffsets()
-            }
         }
     }
 
@@ -3232,11 +3139,6 @@ class TacoState(
                     }
                     push(lIdx, StepStatus.Done, msg)
                     finalMsg = if (target != null) "Launched $targetGame." else "Roblox is served."
-
-                    if (pureOffsetEnabled) {
-                        delay(2500)
-                        applyPureOffsets()
-                    }
                 } else {
                     finalMsg = if (m == LaunchMode.VERIFY) "Verification complete." else "Flags applied and verified."
                 }
@@ -3331,7 +3233,7 @@ class TacoState(
         copyText(
             "diagnostics",
             "TacoStrap $APP_VERSION\nShizuku: ${shizuku.long}\nRoot available: $rootAvailable (in use: $useRoot)\n" +
-                "Package: $pkg (${robloxVersion ?: "?"})\nPath: $path\nFlags: ${draftFlags.size}\nLayers: ${layers.size}\nPure Offset: $pureOffsetEnabled"
+                "Package: $pkg (${robloxVersion ?: "?"})\nPath: $path\nFlags: ${draftFlags.size}\nLayers: ${layers.size}"
         )
         notify("Diagnostics copied.")
     }
@@ -3373,9 +3275,6 @@ class TacoState(
             .putString("bgImageUri", bgImageUri)
             .putFloat("glassOpacity", glassOpacity)
             .putInt("cardCornerRadius", cardCornerRadius)
-            .putBoolean("pureOffsetEnabled", pureOffsetEnabled)
-            .putString("pureMaxFps", pureMaxFps)
-            .putString("fpsOffset", fpsOffset)
             .apply()
     }
 
