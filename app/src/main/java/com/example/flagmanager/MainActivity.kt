@@ -442,8 +442,8 @@ object TacoShapes {
 }
 
 object TacoMotion {
-    val softSpring = spring(dampingRatio = 0.8f, stiffness = 380f)
-    val shimmer = tween(1100)
+    val softSpring = spring<Float>(dampingRatio = 0.8f, stiffness = 380f)
+    val shimmer = tween<Float>(1100)
 }
 
 @Composable
@@ -1697,7 +1697,7 @@ private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corn
 private val FS_PRELOAD = FS.Toggle("Faster loading", "Preloads more assets. Can use a lot of memory",
     mapOf("DFIntNumAssetsMaxToPreload" to "2147483647", "DFIntAssetPreloading" to "2147483647"))
 private val FS_QUALITY = FS.Choice("Graphics quality override", "Locks the Roblox graphics level",
-    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) }))
+    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) })
 private val FS_GRASSMOVE = FS.Choice("Grass movement", "How much grass sways",
     listOf(Opt("Default", emptyMap()), Opt("None", mapOf("FIntGrassMovementReducedMotionFactor" to "0"))))
 private val FS_NOGRASS = FS.Toggle("Remove grass", "Hides built-in terrain grass",
