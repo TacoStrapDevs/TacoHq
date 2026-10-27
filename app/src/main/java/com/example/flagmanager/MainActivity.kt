@@ -442,8 +442,8 @@ object TacoShapes {
 }
 
 object TacoMotion {
-    val softSpring = spring<Float>(dampingRatio = 0.8f, stiffness = 380f)
-    val shimmer = tween<Float>(1100)
+    val softSpring = spring(dampingRatio = 0.8f, stiffness = 380f)
+    val shimmer = tween(1100)
 }
 
 @Composable
@@ -659,7 +659,7 @@ fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean =
     val reduce = LocalReduceMotion.current
     val x by animateDpAsState(
         if (checked) 25.dp else 4.dp,
-        if (reduce) tween<Dp>(0) else spring<Dp>(dampingRatio = 0.6f, stiffness = 520f),
+        if (reduce) tween(0) else spring(dampingRatio = 0.6f, stiffness = 520f),
         label = "swx"
     )
     Box(
@@ -701,7 +701,7 @@ fun TacoButton(
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(
         if (pressed) 0.95f else 1f,
-        if (reduce) tween<Float>(0) else spring<Float>(dampingRatio = 0.55f, stiffness = 600f),
+        if (reduce) tween(0) else spring(dampingRatio = 0.55f, stiffness = 600f),
         label = "btn"
     )
     val look: Triple<Brush, Color, Color?> = when (kind) {
@@ -1129,7 +1129,7 @@ fun TicketLine(
 
 @Composable
 fun CountUpText(target: Int, style: TextStyle = TacoType.tnum, color: Color = TacoPalette.Cream) {
-    val v by animateIntAsState(target, if (LocalReduceMotion.current) tween<Int>(0) else tween<Int>(600), label = "cnt")
+    val v by animateIntAsState(target, if (LocalReduceMotion.current) tween(0) else tween(600), label = "cnt")
     Text("$v", style = style, color = color)
 }
 
@@ -1229,7 +1229,7 @@ fun ComalDial(
             val res = hold.animateTo(1f, tween(850, easing = LinearEasing))
             if (res.endReason == AnimationEndReason.Finished) trigger()
         } else {
-            hold.animateTo(0f, if (reduce) tween<Float>(0) else spring<Float>(dampingRatio = 0.7f))
+            hold.animateTo(0f, if (reduce) tween(0) else spring(dampingRatio = 0.7f))
         }
     }
 
@@ -1238,7 +1238,7 @@ fun ComalDial(
     val sweeps = List(4) { i ->
         animateFloatAsState(
             if (i <= heat) segSweep else 0f,
-            if (reduce) tween<Float>(0) else spring<Float>(dampingRatio = 0.75f, stiffness = 220f),
+            if (reduce) tween(0) else spring(dampingRatio = 0.75f, stiffness = 220f),
             label = "heat$i"
         )
     }
@@ -1249,7 +1249,7 @@ fun ComalDial(
         is LaunchState.Failed -> launch.failedStep / launch.steps.size.toFloat()
         else -> 0f
     }
-    val progress by animateFloatAsState(overall, if (reduce) tween<Float>(0) else tween<Float>(500), label = "prog")
+    val progress by animateFloatAsState(overall, if (reduce) tween(0) else tween(500), label = "prog")
     val running = launch is LaunchState.Running
     val fillColor = when (launch) {
         is LaunchState.Success -> TacoPalette.Guac
@@ -1307,7 +1307,7 @@ fun ComalDial(
 
         val discScale by animateFloatAsState(
             if (pressed) 0.94f else 1f,
-            if (reduce) tween<Float>(0) else spring<Float>(dampingRatio = 0.5f, stiffness = 500f), label = "disc"
+            if (reduce) tween(0) else spring(dampingRatio = 0.5f, stiffness = 500f), label = "disc"
         )
         Canvas(Modifier.fillMaxSize().padding(30.dp).graphicsLayer { scaleX = discScale; scaleY = discScale }) {
             val r = size.minDimension / 2
@@ -3341,7 +3341,7 @@ fun TacoRoot() {
                             val (icon, label) = TAB_ICONS[i]
                             val w by animateFloatAsState(
                                 if (selected) 1.7f else 1f,
-                                if (state.reduceMotion) tween<Float>(0) else spring<Float>(dampingRatio = 0.75f, stiffness = 420f),
+                                if (state.reduceMotion) tween(0) else spring(dampingRatio = 0.75f, stiffness = 420f),
                                 label = "tabw"
                             )
                             val tint = if (selected) accent.primary else TacoPalette.Muted
