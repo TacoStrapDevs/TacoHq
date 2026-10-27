@@ -54,6 +54,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -1078,10 +1079,10 @@ fun OrderTicket(modifier: Modifier = Modifier, content: @Composable ColumnScope.
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.TicketEdge(top: Boolean, pageBg: Color) {
+private fun BoxScope.TicketEdge(top: Boolean, pageBg: Color) {
     Row(
         Modifier.align(if (top) Alignment.TopCenter else Alignment.BottomCenter).fillMaxWidth()
-            .offset(y = if (top) (-4.5).dp else 4.5.dp)
+            .offset(y = if (top) (-4.5).dp else 4.dp)
             .padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
