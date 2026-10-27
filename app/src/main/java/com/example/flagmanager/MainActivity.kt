@@ -278,27 +278,43 @@ object DefaultBootstrapper : Bootstrapper {
 
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
+            // Accept a JSON filename or a directory selected in Settings.
+            // This only chooses candidate paths; Android may still deny private-data access.
+            val selected = path.trim().trimEnd('/')
+            val selectedPaths = when {
+                selected.isBlank() -> listOf(DEFAULT_PATH)
+                selected.endsWith(".json", ignoreCase = true) -> listOf(selected)
+                selected == "/data/data/com.roblox.client" ||
+                    selected == "/data/data/$pkg" ->
+                    listOf(
+                        "$selected/files/ClientSettings/ClientAppSettings.json",
+                        "$selected/files/exe/ClientSettings/ClientAppSettings.json"
+                    )
+                else -> listOf("$selected/ClientAppSettings.json")
+            }
+            val paths = (selectedPaths + listOf(DEFAULT_PATH, ALT_PATH, EXE_PATH)).distinct()
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
-            
-            val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
-            var success = false
-            var lastOut = ""
+            val errors = mutableListOf<String>()
+            var successfulPath: String? = null
 
             for (p in paths) {
                 val dir = p.substringBeforeLast('/', "")
                 val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
                 val cmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(p)} && chmod 644 ${shq(p)}"
-                val (ok, out) = runCmd(cmd, root)
+                val (ok, output) = runCmd(cmd, root)
                 if (ok) {
-                    success = true
+                    successfulPath = p
+                    break
                 } else {
-                    lastOut = out
+                    errors += "$p: ${output.ifBlank { "permission denied or write failed" }}"
                 }
             }
 
-            if (!success) return@withContext "Failed: ${lastOut.ifBlank { "could not write flag file" }}"
+            if (successfulPath == null) {
+                return@withContext "Failed to write ClientAppSettings.json. Android may block TacoStrap from Roblox's private /data/data directory. Confirm Shizuku is running and authorized; Shizuku alone does not guarantee access. Details: ${errors.joinToString(" | ")}"
+            }
             if (fpsCap) runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
-            "Applied ${parseFlags(json).size} flags successfully"
+            "Wrote ${parseFlags(json).size} flags to $successfulPath. File writing succeeded; Roblox may still ignore unsupported or restricted flags."
         }
 
     override suspend fun verify(json: String, path: String, root: Boolean): String =
