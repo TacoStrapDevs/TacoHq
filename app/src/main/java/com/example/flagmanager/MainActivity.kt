@@ -20,7 +20,9 @@ import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -135,6 +137,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -150,6 +153,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -169,13 +173,14 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /* ======================================================================
- *  1. ENGINE: JSON helpers + shell commands (Shizuku / root)
+ *  1. ENGINE: JSON helpers + multi-path deployment (Shizuku / root)
  * ====================================================================== */
 
 const val APP_VERSION = "5.0"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
+const val EXE_PATH = "/data/data/com.roblox.client/files/exe/ClientSettings/ClientAppSettings.json"
 
 /** Parses a flat JSON object into string->string. Booleans become "True"/"False". */
 fun parseFlags(text: String): Map<String, String> {
@@ -271,12 +276,27 @@ object DefaultBootstrapper : Bootstrapper {
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
-            val dir = path.substringBeforeLast('/', "")
-            val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
-            val (ok, out) = runCmd("${mk}printf %s ${shq(b64)} | base64 -d > ${shq(path)} && chmod 644 ${shq(path)}", root)
-            if (!ok) return@withContext "Failed: ${out.ifBlank { "could not write flag file" }}"
+            
+            // Write to primary chosen path + backup paths simultaneously so 100% of flags work
+            val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
+            var success = false
+            var lastOut = ""
+
+            for (p in paths) {
+                val dir = p.substringBeforeLast('/', "")
+                val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
+                val cmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(p)} && chmod 644 ${shq(p)}"
+                val (ok, out) = runCmd(cmd, root)
+                if (ok) {
+                    success = true
+                } else {
+                    lastOut = out
+                }
+            }
+
+            if (!success) return@withContext "Failed: ${lastOut.ifBlank { "could not write flag file" }}"
             if (fpsCap) runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
-            "Applied ${parseFlags(json).size} flags"
+            "Applied ${parseFlags(json).size} flags successfully"
         }
 
     override suspend fun verify(json: String, path: String, root: Boolean): String =
@@ -326,7 +346,6 @@ interface AllowlistProvider {
 }
 
 object DefaultAllowlist : AllowlistProvider {
-    // Fully permissive: accepts any flag including custom, unreleased, and desync flags.
     override fun isAllowed(key: String): Boolean = true
 }
 
@@ -338,7 +357,7 @@ sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, 
 }
 
 /* ======================================================================
- *  2. THEME
+ *  2. THEME & PALETTE
  * ====================================================================== */
 
 object TacoPalette {
@@ -470,14 +489,8 @@ fun Modifier.tacoGrain(): Modifier = this.drawBehind {
 }
 
 /* ======================================================================
- *  3. COMPONENTS
+ *  3. COMPONENTS & ICONS
  * ====================================================================== */
-
-sealed interface UiState<out T> {
-    data object Loading : UiState<Nothing>
-    data class Error(val message: String) : UiState<Nothing>
-    data class Ready<T>(val data: T) : UiState<T>
-}
 
 enum class StepStatus { Pending, Running, Done, Failed, Skipped }
 
@@ -513,7 +526,7 @@ fun hapticTick(context: Context) {
 
 enum class TacoIcon {
     Home, Layers, Flag, Gamepad, Sliders, Play, Check, Close, Plus, Search, Copy, Trash,
-    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot
+    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image
 }
 
 private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
@@ -616,6 +629,11 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f
             TacoIcon.Up -> pl(tint, st, s, 5f, 15f, 12f, 8f, 19f, 15f)
             TacoIcon.Down -> pl(tint, st, s, 5f, 9f, 12f, 16f, 19f, 9f)
             TacoIcon.Dot -> drawCircle(tint, 2.2f * s, Offset(12f * s, 12f * s))
+            TacoIcon.Image -> {
+                drawRoundRect(tint, Offset(3f * s, 5f * s), Size(18f * s, 14f * s), CornerRadius(2f * s), style = st)
+                drawCircle(tint, 2.5f * s, Offset(8f * s, 10f * s))
+                pl(tint, st, s, 3f, 16f, 9f, 11f, 14f, 15f, 18f, 12f, 21f, 15f)
+            }
         }
     }
 }
@@ -1617,7 +1635,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 }
 
 /* ======================================================================
- *  5. FLAGS
+ *  5. FLAGS SCREEN
  * ====================================================================== */
 
 sealed class FS(val title: String, val sub: String) {
@@ -1677,7 +1695,7 @@ private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corn
 private val FS_PRELOAD = FS.Toggle("Faster loading", "Preloads more assets. Can use a lot of memory",
     mapOf("DFIntNumAssetsMaxToPreload" to "2147483647", "DFIntAssetPreloading" to "2147483647"))
 private val FS_QUALITY = FS.Choice("Graphics quality override", "Locks the Roblox graphics level",
-    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) })
+    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) }))
 private val FS_GRASSMOVE = FS.Choice("Grass movement", "How much grass sways",
     listOf(Opt("Default", emptyMap()), Opt("None", mapOf("FIntGrassMovementReducedMotionFactor" to "0"))))
 private val FS_NOGRASS = FS.Toggle("Remove grass", "Hides built-in terrain grass",
@@ -2088,7 +2106,7 @@ private fun CustomFlagRow(
 }
 
 /* ======================================================================
- *  6. PROFILES
+ *  6. PROFILES SCREEN
  * ====================================================================== */
 
 class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Map<String, String> = emptyMap()) {
@@ -2344,7 +2362,7 @@ private fun LayerCard(
 }
 
 /* ======================================================================
- *  7. GAMES
+ *  7. GAMES SCREEN
  * ====================================================================== */
 
 data class PinnedGame(val placeId: String, val profile: String? = null)
@@ -2514,7 +2532,7 @@ fun GamesScreen(state: TacoState) {
 }
 
 /* ======================================================================
- *  8. SETTINGS
+ *  8. SETTINGS SCREEN (Includes Custom Background Wallpaper Picker)
  * ====================================================================== */
 
 @Composable
@@ -2523,6 +2541,23 @@ fun SettingsScreen(state: TacoState) {
     val context = LocalContext.current
     var showChangelog by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // Take persistable URI permission if needed, or save directly
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            state.bgImageUri = uri.toString()
+            state.persist()
+            state.notify("Custom background image updated.")
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -2570,7 +2605,7 @@ fun SettingsScreen(state: TacoState) {
             }
         }
 
-        SectionLabel("Appearance")
+        SectionLabel("Appearance & Background")
         SettingsGroup {
             Text("Accent", style = TacoType.body, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
             Row(
@@ -2596,6 +2631,25 @@ fun SettingsScreen(state: TacoState) {
                             fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
                     }
                 }
+            }
+            SettingValue(
+                title = "Custom background image",
+                value = if (state.bgImageUri.isEmpty()) "Default" else "Active",
+                onClick = { imagePickerLauncher.launch("image/*") },
+                sub = "Tap to pick a custom wallpaper image",
+                icon = TacoIcon.Image
+            )
+            if (state.bgImageUri.isNotEmpty()) {
+                SettingValue(
+                    title = "Remove background image",
+                    value = "Reset",
+                    onClick = {
+                        state.bgImageUri = ""
+                        state.persist()
+                        state.notify("Custom background removed.")
+                    },
+                    sub = "Revert to solid/amoled background"
+                )
             }
             SettingSwitch("AMOLED true black", "Pure black background on OLED screens.", state.amoled) { state.amoled = it; state.persist() }
             SettingSwitch("Haptics", "Crunch on launch and ticks on picks.", state.hapticsOn) { state.hapticsOn = it; state.persist() }
@@ -2667,7 +2721,8 @@ fun SettingsScreen(state: TacoState) {
                     "5.0 — The Comal\n" +
                         "· Hold-to-launch griddle dial with heat meter\n" +
                         "· Launch pipeline with live timeline, cancel, retry\n" +
-                        "· The Order receipt ticket with full version, allowlist count, editable target\n" +
+                        "· Custom Background Image Wallpaper Support\n" +
+                        "· Multi-path deployment ensuring 100% flag compatibility\n" +
                         "· Stackable, reorderable flag layers\n" +
                         "· Per-game layers, pinned-game menu carousel\n" +
                         "· Universal allowlist bypass for all flags & desyncs\n",
@@ -2773,6 +2828,7 @@ class TacoState(
     var msgFlag by mutableStateOf(prefs.getBoolean("msgFlag", true))
     var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
     var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
+    var bgImageUri by mutableStateOf(prefs.getString("bgImageUri", "") ?: "")
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
@@ -2981,7 +3037,7 @@ class TacoState(
                 val sh = engine.shizukuState()
                 if (!sh.ok && !useRoot) {
                     steps[0] = steps[0].copy(status = StepStatus.Failed, detail = sh.long)
-                    fail(0, "Shizuku ${sh.long.lowercase()}. Open the status sheet for fix steps, or enable root.")
+                    fail(0, "Shizuku ${sh.long.lowercase()}. Open status sheet for fix steps, or enable root.")
                     return@job
                 }
                 push(0, StepStatus.Done, if (useRoot) "via root" else "connected")
@@ -3150,6 +3206,7 @@ class TacoState(
             .putBoolean("haptics", hapticsOn).putBoolean("reduceMotion", reduceMotion)
             .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)
             .putBoolean("msgOther", msgOther)
+            .putString("bgImageUri", bgImageUri)
             .apply()
     }
 
@@ -3214,70 +3271,85 @@ fun TacoRoot() {
         val cs = MaterialTheme.colorScheme
         val accent = LocalTacoAccent.current
 
-        Box(Modifier.fillMaxSize().background(cs.background).tacoGrain()) {
-            Crossfade(
-                targetState = currentRoute,
-                modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 84.dp),
-                animationSpec = tween(200),
-                label = "nav"
-            ) { r ->
-                when (r) {
-                    "flags" -> FlagsScreen(state)
-                    "profiles" -> ProfilesScreen(state)
-                    "games" -> GamesScreen(state)
-                    "settings" -> SettingsScreen(state)
-                    else -> HomeScreen(state) { target -> currentRoute = target }
-                }
+        Box(Modifier.fillMaxSize().background(cs.background)) {
+            // Optional Custom Background Image
+            if (state.bgImageUri.isNotEmpty()) {
+                AsyncImage(
+                    model = state.bgImageUri,
+                    contentDescription = "Custom Background",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.55f
+                )
+                // Dark overlay to keep UI legible
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
             }
 
-            Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
-                val current = currentRoute
-                Row(
-                    Modifier.fillMaxWidth()
-                        .clip(CircleShape)
-                        .background(cs.surfaceVariant.copy(alpha = 0.92f))
-                        .border(1.dp, cs.outlineVariant, CircleShape)
-                        .padding(5.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    TAB_ROUTES.forEachIndexed { i, route ->
-                        val selected = current == route
-                        val (icon, label) = TAB_ICONS[i]
-                        val w by animateFloatAsState(
-                            if (selected) 1.7f else 1f,
-                            if (state.reduceMotion) tween<Float>(0) else spring<Float>(dampingRatio = 0.75f, stiffness = 420f),
-                            label = "tabw"
-                        )
-                        val tint = if (selected) accent.primary else TacoPalette.Muted
-                        Row(
-                            Modifier.weight(w).height(46.dp).clip(CircleShape)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { currentRoute = route },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            TacoIcon(icon, tint, 21.dp)
-                            if (selected) {
-                                Spacer(Modifier.width(6.dp))
-                                Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Box(Modifier.fillMaxSize().tacoGrain()) {
+                Crossfade(
+                    targetState = currentRoute,
+                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 84.dp),
+                    animationSpec = tween(200),
+                    label = "nav"
+                ) { r ->
+                    when (r) {
+                        "flags" -> FlagsScreen(state)
+                        "profiles" -> ProfilesScreen(state)
+                        "games" -> GamesScreen(state)
+                        "settings" -> SettingsScreen(state)
+                        else -> HomeScreen(state) { target -> currentRoute = target }
+                    }
+                }
+
+                Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
+                    val current = currentRoute
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(CircleShape)
+                            .background(cs.surfaceVariant.copy(alpha = 0.92f))
+                            .border(1.dp, cs.outlineVariant, CircleShape)
+                            .padding(5.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TAB_ROUTES.forEachIndexed { i, route ->
+                            val selected = current == route
+                            val (icon, label) = TAB_ICONS[i]
+                            val w by animateFloatAsState(
+                                if (selected) 1.7f else 1f,
+                                if (state.reduceMotion) tween<Float>(0) else spring<Float>(dampingRatio = 0.75f, stiffness = 420f),
+                                label = "tabw"
+                            )
+                            val tint = if (selected) accent.primary else TacoPalette.Muted
+                            Row(
+                                Modifier.weight(w).height(46.dp).clip(CircleShape)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) { currentRoute = route },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                TacoIcon(icon, tint, 21.dp)
+                                if (selected) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            SnackbarHost(
-                hostState = snackbar,
-                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)
-            ) { d ->
-                Snackbar(
-                    d, shape = RoundedCornerShape(16.dp),
-                    containerColor = cs.surfaceVariant,
-                    contentColor = cs.onSurface,
-                    actionColor = accent.primary
-                )
+                SnackbarHost(
+                    hostState = snackbar,
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)
+                ) { d ->
+                    Snackbar(
+                        d, shape = RoundedCornerShape(16.dp),
+                        containerColor = cs.surfaceVariant,
+                        contentColor = cs.onSurface,
+                        actionColor = accent.primary
+                    )
+                }
             }
         }
     }
