@@ -19,6 +19,7 @@ import android.os.Vibrator
 import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -30,6 +31,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -63,7 +65,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -77,7 +78,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.stickyHeader
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -109,6 +109,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
@@ -153,11 +154,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1244,7 +1240,7 @@ fun ComalDial(
     LaunchedEffect(pressed, enabled, idle) {
         if (pressed && enabled && idle) {
             val res = hold.animateTo(1f, tween(850, easing = LinearEasing))
-            if (res.endReason == AnimationEndReason.TargetReached) trigger()
+            if (res.endReason == AnimationEndReason.Finished) trigger()
         } else {
             hold.animateTo(0f, if (reduce) tween<Float>(0) else spring<Float>(dampingRatio = 0.7f))
         }
@@ -3240,14 +3236,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun NavHostController.goTab(route: String) {
-    navigate(route) {
-        popUpTo("home") { saveState = true }
-        launchSingleTop = true
-        restoreState = true
-    }
-}
-
 @Composable
 fun TacoRoot() {
     val context = LocalContext.current
@@ -3260,31 +3248,30 @@ fun TacoRoot() {
     LaunchedEffect(Unit) { state.refreshLoop() }
 
     TacoTheme(state.accentIdx, state.amoled, state.reduceMotion) {
-        val nav = rememberNavController()
+        var currentRoute by rememberSaveable { mutableStateOf("home") }
+        BackHandler(enabled = currentRoute != "home") { currentRoute = "home" }
         val cs = MaterialTheme.colorScheme
         val accent = LocalTacoAccent.current
 
         Box(Modifier.fillMaxSize().background(cs.background).tacoGrain()) {
-            NavHost(
-                navController = nav,
-                startDestination = "home",
+            Crossfade(
+                targetState = currentRoute,
                 modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 84.dp),
-                enterTransition = { slideInHorizontally(tween(260)) { it / 5 } + fadeIn(tween(260)) },
-                exitTransition = { fadeOut(tween(200)) },
-                popEnterTransition = { fadeIn(tween(200)) },
-                popExitTransition = { slideOutHorizontally(tween(260)) { it / 5 } + fadeOut(tween(200)) }
-            ) {
-                composable("home") { HomeScreen(state) { r -> nav.goTab(r) } }
-                composable("flags") { FlagsScreen(state) }
-                composable("profiles") { ProfilesScreen(state) }
-                composable("games") { GamesScreen(state) }
-                composable("settings") { SettingsScreen(state) }
+                animationSpec = tween(200),
+                label = "nav"
+            ) { r ->
+                when (r) {
+                    "flags" -> FlagsScreen(state)
+                    "profiles" -> ProfilesScreen(state)
+                    "games" -> GamesScreen(state)
+                    "settings" -> SettingsScreen(state)
+                    else -> HomeScreen(state) { target -> currentRoute = target }
+                }
             }
 
             // Floating pill nav
             Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
-                val backStack by nav.currentBackStackEntryAsState()
-                val current = backStack?.destination?.route ?: "home"
+                val current = currentRoute
                 Row(
                     Modifier.fillMaxWidth()
                         .clip(CircleShape)
@@ -3307,7 +3294,7 @@ fun TacoRoot() {
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
-                                ) { nav.goTab(route) },
+                                ) { currentRoute = route },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
@@ -3333,82 +3320,5 @@ fun TacoRoot() {
                 )
             }
         }
-    }
-}
-
-/* ======================================================================
- *  11. PREVIEW SUPPORT
- * ====================================================================== */
-
-private class FakePrefs : SharedPreferences {
-    private val m = HashMap<String, Any?>()
-    override fun getAll(): MutableMap<String, *> = m
-    override fun getString(key: String, defValue: String?): String? = m[key] as? String ?: defValue
-    override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = defValues
-    override fun getInt(key: String, defValue: Int): Int = m[key] as? Int ?: defValue
-    override fun getLong(key: String, defValue: Long): Long = m[key] as? Long ?: defValue
-    override fun getFloat(key: String, defValue: Float): Float = m[key] as? Float ?: defValue
-    override fun getBoolean(key: String, defValue: Boolean): Boolean = m[key] as? Boolean ?: defValue
-    override fun contains(key: String): Boolean = m.containsKey(key)
-    override fun registerOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) {}
-    override fun unregisterOnSharedPreferenceChangeListener(l: SharedPreferences.OnSharedPreferenceChangeListener?) {}
-    override fun edit(): SharedPreferences.Editor = object : SharedPreferences.Editor {
-        override fun putString(key: String, value: String?): SharedPreferences.Editor { m[key] = value; return this }
-        override fun putStringSet(key: String, values: MutableSet<String>?): SharedPreferences.Editor { m[key] = values; return this }
-        override fun putInt(key: String, value: Int): SharedPreferences.Editor { m[key] = value; return this }
-        override fun putLong(key: String, value: Long): SharedPreferences.Editor { m[key] = value; return this }
-        override fun putFloat(key: String, value: Float): SharedPreferences.Editor { m[key] = value; return this }
-        override fun putBoolean(key: String, value: Boolean): SharedPreferences.Editor { m[key] = value; return this }
-        override fun remove(key: String): SharedPreferences.Editor { m.remove(key); return this }
-        override fun clear(): SharedPreferences.Editor { m.clear(); return this }
-        override fun commit(): Boolean = true
-        override fun apply() {}
-    }
-}
-
-private object FakeEngine : Bootstrapper {
-    override fun shizukuState(): ShizukuState = ShizukuState.Connected
-    override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean) = "Applied ${parseFlags(json).size} flags"
-    override suspend fun verify(json: String, path: String, root: Boolean) = "Verified: ${parseFlags(json).size} flags on disk match."
-    override suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean) = "Launched Roblox."
-    override suspend fun launchGame(pkg: String, id: String, root: Boolean, restart: Boolean) = "Launching game $id."
-    override suspend fun robloxVersion(pkg: String, root: Boolean): String? = "2.654.1234"
-    override fun rootAvailable() = false
-    override suspend fun clearCache(pkg: String, root: Boolean) = "Cleared cache."
-}
-
-@Composable
-fun previewTacoState(): TacoState {
-    val scope = rememberCoroutineScope()
-    val state = remember {
-        TacoState(FakePrefs(), FakeEngine, DefaultAllowlist, scope, SnackbarHostState())
-    }
-    LaunchedEffect(Unit) {
-        state.draftFlags.putAll(
-            mapOf(
-                "DFIntTaskSchedulerTargetFps" to "120",
-                "FIntDebugForceMSAASamples" to "2",
-                "DFFlagTextureQualityOverrideEnabled" to "True",
-                "DFIntTextureQualityOverride" to "2",
-                "FFlagDebugDisplayFPS" to "True",
-                "FIntRenderShadowIntensity" to "0",
-                "FFlagDisablePostFx" to "True"
-            )
-        )
-        state.applyDraft()
-        state.layers += FlagLayer("l1", "Competitive", true,
-            mapOf("DFIntTaskSchedulerTargetFps" to "240", "FFlagDebugDisplayFPS" to "True"))
-        state.games["Jailbreak"] = PinnedGame("606849621")
-        state.games["Arsenal"] = PinnedGame("286090429")
-        state.robloxVersion = "2.654.1234 (6541234) release"
-    }
-    return state
-}
-
-@androidx.compose.ui.tooling.preview.Preview(showBackground = true, backgroundColor = 0xFF120D0A)
-@Composable
-fun HomePreview() {
-    TacoTheme(0, false, false) {
-        HomeScreen(previewTacoState()) {}
     }
 }
