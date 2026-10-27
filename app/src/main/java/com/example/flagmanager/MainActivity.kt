@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -41,6 +42,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -130,6 +132,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -153,7 +156,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import coil.compose.AsyncImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -277,7 +279,6 @@ object DefaultBootstrapper : Bootstrapper {
         withContext(Dispatchers.IO) {
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
             
-            // Write to primary chosen path + backup paths simultaneously so 100% of flags work
             val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
             var success = false
             var lastOut = ""
@@ -2532,8 +2533,31 @@ fun GamesScreen(state: TacoState) {
 }
 
 /* ======================================================================
- *  8. SETTINGS SCREEN (Includes Custom Background Wallpaper Picker)
+ *  8. SETTINGS SCREEN & IMAGE DECODER
  * ====================================================================== */
+
+@Composable
+fun rememberImageBitmapFromUri(uriString: String): ImageBitmap? {
+    val context = LocalContext.current
+    var imageBitmap by remember(uriString) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uriString) {
+        if (uriString.isBlank()) {
+            imageBitmap = null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val uri = Uri.parse(uriString)
+                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
+                    }
+                }.onSuccess { bitmap ->
+                    imageBitmap = bitmap
+                }
+            }
+        }
+    }
+    return imageBitmap
+}
 
 @Composable
 fun SettingsScreen(state: TacoState) {
@@ -2546,7 +2570,6 @@ fun SettingsScreen(state: TacoState) {
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            // Take persistable URI permission if needed, or save directly
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
@@ -3270,12 +3293,13 @@ fun TacoRoot() {
         BackHandler(enabled = currentRoute != "home") { currentRoute = "home" }
         val cs = MaterialTheme.colorScheme
         val accent = LocalTacoAccent.current
+        val customBgBitmap = rememberImageBitmapFromUri(state.bgImageUri)
 
         Box(Modifier.fillMaxSize().background(cs.background)) {
             // Optional Custom Background Image
-            if (state.bgImageUri.isNotEmpty()) {
-                AsyncImage(
-                    model = state.bgImageUri,
+            if (customBgBitmap != null) {
+                Image(
+                    bitmap = customBgBitmap,
                     contentDescription = "Custom Background",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
