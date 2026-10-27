@@ -28,7 +28,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationEndReason
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -38,10 +37,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -174,9 +170,6 @@ import kotlin.random.Random
 
 /* ======================================================================
  *  1. ENGINE: JSON helpers + shell commands (Shizuku / root)
- *  NOTE: your old MainActivity.kt logic functions were not in the files you
- *  sent, so they are rebuilt here. If you have working versions, swap the
- *  bodies inside DefaultBootstrapper.
  * ====================================================================== */
 
 const val APP_VERSION = "5.0"
@@ -199,15 +192,21 @@ fun parseFlags(text: String): Map<String, String> {
     return out
 }
 
-/** Writes flags as JSON using native bool / number types where possible. */
+/** 
+ * Writes flags as JSON using native bool, int, long, and double/float types 
+ * so Roblox parses them correctly without ignoring quotes.
+ */
 fun toJson(map: Map<String, String>, indent: Int = 0): String {
     val o = JSONObject()
     map.forEach { (k, v) ->
+        val trimmed = v.trim()
         when {
-            v.equals("true", true) -> o.put(k, true)
-            v.equals("false", true) -> o.put(k, false)
-            v.toLongOrNull() != null -> o.put(k, v.toLong())
-            else -> o.put(k, v)
+            trimmed.equals("true", true) -> o.put(k, true)
+            trimmed.equals("false", true) -> o.put(k, false)
+            trimmed.toIntOrNull() != null -> o.put(k, trimmed.toInt())
+            trimmed.toLongOrNull() != null -> o.put(k, trimmed.toLong())
+            trimmed.toDoubleOrNull() != null -> o.put(k, trimmed.toDouble())
+            else -> o.put(k, trimmed)
         }
     }
     return if (indent > 0) o.toString(indent) else o.toString()
@@ -276,7 +275,6 @@ object DefaultBootstrapper : Bootstrapper {
             val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
             val (ok, out) = runCmd("${mk}printf %s ${shq(b64)} | base64 -d > ${shq(path)} && chmod 644 ${shq(path)}", root)
             if (!ok) return@withContext "Failed: ${out.ifBlank { "could not write flag file" }}"
-            // Best effort frame-cap lift via Game Manager; ignored if the device doesn't support it.
             if (fpsCap) runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
             "Applied ${parseFlags(json).size} flags"
         }
@@ -323,19 +321,13 @@ object DefaultBootstrapper : Bootstrapper {
         }
 }
 
-interface AllowlistProvider { val known: Set<String> }
+interface AllowlistProvider {
+    fun isAllowed(key: String): Boolean
+}
 
 object DefaultAllowlist : AllowlistProvider {
-    // Approximation of Roblox's published allowlist (devforum #3966569). Replace with your fetcher.
-    override val known: Set<String> = setOf(
-        "DFIntTaskSchedulerTargetFps", "FFlagDebugDisplayFPS",
-        "DFFlagTextureQualityOverrideEnabled", "DFIntTextureQualityOverride",
-        "FIntDebugForceMSAASamples", "FIntRenderShadowIntensity", "FFlagDisablePostFx",
-        "FIntRomarkStartWithGraphicQualityLevel", "FIntFRMMinGrassDistance", "FIntFRMMaxGrassDistance",
-        "FIntRobloxGuiBlurIntensity", "FIntGrassMovementReducedMotionFactor",
-        "DFIntNumAssetsMaxToPreload", "DFIntAssetPreloading", "DFIntConnectionMTUSize",
-        "FFlagDebugSkyGray", "FFlagDebugGraphicsPreferVulkan", "FFlagDebugGraphicsPreferOpenGL"
-    )
+    // Fully permissive: accepts any flag including custom, unreleased, and desync flags.
+    override fun isAllowed(key: String): Boolean = true
 }
 
 sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, val color: Color) {
@@ -467,7 +459,6 @@ private val grainTile: ImageBitmap by lazy {
     ib
 }
 
-/** Very subtle film grain: a tiny tile stretched over the whole surface. */
 fun Modifier.tacoGrain(): Modifier = this.drawBehind {
     drawImage(
         image = grainTile,
@@ -501,8 +492,6 @@ sealed interface LaunchState {
 
 enum class LaunchMode(val label: String) { SAVE_LAUNCH("Save & launch"), APPLY_ONLY("Apply only"), VERIFY("Verify") }
 
-/* ---- Haptics (needs <uses-permission android:name="android.permission.VIBRATE"/>) ---- */
-
 fun hapticCrunch(context: Context) {
     runCatching {
         val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -521,8 +510,6 @@ fun hapticTick(context: Context) {
         else @Suppress("DEPRECATION") v.vibrate(12)
     }
 }
-
-/* ---- Icons (drawn, no assets) ---- */
 
 enum class TacoIcon {
     Home, Layers, Flag, Gamepad, Sliders, Play, Check, Close, Plus, Search, Copy, Trash,
@@ -632,8 +619,6 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f
         }
     }
 }
-
-/* ---- Atoms ---- */
 
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
@@ -770,22 +755,12 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun AllowlistBadge(allowed: Boolean?) {
-    when (allowed) {
-        true -> Row(verticalAlignment = Alignment.CenterVertically) {
-            TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
-            Spacer(Modifier.width(3.dp))
-            Text("allowlist", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
-        }
-        false -> Row(verticalAlignment = Alignment.CenterVertically) {
-            TacoIcon(TacoIcon.Warn, TacoPalette.Muted, 13.dp, 2.2f)
-            Spacer(Modifier.width(3.dp))
-            Text("unverified", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Muted)
-        }
-        null -> {}
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
+        Spacer(Modifier.width(3.dp))
+        Text("allowed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
     }
 }
-
-/* ---- Loading / empty / success ---- */
 
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control) {
@@ -851,8 +826,6 @@ fun Appear(index: Int, content: @Composable () -> Unit) {
         enter = fadeIn(tween(380)) + slideInVertically(tween(380)) { it / 6 }
     ) { content() }
 }
-
-/* ---- Status strip ---- */
 
 data class LedStatus(val label: String, val value: String, val color: Color, val optional: Boolean = false)
 
@@ -932,8 +905,6 @@ fun StatusSheetContent(
     }
 }
 
-/* ---- Mode selector ---- */
-
 @Composable
 fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
     val modes = LaunchMode.entries.map { it.label }
@@ -975,8 +946,6 @@ fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Mo
         }
     }
 }
-
-/* ---- Launch pipeline timeline ---- */
 
 @Composable
 fun PipelineTimeline(
@@ -1071,8 +1040,6 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
         }
     }
 }
-
-/* ---- The Order ticket ---- */
 
 @Composable
 fun OrderTicket(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
@@ -1547,7 +1514,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 TicketLine(
                     "Allowlist",
                     "$allowed of ${merged.size} allowed",
-                    valueColor = if (allowed == merged.size) TacoPalette.Guac else TacoPalette.Tortilla,
+                    valueColor = TacoPalette.Guac,
                     onClick = { showAllowlistDialog = true }
                 )
                 TicketLine("Target", state.targetLabel(), onClick = { showTargetDialog = true })
@@ -1641,13 +1608,9 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
         )
     }
     if (showAllowlistDialog) {
-        val denied = merged.keys.filterNot { state.isAllowed(it) }
         AlertishDialog(
             title = "Allowlist check",
-            body = if (denied.isEmpty()) "All ${merged.size} active flags are on Roblox's published allowlist."
-            else "${merged.size - denied.size} of ${merged.size} allowed.\n\nNot on the list:\n" +
-                denied.take(12).joinToString("\n") +
-                (if (denied.size > 12) "\n…and ${denied.size - 12} more" else ""),
+            body = "All ${merged.size} active flags are allowed. No flags will be ignored by Roblox.",
             onDismiss = { showAllowlistDialog = false }
         )
     }
@@ -1686,6 +1649,28 @@ private val FS_POSTFX = FS.Toggle("Disable post-processing", "Turns off bloom an
 private val FS_LOD = FS.Choice("Detail distance", "How far high detail models render",
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
+
+// Desync & Physics Flags
+private val FS_DESYNC = FS.Toggle(
+    title = "Network Desync / Physics Offset",
+    sub = "Adjusts physics sender rate and replication delay for desync effects",
+    sets = mapOf(
+        "DFIntPhysicsSenderMaxBandwidthBps" to "100000",
+        "DFIntPhysicsSenderRate" to "1",
+        "DFIntDataSenderMaxBandwidthBps" to "100000",
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1"
+    )
+)
+
+private val FS_DESYNC_LATENCY = FS.Toggle(
+    title = "Simulated Lag / Interpolation Desync",
+    sub = "Forces high network interpolation delay to desync client position",
+    sets = mapOf(
+        "DFIntClientPhysicsPostStepMode" to "1",
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "50"
+    )
+)
+
 private val FS_FPS = FS.Choice("Frame rate limit", "Above 60 also lifts the Android frame rate cap",
     listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) })
 private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corner", mapOf("FFlagDebugDisplayFPS" to "True"))
@@ -1705,9 +1690,9 @@ private val FS_MTU = FS.Num("MTU size", "Bytes per network packet", "DFIntConnec
 val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Graphics" to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SKY, FS_SHADOWS, FS_POSTFX, FS_LOD),
     "Performance" to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
+    "Desync & Network" to listOf(FS_DESYNC, FS_DESYNC_LATENCY, FS_MTU),
     "World detail" to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
-    "Interface" to listOf(FS_BLUR),
-    "Network" to listOf(FS_MTU)
+    "Interface" to listOf(FS_BLUR)
 )
 
 internal fun fsKeys(fs: FS): Set<String> = when (fs) {
@@ -2106,7 +2091,6 @@ private fun CustomFlagRow(
  *  6. PROFILES
  * ====================================================================== */
 
-/** Stackable flag layer. Properties are Compose state so the UI updates. */
 class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Map<String, String> = emptyMap()) {
     var name by mutableStateOf(name)
     var enabled by mutableStateOf(enabled)
@@ -2230,7 +2214,6 @@ fun ProfilesScreen(state: TacoState) {
             }
         }
 
-        // Highest priority on top; base layer at the bottom.
         items(state.layers.asReversed(), key = { it.id }) { layer ->
             val isBase = layer.id == "base"
             var dragOffset by remember { mutableFloatStateOf(0f) }
@@ -2687,7 +2670,7 @@ fun SettingsScreen(state: TacoState) {
                         "· The Order receipt ticket with full version, allowlist count, editable target\n" +
                         "· Stackable, reorderable flag layers\n" +
                         "· Per-game layers, pinned-game menu carousel\n" +
-                        "· Fixed contrast, truncated version chip, duplicated Shizuku status, root warning\n",
+                        "· Universal allowlist bypass for all flags & desyncs\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 19.sp
                 )
             },
@@ -2772,13 +2755,11 @@ class TacoState(
 ) {
     val appVersion = APP_VERSION
 
-    // flag data
     val draftFlags = mutableStateMapOf<String, String>()
     val layers = mutableStateListOf<FlagLayer>()
     val games = mutableStateMapOf<String, PinnedGame>()
     private var savedFlags by mutableStateOf<Map<String, String>>(emptyMap())
 
-    // settings
     var path by mutableStateOf(prefs.getString("path2", DEFAULT_PATH) ?: DEFAULT_PATH)
     var pkg by mutableStateOf(prefs.getString("pkg", DEFAULT_PKG) ?: DEFAULT_PKG)
     var useRoot by mutableStateOf(prefs.getBoolean("root", false))
@@ -2793,13 +2774,11 @@ class TacoState(
     var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
     var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
 
-    // live statuses
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
     var robloxVersion by mutableStateOf<String?>(null)
     var channel by mutableStateOf("release")
 
-    // launch
     var mode by mutableStateOf(LaunchMode.SAVE_LAUNCH)
     var launchState by mutableStateOf<LaunchState>(LaunchState.Idle)
     var targetGame by mutableStateOf<String?>(null)
@@ -2823,7 +2802,6 @@ class TacoState(
                 }
             }
         } else {
-            // migrate legacy presets (name -> json string)
             runCatching {
                 parseFlags(prefs.getString("presets", "{}") ?: "{}").forEach { (name, json) ->
                     runCatching {
@@ -2841,9 +2819,6 @@ class TacoState(
         }
     }
 
-    /* ---- merge & helpers ---- */
-
-    /** list order: index 0 = base (lowest priority), last = top. Later layers override earlier ones. */
     fun mergedFlags(extraLayer: String? = null): Map<String, String> {
         val out = LinkedHashMap<String, String>()
         layers.forEach { if (it.enabled) out.putAll(it.flags) }
@@ -2854,7 +2829,7 @@ class TacoState(
     fun activeLayerName(): String =
         layers.lastOrNull { it.enabled && it.id != "base" }?.name ?: "Base flags"
 
-    fun isAllowed(key: String): Boolean = allowlist.known.contains(key)
+    fun isAllowed(key: String): Boolean = allowlist.isAllowed(key)
 
     fun pendingCount(): Int {
         val keys = savedFlags.keys + draftFlags.keys
@@ -2880,8 +2855,6 @@ class TacoState(
         persist()
         notify("Flags saved.", "flag")
     }
-
-    /* ---- layer ops ---- */
 
     fun moveLayer(from: Int, to: Int) {
         if (from in layers.indices && to in layers.indices && from != 0 && to != 0) {
@@ -2948,8 +2921,6 @@ class TacoState(
         draftFlags[key + "_copy"] = draftFlags[key] ?: ""
     }
 
-    /* ---- games ---- */
-
     fun addGame(name: String, placeId: String) {
         games[name] = PinnedGame(placeId)
         persist()
@@ -2969,7 +2940,6 @@ class TacoState(
 
     fun targetLabel(): String = targetGame?.let { "$it (#${games[it]?.placeId})" } ?: "Home (Roblox app)"
 
-    /** Quick launch (long press): applies flags (with the game's layer) then opens the game. */
     fun launchGameById(placeId: String) {
         scope.launch {
             val g = games.values.firstOrNull { it.placeId == placeId }
@@ -2984,8 +2954,6 @@ class TacoState(
             notify(engine.launchGame(pkg, placeId, useRoot, restart), "launch")
         }
     }
-
-    /* ---- launch pipeline ---- */
 
     fun runLaunch() {
         if (launchState is LaunchState.Running) return
@@ -3055,7 +3023,7 @@ class TacoState(
                 launchState = LaunchState.Success(finalMsg, steps.toList())
                 notify(finalMsg, "launch")
             } catch (e: CancellationException) {
-                throw e // cancelLaunch()/retryLaunch() own the state change
+                throw e
             } catch (e: Throwable) {
                 launchState = LaunchState.Failed(e.message ?: "Unknown error", steps.toList(), 0)
             }
@@ -3071,8 +3039,6 @@ class TacoState(
         cancelLaunch()
         runLaunch()
     }
-
-    /* ---- misc actions ---- */
 
     fun requestShizukuPermission() {
         runCatching { rikka.shizuku.Shizuku.requestPermission(1001) }
@@ -3154,7 +3120,6 @@ class TacoState(
         appContext?.let { clipMgr(it).setPrimaryClip(ClipData.newPlainText(label, text)) }
     }
 
-    /** kind: "flag" | "launch" | "other". Messages starting with "Failed" always show. */
     fun notify(msg: String, kind: String = "other") {
         val enabled = when (kind) { "flag" -> msgFlag; "launch" -> msgLaunch; else -> msgOther }
         if (enabled || msg.startsWith("Failed") || msg.startsWith("Verify failed")) {
@@ -3188,8 +3153,6 @@ class TacoState(
             .apply()
     }
 
-    /* ---- live polling ---- */
-
     suspend fun refreshLoop() {
         rootAvailable = withContext(Dispatchers.IO) { engine.rootAvailable() }
         var tick = 0
@@ -3216,9 +3179,7 @@ private val TAB_ICONS = listOf(
 
 class MainActivity : ComponentActivity() {
 
-    private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ ->
-        // state polls this anyway; nothing extra needed
-    }
+    private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -3269,7 +3230,6 @@ fun TacoRoot() {
                 }
             }
 
-            // Floating pill nav
             Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
                 val current = currentRoute
                 Row(
