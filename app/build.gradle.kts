@@ -13,21 +13,6 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "2.0"
-
-        // Added NDK/CMake configuration defaults
-        externalNativeBuild {
-            cmake {
-                cppFlags("")
-            }
-        }
-    }
-
-    // Added CMake external native build hook pointing to your repository's cpp folder
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
     }
 
     buildFeatures { 
