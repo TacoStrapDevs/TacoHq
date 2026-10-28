@@ -95,7 +95,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -137,6 +136,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -168,8 +168,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -178,13 +176,14 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /* ======================================================================
- *  1. ENGINE: JSON & SHIZUKU FILE INJECTION
+ *  1. ENGINE: JSON helpers + multi-path deployment
  * ====================================================================== */
 
-const val APP_VERSION = "6.1"
+const val APP_VERSION = "5.8"
 const val DEFAULT_PKG = "com.roblox.client"
-const val DEFAULT_PATH = "/sdcard/Android/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
+const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
+const val EXE_PATH = "/data/data/com.roblox.client/files/exe/ClientSettings/ClientAppSettings.json"
 
 fun parseFlags(text: String): Map<String, String> {
     val o = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
@@ -252,8 +251,6 @@ fun fetchText(url: String): Pair<Boolean, String> = try {
 interface Bootstrapper {
     fun shizukuState(): ShizukuState
     suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String
-    suspend fun applyCustomFont(fontPath: String?, pkg: String, root: Boolean): Pair<Boolean, String>
-    suspend fun restoreDefaultFont(pkg: String, root: Boolean): Pair<Boolean, String>
     suspend fun verify(json: String, path: String, root: Boolean): String
     suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean): String
     suspend fun launchGame(pkg: String, id: String, root: Boolean, restart: Boolean): String
@@ -275,8 +272,7 @@ object DefaultBootstrapper : Bootstrapper {
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
-            val targetPath = "/sdcard/Android/data/$pkg/files/ClientSettings/ClientAppSettings.json"
-            val paths = listOf(path, targetPath, ALT_PATH).distinct()
+            val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
             var success = false
             var lastOut = ""
 
@@ -293,36 +289,6 @@ object DefaultBootstrapper : Bootstrapper {
             "Applied ${parseFlags(json).size} flags successfully"
         }
 
-    override suspend fun applyCustomFont(fontPath: String?, pkg: String, root: Boolean): Pair<Boolean, String> =
-        withContext(Dispatchers.IO) {
-            if (fontPath.isNullOrEmpty()) return@withContext true to "No font set."
-            val srcFile = File(fontPath)
-            if (!srcFile.exists()) return@withContext false to "Font file missing."
-
-            val fontDir = "/sdcard/Android/data/$pkg/files/content/fonts"
-            val targets = listOf("Gotham-Bold.ttf", "BuilderSans-Regular.ttf", "CustomFont.ttf")
-            var okAll = true
-            var err = ""
-
-            val mk = runCmd("mkdir -p ${shq(fontDir)}", root)
-            if (!mk.first) return@withContext false to "Failed creating font directory: ${mk.second}"
-
-            for (t in targets) {
-                val dest = "$fontDir/$t"
-                val cmd = "cp ${shq(srcFile.absolutePath)} ${shq(dest)} && chmod 644 ${shq(dest)}"
-                val (ok, out) = runCmd(cmd, root)
-                if (!ok) { okAll = false; err = out }
-            }
-            if (okAll) true to "Custom font injected." else false to "Font injection failed: $err"
-        }
-
-    override suspend fun restoreDefaultFont(pkg: String, root: Boolean): Pair<Boolean, String> =
-        withContext(Dispatchers.IO) {
-            val fontDir = "/sdcard/Android/data/$pkg/files/content/fonts"
-            val (ok, out) = runCmd("rm -rf ${shq(fontDir)}", root)
-            if (ok) true to "Default fonts restored." else false to "Restore failed: $out"
-        }
-
     override suspend fun verify(json: String, path: String, root: Boolean): String =
         withContext(Dispatchers.IO) {
             val (ok, out) = runCmd("cat ${shq(path)}", root)
@@ -331,7 +297,7 @@ object DefaultBootstrapper : Bootstrapper {
                 ?: return@withContext "Verify failed: file is not valid JSON"
             val want = parseFlags(json)
             val bad = want.count { onDisk[it.key] != it.value }
-            if (bad == 0) "Verified: ${want.size} flags match." else "Verify failed: $bad flags differ on disk"
+            if (bad == 0) "Verified: ${want.size} flags on disk match." else "Verify failed: $bad flags differ on disk"
         }
 
     override suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean): String =
@@ -370,22 +336,18 @@ interface AllowlistProvider {
 }
 
 object DefaultAllowlist : AllowlistProvider {
-    private val ignoredKeys = setOf(
-        "FFlagHandleAltEnterFullscreen",
-        "DFIntClientPhysicsPostStepMode"
-    )
-    override fun isAllowed(key: String): Boolean = key !in ignoredKeys
+    override fun isAllowed(key: String): Boolean = true
 }
 
 sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, val color: Color) {
     data object Connected : ShizukuState(true, "connected", "Connected", TacoPalette.Guac)
-    data object NeedsGrant : ShizukuState(false, "tap grant", "Permission needed", TacoPalette.Tortilla)
+    data object NeedsGrant : ShizukuState(false, "tap to grant", "Permission needed", TacoPalette.Tortilla)
     data object NotRunning : ShizukuState(false, "not running", "Not running", TacoPalette.Salsa)
     data object Unavailable : ShizukuState(false, "unavailable", "Unavailable", TacoPalette.Salsa)
 }
 
 /* ======================================================================
- *  2. THEME & PALETTE
+ *  2. THEME & ADVANCED MILLION-DOLLAR PALETTE
  * ====================================================================== */
 
 object TacoPalette {
@@ -422,7 +384,7 @@ object TacoType {
     fun getDisplayFamily(): FontFamily = LocalCustomFont.current
 
     val displayBig @Composable get() = TextStyle(
-        fontFamily = getDisplayFamily(), fontWeight = FontWeight.ExtraBold, fontSize = 32.sp,
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.ExtraBold, fontSize = 34.sp,
         letterSpacing = (-0.8).sp, color = TacoPalette.Cream
     )
     val display @Composable get() = TextStyle(
@@ -527,7 +489,7 @@ fun Modifier.tacoGrain(): Modifier = this.drawBehind {
 }
 
 /* ======================================================================
- *  3. UI COMPONENTS & ICONS
+ *  3. COMPONENTS & MILLION-DOLLAR UI ELEMENTS
  * ====================================================================== */
 
 enum class StepStatus { Pending, Running, Done, Failed, Skipped }
@@ -564,7 +526,7 @@ fun hapticTick(context: Context) {
 
 enum class TacoIcon {
     Home, Layers, Flag, Gamepad, Sliders, Play, Check, Close, Plus, Search, Copy, Trash,
-    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image, Font
+    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image
 }
 
 private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
@@ -622,9 +584,12 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 2f) 
             TacoIcon.Trash -> {
                 pl(tint, st, s, 5f, 7f, 19f, 7f); pl(tint, st, s, 10f, 7f, 10f, 4.5f, 14f, 4.5f, 14f, 7f)
                 pl(tint, st, s, 7f, 7f, 7.5f, 20f, 16.5f, 20f, 17f, 7f)
+                pl(tint, st, s, 10.5f, 10.5f, 10.5f, 16.5f); pl(tint, st, s, 13.5f, 10.5f, 13.5f, 16.5f)
             }
             TacoIcon.Grip -> repeat(3) { r ->
-                repeat(2) { c2 -> drawCircle(tint, 1.4f * s, Offset((9f + c2 * 6f) * s, (8f + r * 4f) * s)) }
+                repeat(2) { c2 ->
+                    drawCircle(tint, 1.4f * s, Offset((9f + c2 * 6f) * s, (8f + r * 4f) * s))
+                }
             }
             TacoIcon.Globe -> {
                 drawCircle(tint, 9f * s, Offset(12f * s, 12f * s), style = st)
@@ -668,10 +633,6 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 2f) 
                 drawRoundRect(tint, Offset(3f * s, 5f * s), Size(18f * s, 14f * s), CornerRadius(2f * s), style = st)
                 drawCircle(tint, 2.5f * s, Offset(8f * s, 10f * s))
                 pl(tint, st, s, 3f, 16f, 9f, 11f, 14f, 15f, 18f, 12f, 21f, 15f)
-            }
-            TacoIcon.Font -> {
-                pl(tint, st, s, 4f, 20f, 12f, 4f, 20f, 20f)
-                pl(tint, st, s, 7f, 14f, 17f, 14f)
             }
         }
     }
@@ -764,7 +725,7 @@ fun TacoButton(
             .clip(CircleShape).background(look.first)
             .then(if (look.third != null) Modifier.border(1.dp, look.third!!, CircleShape) else Modifier)
             .clickable(interactionSource = src, indication = null, onClick = onClick)
-            .padding(horizontal = if (text.isEmpty()) 0.dp else 16.dp),
+            .padding(horizontal = if (text.isEmpty()) 0.dp else 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
@@ -803,10 +764,9 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
         )
         Text(
             text,
-            Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-            fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-            color = if (selected) accent.onPrimary else TacoPalette.Muted,
-            maxLines = 1
+            Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+            fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            color = if (selected) accent.onPrimary else TacoPalette.Muted
         )
     }
 }
@@ -814,15 +774,9 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 fun AllowlistBadge(allowed: Boolean?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (allowed != false) {
-            TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
-            Spacer(Modifier.width(4.dp))
-            Text("allowed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
-        } else {
-            TacoIcon(TacoIcon.Warn, TacoPalette.Salsa, 13.dp, 2.6f)
-            Spacer(Modifier.width(4.dp))
-            Text("ignored by roblox", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Salsa)
-        }
+        TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
+        Spacer(Modifier.width(4.dp))
+        Text("allowed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
     }
 }
 
@@ -849,11 +803,11 @@ fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control)
 @Composable
 fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable () -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 28.dp),
+        Modifier.fillMaxWidth().padding(vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        IconCircle(icon, LocalTacoAccent.current.neon, 54.dp)
-        Spacer(Modifier.height(12.dp))
+        IconCircle(icon, LocalTacoAccent.current.neon, 58.dp)
+        Spacer(Modifier.height(14.dp))
         Text(title, style = TacoType.display, fontSize = 18.sp)
         Spacer(Modifier.height(6.dp))
         Text(
@@ -861,7 +815,7 @@ fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable 
             textAlign = TextAlign.Center, lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 32.dp)
         )
-        if (action != null) { Spacer(Modifier.height(14.dp)); action() }
+        if (action != null) { Spacer(Modifier.height(16.dp)); action() }
     }
 }
 
@@ -894,37 +848,34 @@ fun Appear(index: Int, content: @Composable () -> Unit) {
 data class LedStatus(val label: String, val value: String, val color: Color, val optional: Boolean = false)
 
 @Composable
-fun StatusChipsRow(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun StatusStrip(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .hScroll()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier.fillMaxWidth()
+            .clip(CircleShape)
+            .background(TacoPalette.SurfaceHigh.copy(alpha = 0.75f))
+            .border(1.dp, TacoPalette.Outline.copy(alpha = 0.5f), CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        statuses.forEach { s ->
-            Surface(
-                color = s.color.copy(alpha = 0.18f),
-                contentColor = s.color,
-                shape = CircleShape,
-                modifier = Modifier
-                    .border(1.dp, s.color.copy(alpha = 0.4f), CircleShape)
-                    .clickable(onClick = onClick)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(s.color))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "${s.label}: ${s.value}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                }
+        statuses.forEachIndexed { i, s ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(8.dp).clip(CircleShape)
+                        .background(if (s.optional && s.color == TacoPalette.Faint) Color.Transparent else s.color)
+                        .border(1.dp, s.color, CircleShape)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(s.label, style = TacoType.label)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    s.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (s.optional) TacoPalette.Muted else TacoPalette.Cream
+                )
+            }
+            if (i < statuses.lastIndex) {
+                Text("·", color = TacoPalette.Faint, modifier = Modifier.padding(horizontal = 6.dp))
             }
         }
     }
@@ -986,10 +937,10 @@ fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Mo
     Column(modifier) {
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth()) { page ->
             val isSel = page == pagerState.currentPage
-            Box(Modifier.fillMaxWidth().height(42.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
                 Text(
                     modes[page],
-                    fontSize = if (isSel) 17.sp else 14.sp,
+                    fontSize = if (isSel) 19.sp else 15.sp,
                     fontWeight = if (isSel) FontWeight.ExtraBold else FontWeight.Medium,
                     color = if (isSel) TacoPalette.Cream else TacoPalette.Muted,
                     letterSpacing = if (isSel) (-0.3).sp else 0.sp
@@ -1070,19 +1021,19 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
     Row(Modifier.fillMaxWidth()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             when (step.status) {
-                StepStatus.Done -> IconCircle(TacoIcon.Check, TacoPalette.Guac, 24.dp)
-                StepStatus.Failed -> IconCircle(TacoIcon.Close, TacoPalette.Salsa, 24.dp)
-                StepStatus.Skipped -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 24.dp)
+                StepStatus.Done -> IconCircle(TacoIcon.Check, TacoPalette.Guac, 26.dp)
+                StepStatus.Failed -> IconCircle(TacoIcon.Close, TacoPalette.Salsa, 26.dp)
+                StepStatus.Skipped -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 26.dp)
                 StepStatus.Running -> {
                     val t = rememberInfiniteTransition(label = "run")
                     val a by t.animateFloat(0.4f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "ra")
-                    IconCircle(TacoIcon.Dot, accent.neon.copy(alpha = if (LocalReduceMotion.current) 1f else a), 24.dp)
+                    IconCircle(TacoIcon.Dot, accent.neon.copy(alpha = if (LocalReduceMotion.current) 1f else a), 26.dp)
                 }
-                StepStatus.Pending -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 24.dp)
+                StepStatus.Pending -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 26.dp)
             }
             if (!isLast) {
                 Box(
-                    Modifier.width(2.dp).height(24.dp)
+                    Modifier.width(2.dp).height(28.dp)
                         .background(
                             if (step.status == StepStatus.Done) TacoPalette.Guac.copy(0.6f)
                             else TacoPalette.Outline
@@ -1090,11 +1041,11 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
                 )
             }
         }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.padding(bottom = if (isLast) 0.dp else 12.dp)) {
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.padding(bottom = if (isLast) 0.dp else 14.dp)) {
             Text(
                 step.title,
-                fontSize = 14.sp,
+                fontSize = 15.sp,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                 color = when (step.status) {
                     StepStatus.Done -> TacoPalette.Cream
@@ -1119,7 +1070,7 @@ fun OrderTicket(modifier: Modifier = Modifier, cardCorner: Int = 20, glassOpacit
             Modifier.fillMaxWidth().clip(shape)
                 .background(cs.surfaceVariant.copy(alpha = glassOpacity))
                 .border(1.dp, cs.outlineVariant.copy(alpha = 0.8f), shape)
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+                .padding(horizontal = 22.dp, vertical = 20.dp),
             content = content
         )
         TicketEdge(top = true, pageBg = cs.background)
@@ -1135,14 +1086,14 @@ private fun BoxScope.TicketEdge(top: Boolean, pageBg: Color) {
             .padding(horizontal = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        repeat(16) { Box(Modifier.size(8.dp).clip(CircleShape).background(pageBg)) }
+        repeat(16) { Box(Modifier.size(9.dp).clip(CircleShape).background(pageBg)) }
     }
 }
 
 @Composable
 fun DashedDivider() {
     val c = MaterialTheme.colorScheme.outlineVariant
-    Canvas(Modifier.fillMaxWidth().height(18.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(22.dp)) {
         drawLine(
             c, Offset(0f, size.height / 2), Offset(size.width, size.height / 2),
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))
@@ -1161,10 +1112,10 @@ fun TicketLine(
     Row(
         Modifier.fillMaxWidth()
             .then(if (onClick != null) Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick) else Modifier)
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label.uppercase(), style = TacoType.label, modifier = Modifier.width(90.dp))
+        Text(label.uppercase(), style = TacoType.label, modifier = Modifier.width(96.dp))
         Column(Modifier.weight(1f)) {
             Text(value, style = TacoType.mono.copy(fontSize = 13.sp, color = valueColor), lineHeight = 18.sp)
             if (sub != null) Text(sub, fontSize = 11.sp, color = TacoPalette.Muted)
@@ -1216,7 +1167,7 @@ internal fun tacoFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 /* ======================================================================
- *  4. HOME SCREEN & REFINED HOLD-TO-INJECT COMAL DIAL
+ *  4. HOME
  * ====================================================================== */
 
 fun heatLevel(flagCount: Int): Int = when {
@@ -1273,13 +1224,12 @@ fun ComalDial(
 
     var pressed by remember { mutableStateOf(false) }
     val hold = remember { Animatable(0f) }
-    
     LaunchedEffect(pressed, enabled, idle) {
         if (pressed && enabled && idle) {
-            val res = hold.animateTo(1f, tween(700, easing = LinearEasing))
+            val res = hold.animateTo(1f, tween(800, easing = LinearEasing))
             if (res.endReason == AnimationEndReason.Finished) trigger()
         } else {
-            hold.animateTo(0f, if (reduce) tween(0) else spring(dampingRatio = 0.65f))
+            hold.animateTo(0f, if (reduce) tween(0) else spring(dampingRatio = 0.7f))
         }
     }
 
@@ -1306,6 +1256,14 @@ fun ComalDial(
         is LaunchState.Failed -> TacoPalette.Salsa
         else -> accent.neon
     }
+    val glowPaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            maskFilter = android.graphics.BlurMaskFilter(28f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+    }
 
     Box(
         modifier
@@ -1331,6 +1289,14 @@ fun ComalDial(
                     val sw = sweeps[i].value
                     if (sw > 1f) {
                         drawArc(HEAT_COLORS[i], start, sw, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
+                        drawIntoCanvas { c ->
+                            glowPaint.color = HEAT_COLORS[i].copy(alpha = 0.55f).toArgb()
+                            glowPaint.strokeWidth = strokeW
+                            c.nativeCanvas.drawArc(
+                                android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom),
+                                start, sw, false, glowPaint
+                            )
+                        }
                     }
                 }
             } else {
@@ -1352,39 +1318,42 @@ fun ComalDial(
                 ),
                 radius = r
             )
-            drawCircle(accent.neon.copy(alpha = if (running || pressed) 0.7f else 0.3f), radius = r, style = Stroke(2.dp.toPx()))
+            drawCircle(accent.neon.copy(alpha = if (running || pressed) 0.6f else 0.28f), radius = r, style = Stroke(1.8.dp.toPx()))
+            for (i in 1..3) {
+                drawCircle(TacoPalette.Cream.copy(alpha = 0.035f), radius = r * i / 3.2f, style = Stroke(1.dp.toPx()))
+            }
         }
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             when (launch) {
                 is LaunchState.Running -> {
                     val step = launch.steps.getOrNull(launch.stepIndex)
-                    Text(step?.title ?: "Injecting…", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = accent.neon)
+                    Text(step?.title ?: "Working…", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = accent.neon)
                     Spacer(Modifier.height(4.dp))
-                    CountUpText((progress * 100).toInt(), TacoType.tnum.copy(fontSize = 28.sp), TacoPalette.Cream)
-                    Text("INJECTING", style = TacoType.label)
+                    CountUpText((progress * 100).toInt(), TacoType.tnum.copy(fontSize = 32.sp), TacoPalette.Cream)
+                    Text("PERCENT", style = TacoType.label)
                 }
                 is LaunchState.Success -> {
-                    TacoIcon(TacoIcon.Check, TacoPalette.Guac, 42.dp, 2.5f)
-                    Spacer(Modifier.height(4.dp))
-                    Text("SERVED", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Guac)
+                    TacoIcon(TacoIcon.Check, TacoPalette.Guac, 46.dp, 2.5f)
+                    Spacer(Modifier.height(6.dp))
+                    Text("SERVED", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Guac)
                 }
                 is LaunchState.Failed -> {
-                    TacoIcon(TacoIcon.Warn, TacoPalette.Salsa, 40.dp, 2.3f)
-                    Spacer(Modifier.height(4.dp))
-                    Text("BURNED", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Salsa)
+                    TacoIcon(TacoIcon.Warn, TacoPalette.Salsa, 42.dp, 2.3f)
+                    Spacer(Modifier.height(6.dp))
+                    Text("BURNED", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Salsa)
                 }
                 LaunchState.Idle -> {
-                    TacoIcon(TacoIcon.Bolt, accent.neon, 38.dp, 2.3f)
-                    Spacer(Modifier.height(4.dp))
+                    TacoIcon(TacoIcon.Play, accent.neon, 42.dp, 2.3f)
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        if (enabled) "HOLD TO INJECT" else "SHIZUKU REQUIRED",
-                        fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
+                        if (enabled) "HOLD TO LAUNCH" else "SHIZUKU REQUIRED",
+                        fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
                         color = if (enabled) TacoPalette.Cream else TacoPalette.Salsa,
-                        letterSpacing = 1.2.sp
+                        letterSpacing = 1.6.sp
                     )
                     Spacer(Modifier.height(2.dp))
-                    Text(heatName(heat), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = HEAT_COLORS[heat.coerceIn(0, 3)])
+                    Text(heatName(heat), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = HEAT_COLORS[heat.coerceIn(0, 3)])
                 }
             }
         }
@@ -1412,9 +1381,9 @@ fun MenuCarousel(
 ) {
     val accent = LocalTacoAccent.current
     LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        items(games, key = { pair -> pair.second }) { (name, id) ->
+        items(games, key = { it.second }) { (name, id) ->
             Column(
-                Modifier.width(150.dp)
+                Modifier.width(156.dp)
                     .clip(TacoShapes.menuCard)
                     .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
                     .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
@@ -1423,31 +1392,31 @@ fun MenuCarousel(
                         onLongClick = { onLongLaunch(id) },
                         onLongClickLabel = "Launch $name"
                     )
-                    .padding(14.dp)
+                    .padding(16.dp)
             ) {
                 Box(
-                    Modifier.size(34.dp).clip(CircleShape)
+                    Modifier.size(36.dp).clip(CircleShape)
                         .background(Brush.horizontalGradient(listOf(accent.neon, accent.deep))),
                     contentAlignment = Alignment.Center
-                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 14.dp, 2.5f) }
-                Spacer(Modifier.height(14.dp))
-                Text(name, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = TacoPalette.Cream)
+                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.5f) }
+                Spacer(Modifier.height(16.dp))
+                Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = TacoPalette.Cream)
                 Spacer(Modifier.height(2.dp))
                 Text("#$id", style = TacoType.tnum.copy(fontSize = 12.sp), color = TacoPalette.Muted)
             }
         }
         item {
             Column(
-                Modifier.width(120.dp).height(112.dp)
+                Modifier.width(124.dp).height(118.dp)
                     .clip(TacoShapes.menuCard)
                     .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
                     .clickable(onClick = onAddGame),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                TacoIcon(TacoIcon.Plus, TacoPalette.Muted, 22.dp)
-                Spacer(Modifier.height(4.dp))
-                Text("Add game", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Muted)
+                TacoIcon(TacoIcon.Plus, TacoPalette.Muted, 24.dp)
+                Spacer(Modifier.height(6.dp))
+                Text("Add a game", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Muted)
             }
         }
     }
@@ -1480,6 +1449,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
     var showStatusSheet by remember { mutableStateOf(false) }
     var showTargetDialog by remember { mutableStateOf(false) }
     var showAllowlistDialog by remember { mutableStateOf(false) }
+    var showChannelDialog by remember { mutableStateOf(false) }
 
     val merged = state.mergedFlags()
     val allowed = merged.keys.count { state.isAllowed(it) }
@@ -1487,14 +1457,14 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp).padding(bottom = 16.dp)
+            .padding(horizontal = 18.dp).padding(bottom = 18.dp)
     ) {
         Appear(0) {
-            StatusChipsRow(
+            StatusStrip(
                 statuses = listOf(
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
-                    LedStatus("Root", if (state.rootAvailable == true) "ok" else "opt", TacoPalette.Muted, optional = true),
-                    LedStatus("Roblox", state.robloxVersion ?: "installed", if (state.robloxVersion == null) TacoPalette.Tortilla else TacoPalette.Guac)
+                    LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
+                    LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac)
                 ),
                 onClick = { showStatusSheet = true }
             )
@@ -1504,7 +1474,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 
         Appear(1) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Box(Modifier.fillMaxWidth(0.75f)) {
+                Box(Modifier.fillMaxWidth(0.8f)) {
                     ComalDial(
                         heat = heat,
                         launch = state.launchState,
@@ -1524,13 +1494,13 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 ModeSelector(
                     selected = state.mode.ordinal,
                     onSelect = { state.mode = LaunchMode.entries[it] },
-                    modifier = Modifier.fillMaxWidth(0.85f)
+                    modifier = Modifier.fillMaxWidth(0.8f)
                 )
             }
         }
 
         if (state.launchState !is LaunchState.Idle) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(18.dp))
             Appear(2) {
                 PipelineTimeline(
                     launch = state.launchState,
@@ -1540,51 +1510,62 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(20.dp))
 
         Appear(3) {
             OrderTicket(cardCorner = state.cardCornerRadius, glassOpacity = state.glassOpacity) {
-                Text("THE ORDER (Injection Status)", style = TacoType.label, color = accent.neon)
-                Spacer(Modifier.height(4.dp))
+                Text("THE ORDER", style = TacoType.label, color = accent.neon)
+                Spacer(Modifier.height(6.dp))
                 DashedDivider()
-                TicketLine("Active Profile", state.activeLayerName(), onClick = { onNavigate("profiles") })
-                TicketLine("Flags Injected", "${merged.size} flags", onClick = { onNavigate("flags") })
-                TicketLine("Active Font", state.activeCustomFontName ?: "Default Roblox Font", onClick = { onNavigate("fonts") })
+                TicketLine(
+                    "Roblox",
+                    value = state.robloxVersion ?: "detecting…",
+                    sub = "tap to copy",
+                    onClick = {
+                        state.robloxVersion?.let {
+                            state.copyText("Roblox version", it)
+                            state.notify("Version copied.")
+                        }
+                    }
+                )
+                TicketLine("Channel", state.channel, onClick = { showChannelDialog = true })
+                TicketLine("Profile", state.activeLayerName(), onClick = { onNavigate("profiles") }, sub = "tap to quick-switch")
+                TicketLine("Flags", "${merged.size} active", onClick = { onNavigate("flags") })
                 TicketLine(
                     "Allowlist",
-                    "$allowed / ${merged.size} allowed",
+                    "$allowed of ${merged.size} allowed",
                     valueColor = TacoPalette.Guac,
                     onClick = { showAllowlistDialog = true }
                 )
                 TicketLine("Target", state.targetLabel(), onClick = { showTargetDialog = true })
                 DashedDivider()
-                Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("tacostrap v$APP_VERSION", style = TacoType.label)
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("tacostrap · hold-to-launch armed", style = TacoType.label)
                     if (state.launchState is LaunchState.Success) {
-                        Text("INJECTED ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Guac)
+                        Text("SERVED ✓", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Guac)
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(22.dp))
 
         Appear(4) {
             Column {
-                SectionLabel("The Menu")
-                Spacer(Modifier.height(8.dp))
+                SectionLabel("The menu")
+                Spacer(Modifier.height(10.dp))
                 if (state.games.isEmpty()) {
                     Column(
                         Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
                             .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
-                            .padding(18.dp),
+                            .padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TacoIcon(TacoIcon.Gamepad, TacoPalette.Faint, 24.dp)
-                        Spacer(Modifier.height(6.dp))
-                        Text("No pinned games", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Muted)
+                        TacoIcon(TacoIcon.Gamepad, TacoPalette.Faint, 28.dp)
                         Spacer(Modifier.height(8.dp))
-                        TacoButton("Pin Game", { onNavigate("games") }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 36.dp)
+                        Text("Nothing on the menu yet", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Muted)
+                        Spacer(Modifier.height(10.dp))
+                        TacoButton("Add a game", { onNavigate("games") }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 40.dp)
                     }
                 } else {
                     MenuCarousel(
@@ -1611,13 +1592,13 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             StatusSheetContent(
                 statuses = listOf(
                     Triple("Shizuku", state.shizuku.long, state.shizuku.color),
-                    Triple("Root", if (state.rootAvailable == true) "available (optional)" else "not found", TacoPalette.Muted),
-                    Triple("Roblox", state.robloxVersion ?: "installed", TacoPalette.Guac)
+                    Triple("Root", if (state.rootAvailable == true) "available (optional)" else "not found — optional", TacoPalette.Muted),
+                    Triple("Roblox", state.robloxVersion ?: "not detected", if (state.robloxVersion == null) TacoPalette.Salsa else TacoPalette.Guac)
                 ),
                 fixSteps = listOf(
-                    "Shizuku" to "1. Start Shizuku service.\n2. Tap Grant below.\n3. Verified binder connection.",
-                    "Root" to "Optional superuser access for direct file injection.",
-                    "Roblox" to "Configured target package: ${state.pkg}"
+                    "Shizuku" to "1. Start Shizuku (wireless debugging or root start).\n2. Tap Grant below.\n3. LED turns green.",
+                    "Root" to "Optional. Enable Magisk/SU, then turn on “Use root” in Settings. No root? Use Shizuku instead.",
+                    "Roblox" to "Confirm the package name in Settings if the version shows “not detected”."
                 ),
                 onGrantShizuku = { state.requestShizukuPermission() },
                 onOpenShizukuGuide = { showStatusSheet = false; onNavigate("settings") },
@@ -1629,8 +1610,8 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
     if (showTargetDialog) {
         val names = state.games.keys.sorted()
         SimplePickDialog(
-            title = "Launch Target",
-            options = listOf("Home (Roblox App)") + names,
+            title = "Launch target",
+            options = listOf("Home (Roblox app)") + names,
             onPick = { i ->
                 state.targetGame = if (i == 0) null else names[i - 1]
                 showTargetDialog = false
@@ -1638,10 +1619,18 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             onDismiss = { showTargetDialog = false }
         )
     }
+    if (showChannelDialog) {
+        SimplePickDialog(
+            title = "Roblox channel",
+            options = listOf("release", "beta"),
+            onPick = { state.channel = listOf("release", "beta")[it]; showChannelDialog = false },
+            onDismiss = { showChannelDialog = false }
+        )
+    }
     if (showAllowlistDialog) {
         AlertishDialog(
-            title = "Allowlist Status",
-            body = "${allowed} of ${merged.size} FastFlags are compatible with Roblox Android.",
+            title = "Allowlist check",
+            body = "All ${merged.size} active flags are allowed. No flags will be ignored by Roblox.",
             onDismiss = { showAllowlistDialog = false }
         )
     }
@@ -1655,6 +1644,7 @@ sealed class FS(val title: String, val sub: String) {
     class Toggle(title: String, sub: String, val sets: Map<String, String>) : FS(title, sub)
     class Choice(title: String, sub: String, val opts: List<Opt>) : FS(title, sub)
     class Num(title: String, sub: String, val key: String) : FS(title, sub)
+    class Range(title: String, sub: String, val a: String, val b: String, val da: String, val db: String) : FS(title, sub)
 }
 
 data class Opt(val label: String, val sets: Map<String, String>)
@@ -1663,44 +1653,72 @@ private fun texSet(n: String) = mapOf("DFFlagTextureQualityOverrideEnabled" to "
 
 private const val FPS_FLAG = "DFIntTaskSchedulerTargetFps"
 
-private val FS_TEXTURE = FS.Choice("Texture Quality", "Sharper textures use more RAM",
-    listOf(Opt("Auto", emptyMap()), Opt("Lowest", texSet("0")), Opt("Low", texSet("1")),
-        Opt("Med", texSet("2")), Opt("High", texSet("3"))))
-private val FS_AA = FS.Choice("Anti-Aliasing", "Smooths jagged edges",
-    listOf(Opt("Auto", emptyMap()), Opt("Off", mapOf("FIntDebugForceMSAASamples" to "1")),
+private val FS_TEXTURE = FS.Choice("Texture quality", "Sharper textures use more memory",
+    listOf(Opt("Automatic", emptyMap()), Opt("Lowest", texSet("0")), Opt("Low", texSet("1")),
+        Opt("Medium", texSet("2")), Opt("High", texSet("3"))))
+private val FS_AA = FS.Choice("Anti aliasing", "Smooths jagged edges. Costs frame rate",
+    listOf(Opt("Automatic", emptyMap()), Opt("Off", mapOf("FIntDebugForceMSAASamples" to "1")),
         Opt("2x", mapOf("FIntDebugForceMSAASamples" to "2")), Opt("4x", mapOf("FIntDebugForceMSAASamples" to "4")),
         Opt("8x", mapOf("FIntDebugForceMSAASamples" to "8"))))
-private val FS_RENDER = FS.Choice("Graphics Engine", "Renderer API",
-    listOf(Opt("Auto", emptyMap()), Opt("Vulkan", mapOf("FFlagDebugGraphicsPreferVulkan" to "True")),
+private val FS_RENDER = FS.Choice("Rendering mode", "Graphics engine Roblox uses",
+    listOf(Opt("Automatic", emptyMap()), Opt("Vulkan", mapOf("FFlagDebugGraphicsPreferVulkan" to "True")),
         Opt("OpenGL", mapOf("FFlagDebugGraphicsPreferOpenGL" to "True"))))
-private val FS_SHADOWS = FS.Toggle("Disable Shadows", "Turns off shadows for performance", mapOf("FIntRenderShadowIntensity" to "0"))
+private val FS_SKY = FS.Toggle("Gray sky", "Replaces the sky with plain gray", mapOf("FFlagDebugSkyGray" to "True"))
+private val FS_SHADOWS = FS.Toggle("Disable shadows", "Turns off Roblox shadows", mapOf("FIntRenderShadowIntensity" to "0"))
+private val FS_POSTFX = FS.Toggle("Disable post-processing", "Turns off bloom and color effects", mapOf("FFlagDisablePostFx" to "True"))
+private val FS_LOD = FS.Choice("Detail distance", "How far high detail models render",
+    listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
+        Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
-    sub = "Modifies physics sender rate and packet interval",
+    sub = "Adjusts physics sender rate and replication delay for desync effects",
     sets = mapOf(
         "DFIntPhysicsSenderMaxBandwidthBps" to "100000",
-        "DFIntS2PhysicsSenderRate" to "1",
         "DFIntPhysicsSenderRate" to "1",
-        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1",
-        "DFIntAnimationPacketDelayMs" to "250"
+        "DFIntDataSenderMaxBandwidthBps" to "100000",
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1"
     )
 )
 
-private val FS_FPS = FS.Choice("Frame Rate Limit", "Target FPS cap",
-    listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) })
-private val FS_FPSCOUNT = FS.Toggle("FPS Counter", "Display FPS in corner", mapOf("FFlagDebugDisplayFPS" to "True"))
+private val FS_DESYNC_LATENCY = FS.Toggle(
+    title = "Simulated Lag / Interpolation Desync",
+    sub = "Forces high network interpolation delay to desync client position",
+    sets = mapOf(
+        "DFIntClientPhysicsPostStepMode" to "1",
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "50"
+    )
+)
+
+private val FS_FPS = FS.Choice("Frame rate limit", "Above 60 also lifts the Android frame rate cap",
+    listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) })
+private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corner", mapOf("FFlagDebugDisplayFPS" to "True"))
+private val FS_PRELOAD = FS.Toggle("Faster loading", "Preloads more assets. Can use a lot of memory",
+    mapOf("DFIntNumAssetsMaxToPreload" to "2147483647", "DFIntAssetPreloading" to "2147483647"))
+private val FS_QUALITY = FS.Choice("Graphics quality override", "Locks the Roblox graphics level",
+    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) })
+private val FS_GRASSMOVE = FS.Choice("Grass movement", "How much grass sways",
+    listOf(Opt("Default", emptyMap()), Opt("None", mapOf("FIntGrassMovementReducedMotionFactor" to "0"))))
+private val FS_NOGRASS = FS.Toggle("Remove grass", "Hides built-in terrain grass",
+    mapOf("FIntFRMMinGrassDistance" to "0", "FIntFRMMaxGrassDistance" to "0"))
+private val FS_GRASSDIST = FS.Range("Grass distance", "Set both to 0 to hide grass",
+    "FIntFRMMinGrassDistance", "FIntFRMMaxGrassDistance", "100", "290")
+private val FS_BLUR = FS.Toggle("Remove blur", "No blur behind Roblox menus", mapOf("FIntRobloxGuiBlurIntensity" to "0"))
+private val FS_MTU = FS.Num("MTU size", "Bytes per network packet", "DFIntConnectionMTUSize")
 
 val SECTIONS: List<Pair<String, List<FS>>> = listOf(
-    "Graphics" to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SHADOWS),
-    "Performance" to listOf(FS_FPS, FS_FPSCOUNT),
-    "Desync & Network" to listOf(FS_DESYNC)
+    "Graphics" to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SKY, FS_SHADOWS, FS_POSTFX, FS_LOD),
+    "Performance" to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
+    "Desync & Network" to listOf(FS_DESYNC, FS_DESYNC_LATENCY, FS_MTU),
+    "World detail" to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
+    "Interface" to listOf(FS_BLUR)
 )
 
 internal fun fsKeys(fs: FS): Set<String> = when (fs) {
     is FS.Toggle -> fs.sets.keys
     is FS.Choice -> fs.opts.flatMap { it.sets.keys }.toSet()
     is FS.Num -> setOf(fs.key)
+    is FS.Range -> setOf(fs.a, fs.b)
 }
 
 private fun FS.matches(q: String): Boolean =
@@ -1713,6 +1731,10 @@ fun FlagsScreen(state: TacoState) {
     var category by remember { mutableStateOf("All") }
     var editorKey by remember { mutableStateOf<String?>(null) }
     var jsonSheet by remember { mutableStateOf(false) }
+    var urlDialog by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(300); loaded = true }
 
     val draft = state.draftFlags
     val categories = listOf("All") + SECTIONS.map { it.first } + "Custom"
@@ -1726,43 +1748,57 @@ fun FlagsScreen(state: TacoState) {
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 20.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         stickyHeader {
             Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
-                if (pending > 0) {
-                    Row(
-                        Modifier.fillMaxWidth().clip(TacoShapes.control)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .border(1.dp, accent.neon.copy(0.5f), TacoShapes.control)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CountUpText(pending, TacoType.tnum.copy(fontSize = 15.sp), accent.neon)
-                        Spacer(Modifier.width(8.dp))
-                        Text("pending changes", fontSize = 12.sp, color = TacoPalette.Muted, modifier = Modifier.weight(1f))
-                        TacoButton("Discard", { state.discardDraft() }, kind = ButtonKind.Quiet, height = 32.dp)
-                        Spacer(Modifier.width(6.dp))
-                        TacoButton("Apply", { state.applyDraft() }, kind = ButtonKind.Primary, icon = TacoIcon.Bolt, height = 32.dp)
+                if (!loaded) {
+                    ShimmerBox(Modifier.fillMaxWidth().height(76.dp), RoundedCornerShape(18.dp))
+                } else {
+                    if (pending > 0) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(TacoShapes.control)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(1.dp, accent.neon.copy(0.5f), TacoShapes.control)
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CountUpText(pending, TacoType.tnum.copy(fontSize = 16.sp), accent.neon)
+                            Spacer(Modifier.width(8.dp))
+                            Text("pending changes", fontSize = 13.sp, color = TacoPalette.Muted, modifier = Modifier.weight(1f))
+                            TacoButton("Discard", { state.discardDraft() }, kind = ButtonKind.Quiet, height = 34.dp)
+                            Spacer(Modifier.width(6.dp))
+                            TacoButton("Apply", { state.applyDraft() }, kind = ButtonKind.Primary, icon = TacoIcon.Bolt, height = 34.dp)
+                        }
+                        Spacer(Modifier.height(10.dp))
                     }
+                    OutlinedTextField(
+                        value = search, onValueChange = { search = it },
+                        placeholder = { Text("Search ${draft.size} flags", color = TacoPalette.Faint) },
+                        singleLine = true,
+                        leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
+                            focusedBorderColor = accent.neon, unfocusedBorderColor = TacoPalette.Outline,
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        shape = TacoShapes.control,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categories.forEach { c -> CategoryChip(c, category == c) { category = c } }
+                    }
+                    Spacer(Modifier.height(4.dp))
                 }
-                OutlinedTextField(
-                    value = search, onValueChange = { search = it },
-                    placeholder = { Text("Search ${draft.size} flags...", color = TacoPalette.Faint) },
-                    singleLine = true,
-                    leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
-                    colors = tacoFieldColors(),
-                    shape = TacoShapes.control,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    categories.forEach { c -> CategoryChip(c, category == c) { category = c } }
-                }
-                Spacer(Modifier.height(4.dp))
             }
+        }
+
+        if (!loaded) {
+            items(6) { ShimmerBox(Modifier.fillMaxWidth().height(56.dp)) }
+            return@LazyColumn
         }
 
         if (category == "All" || SECTIONS.any { it.first == category }) {
@@ -1771,26 +1807,32 @@ fun FlagsScreen(state: TacoState) {
                 val rows = list.filter { it.matches(search) }
                 if (rows.isNotEmpty()) {
                     item(key = "sec_$title") { SectionLabel(title) }
-                    items(rows, key = { fs -> "fs_${fs.title}" }) { fs -> FlagSettingRow(fs, draft, state) }
+                    items(rows, key = { "fs_${it.title}" }) { fs -> FlagSettingRow(fs, draft, state) }
                 }
             }
         }
 
         if (category == "All" || category == "Custom") {
-            item(key = "sec_custom") { SectionLabel("Custom Flags") }
+            item(key = "sec_custom") { SectionLabel("Custom flags") }
             if (customKeys.isEmpty()) {
                 item(key = "custom_empty") {
-                    EmptyState(TacoIcon.Flag, "No custom flags", "Tap Add to create a custom FastFlag.") {
-                        TacoButton("Add Flag", { editorKey = "" }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 38.dp)
+                    EmptyState(
+                        TacoIcon.Flag,
+                        if (search.isEmpty()) "No custom flags" else "No matches",
+                        if (search.isEmpty()) "Tap Add to create a raw FastFlag by name and value."
+                        else "Try a different search."
+                    ) {
+                        TacoButton("Add flag", { editorKey = "" }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 40.dp)
                     }
                 }
             }
-            items(customKeys, key = { key -> "c$key" }) { key ->
+            items(customKeys, key = { "c$it" }) { key ->
                 CustomFlagRow(
                     name = key, value = draft[key] ?: "",
                     allowed = state.isAllowed(key),
                     onEdit = { editorKey = key },
                     onToggle = { b -> draft[key] = if (b) "True" else "False" },
+                    onDuplicate = { state.duplicateDraftFlag(key) },
                     onDelete = { draft.remove(key); state.notify("Flag removed.", "flag") }
                 )
             }
@@ -1798,9 +1840,10 @@ fun FlagsScreen(state: TacoState) {
 
         item(key = "actions") {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TacoButton("Add", { editorKey = "" }, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Plus, 40.dp)
-                TacoButton("JSON", { jsonSheet = true }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Doc, 40.dp)
-                TacoButton("Clear All", { draft.clear(); state.notify("Flags cleared.", "flag") }, Modifier.weight(1f), ButtonKind.Danger, TacoIcon.Trash, 40.dp)
+                TacoButton("Add", { editorKey = "" }, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Plus, 42.dp)
+                TacoButton("JSON", { jsonSheet = true }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Doc, 42.dp)
+                TacoButton("URL", { urlDialog = true }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 42.dp)
+                TacoButton("Clear", { confirmClear = true }, Modifier.weight(1f), ButtonKind.Danger, TacoIcon.Trash, 42.dp)
             }
         }
     }
@@ -1814,30 +1857,44 @@ fun FlagsScreen(state: TacoState) {
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = TacoPalette.Cream
         ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                Text(if (isNew) "Add FastFlag" else "Edit FastFlag", style = TacoType.display)
-                Spacer(Modifier.height(12.dp))
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
+                Text(if (isNew) "Add a flag" else "Edit flag", style = TacoType.display)
+                Spacer(Modifier.height(6.dp))
+                if (!isNew) Row(verticalAlignment = Alignment.CenterVertically) {
+                    AllowlistBadge(state.isAllowed(key)); Spacer(Modifier.width(10.dp))
+                    Text(key, style = TacoType.mono.copy(fontSize = 12.sp), color = TacoPalette.Muted)
+                }
+                Spacer(Modifier.height(14.dp))
                 if (isNew) {
                     OutlinedTextField(
-                        name, { name = it.trim() }, label = { Text("Flag Name") }, singleLine = true,
-                        colors = tacoFieldColors(), shape = TacoShapes.control, modifier = Modifier.fillMaxWidth()
+                        name, { name = it.filter { c -> c.isLetterOrDigit() || c == '_' || c == '.' } },
+                        label = { Text("Flag name") }, singleLine = true,
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(10.dp))
                 }
                 OutlinedTextField(
                     value, { value = it }, label = { Text("Value") }, singleLine = true,
-                    colors = tacoFieldColors(), shape = TacoShapes.control, modifier = Modifier.fillMaxWidth()
+                    colors = tacoFieldColors(), shape = TacoShapes.control,
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (!isNew) {
+                        TacoButton("Delete", {
+                            draft.remove(key); state.notify("Flag removed.", "flag"); editorKey = null
+                        }, Modifier.weight(1f), ButtonKind.Danger, TacoIcon.Trash, 46.dp)
+                    }
                     TacoButton("Save", {
-                        if (name.isNotBlank()) {
-                            if (!isNew && name != key) draft.remove(key)
-                            draft[name] = value.trim()
+                        val n = name.trim()
+                        if (n.isNotEmpty()) {
+                            if (!isNew && n != key) draft.remove(key)
+                            draft[n] = value.trim()
                             state.notify("Flag saved.", "flag")
                         }
                         editorKey = null
-                    }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Check, 44.dp)
+                    }, Modifier.weight(2f), ButtonKind.Primary, TacoIcon.Check, 46.dp)
                 }
             }
         }
@@ -1845,30 +1902,78 @@ fun FlagsScreen(state: TacoState) {
 
     if (jsonSheet) {
         var text by remember { mutableStateOf(toJson(state.draftFlags, 2)) }
+        var msg by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { jsonSheet = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
-            title = { Text("JSON Import / Export", style = TacoType.display, fontSize = 18.sp) },
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Import / export JSON", style = TacoType.display, fontSize = 19.sp) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        text, { text = it }, minLines = 5, maxLines = 10,
+                        textStyle = TacoType.mono.copy(fontSize = 12.sp),
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (msg.isNotEmpty()) Text(msg, fontSize = 13.sp, color = accent.neon)
+                }
+            },
+            confirmButton = {
+                TacoButton("Replace flags", {
+                    msg = runCatching {
+                        val m = parseFlags(text)
+                        state.draftFlags.clear(); state.draftFlags.putAll(m)
+                        "Loaded ${m.size} flags."
+                    }.getOrElse { "Invalid JSON." }
+                }, kind = ButtonKind.Ghost, height = 40.dp)
+            },
+            dismissButton = {
+                Row {
+                    TacoButton("Copy", { state.copyText("flags", text); state.notify("Copied.") }, kind = ButtonKind.Quiet, icon = TacoIcon.Copy, height = 40.dp)
+                    Spacer(Modifier.width(6.dp))
+                    TacoButton("Close", { jsonSheet = false }, kind = ButtonKind.Quiet, height = 40.dp)
+                }
+            }
+        )
+    }
+
+    if (urlDialog) {
+        var url by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { urlDialog = false },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Import from URL", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 OutlinedTextField(
-                    text, { text = it }, minLines = 6, maxLines = 10,
-                    textStyle = TacoType.mono.copy(fontSize = 12.sp),
-                    colors = tacoFieldColors(), shape = TacoShapes.control,
-                    modifier = Modifier.fillMaxWidth()
+                    url, { url = it }, label = { Text("https://…json") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    colors = tacoFieldColors(), shape = TacoShapes.control
                 )
             },
             confirmButton = {
-                TacoButton("Import JSON", {
-                    runCatching {
-                        val m = parseFlags(text)
-                        state.draftFlags.clear(); state.draftFlags.putAll(m)
-                        state.notify("Loaded ${m.size} flags.")
-                    }
-                    jsonSheet = false
-                }, kind = ButtonKind.Primary, height = 40.dp)
+                TacoButton("Import", {
+                    urlDialog = false
+                    if (url.isNotBlank()) state.importFromUrl(url.trim())
+                }, kind = ButtonKind.Primary, icon = TacoIcon.Down, height = 42.dp)
             },
-            dismissButton = { TacoButton("Close", { jsonSheet = false }, kind = ButtonKind.Quiet, height = 40.dp) }
+            dismissButton = { TacoButton("Cancel", { urlDialog = false }, kind = ButtonKind.Quiet, height = 42.dp) }
+        )
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Clear all flags?", style = TacoType.display, fontSize = 19.sp) },
+            text = { Text("Removes ${draft.size} flags. Saved layers are kept.", color = TacoPalette.Muted) },
+            confirmButton = {
+                TacoButton("Clear all", { draft.clear(); confirmClear = false; state.notify("All flags cleared.", "flag") },
+                    kind = ButtonKind.Danger, height = 42.dp)
+            },
+            dismissButton = { TacoButton("Cancel", { confirmClear = false }, kind = ButtonKind.Quiet, height = 42.dp) }
         )
     }
 }
@@ -1879,12 +1984,12 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
         Modifier.fillMaxWidth().clip(RoundedCornerShape(state.cardCornerRadius.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 18.dp, vertical = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(fs.title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                Text(fs.sub, fontSize = 11.sp, color = TacoPalette.Muted, lineHeight = 15.sp)
+                Text(fs.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                Text(fs.sub, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 16.sp)
             }
             if (fs is FS.Toggle) {
                 val on = fs.sets.all { (k, v) -> draft[k] == v }
@@ -1893,20 +1998,67 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
                 })
             }
         }
-        if (fs is FS.Choice) {
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.hScroll(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val managed = fs.opts.flatMap { it.sets.keys }.toSet()
-                val cur = fs.opts.indexOfFirst { o ->
-                    if (o.sets.isEmpty()) managed.none { draft.containsKey(it) }
-                    else o.sets.all { (k, v) -> draft[k] == v }
-                }
-                fs.opts.forEachIndexed { i, o ->
-                    CategoryChip(o.label, i == cur) {
-                        managed.forEach { draft.remove(it) }
-                        draft.putAll(o.sets)
+        when (fs) {
+            is FS.Choice -> {
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val managed = fs.opts.flatMap { it.sets.keys }.toSet()
+                    val cur = fs.opts.indexOfFirst { o ->
+                        if (o.sets.isEmpty()) managed.none { draft.containsKey(it) }
+                        else o.sets.all { (k, v) -> draft[k] == v }
+                    }
+                    fs.opts.forEachIndexed { i, o ->
+                        CategoryChip(o.label, i == cur) {
+                            managed.forEach { draft.remove(it) }
+                            draft.putAll(o.sets)
+                        }
                     }
                 }
+            }
+            is FS.Num -> {
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    draft[fs.key] ?: "", { t ->
+                        if (t.isBlank()) draft.remove(fs.key) else draft[fs.key] = t.trim()
+                    },
+                    placeholder = { Text("Off", color = TacoPalette.Faint) }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = tacoFieldColors(), shape = TacoShapes.control,
+                    modifier = Modifier.width(140.dp),
+                    textStyle = TacoType.tnum.copy(fontSize = 14.sp)
+                )
+            }
+            is FS.Range -> {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        draft[fs.a] ?: "", { t ->
+                            if (t.isBlank()) draft.remove(fs.a) else { draft[fs.a] = t.trim(); if (draft[fs.b] == null) draft[fs.b] = fs.db }
+                        },
+                        placeholder = { Text(fs.da, color = TacoPalette.Faint) }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.width(98.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
+                    )
+                    Text("  to  ", fontSize = 12.sp, color = TacoPalette.Muted)
+                    OutlinedTextField(
+                        draft[fs.b] ?: "", { t ->
+                            if (t.isBlank()) draft.remove(fs.b) else { draft[fs.b] = t.trim(); if (draft[fs.a] == null) draft[fs.a] = fs.da }
+                        },
+                        placeholder = { Text(fs.db, color = TacoPalette.Faint) }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.width(98.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
+                    )
+                }
+            }
+            is FS.Toggle -> {}
+        }
+        if (fs !is FS.Toggle) {
+            val keys = fsKeys(fs)
+            if (keys.size == 1) {
+                Spacer(Modifier.height(6.dp))
+                AllowlistBadge(state.isAllowed(keys.first()))
             }
         }
     }
@@ -1915,133 +2067,47 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
 @Composable
 private fun CustomFlagRow(
     name: String, value: String, allowed: Boolean?,
-    onEdit: () -> Unit, onToggle: (Boolean) -> Unit, onDelete: () -> Unit
+    onEdit: () -> Unit, onToggle: (Boolean) -> Unit, onDuplicate: () -> Unit, onDelete: () -> Unit
 ) {
     val accent = LocalTacoAccent.current
     val isBool = value.equals("true", true) || value.equals("false", true)
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
             .clickable(onClick = onEdit)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 18.dp, vertical = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(name, style = TacoType.mono.copy(fontSize = 12.sp), color = TacoPalette.Cream)
+                Text(name, style = TacoType.mono.copy(fontSize = 12.5f.sp), color = TacoPalette.Cream)
                 Spacer(Modifier.height(2.dp))
                 AllowlistBadge(allowed)
             }
             if (isBool) {
                 TacoSwitch(value.equals("true", true), onToggle)
             } else {
-                Text(value, style = TacoType.tnum.copy(fontSize = 13.sp), color = accent.neon, maxLines = 1)
+                Text(value, style = TacoType.tnum.copy(fontSize = 14.sp), color = accent.neon, maxLines = 1)
             }
+        }
+        if (!isBool) {
+            Spacer(Modifier.height(6.dp))
+            Text(value, style = TacoType.mono.copy(fontSize = 12.sp), color = TacoPalette.Muted, maxLines = 2)
+        }
+        Spacer(Modifier.height(6.dp))
+        Row {
+            Text("Edit", fontSize = 12.sp, color = accent.neon,
+                modifier = Modifier.clickable(onClick = onEdit).padding(end = 16.dp, top = 4.dp))
+            Text("Duplicate", fontSize = 12.sp, color = TacoPalette.Muted,
+                modifier = Modifier.clickable(onClick = onDuplicate).padding(end = 16.dp, top = 4.dp))
+            Text("Delete", fontSize = 12.sp, color = TacoPalette.Salsa,
+                modifier = Modifier.clickable(onClick = onDelete).padding(top = 4.dp))
         }
     }
 }
 
 /* ======================================================================
- *  6. CUSTOM FONT SCREEN (NEW TAB)
- * ====================================================================== */
-
-data class FontItem(val id: String, val name: String, val filePath: String)
-
-@Composable
-fun CustomFontScreen(state: TacoState) {
-    val context = LocalContext.current
-    val accent = LocalTacoAccent.current
-
-    val fontPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            val name = "font_${System.currentTimeMillis()}.ttf"
-            val file = File(context.filesDir, name)
-            runCatching {
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(file).use { output -> input.copyTo(output) }
-                }
-                if (file.length() in 1..(15 * 1024 * 1024)) {
-                    state.addCustomFont(FontItem(UUID.randomUUID().toString(), uri.lastPathSegment ?: name, file.absolutePath))
-                    state.notify("Font added successfully.")
-                } else {
-                    file.delete()
-                    state.notify("Failed: Font file invalid or exceeds 15MB.")
-                }
-            }.onFailure {
-                state.notify("Failed reading font file.")
-            }
-        }
-    }
-
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)
-    ) {
-        Text("Custom Font Library", style = TacoType.displayBig)
-        Text("Upload custom .ttf or .otf fonts to override Roblox typography rootless.", fontSize = 13.sp, color = TacoPalette.Muted)
-
-        Spacer(Modifier.height(14.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TacoButton("Upload Font", { fontPicker.launch("*/*") }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Font, 44.dp)
-            TacoButton("Restore Default", {
-                state.scope.launch {
-                    val (_, msg) = DefaultBootstrapper.restoreDefaultFont(state.pkg, state.useRoot)
-                    state.activeCustomFontPath = null
-                    state.persist()
-                    state.notify(msg)
-                }
-            }, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Refresh, 44.dp)
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        if (state.customFonts.isEmpty()) {
-            EmptyState(TacoIcon.Font, "No custom fonts uploaded", "Upload a .ttf/.otf file from your phone storage.")
-        } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(state.customFonts, key = { item -> item.id }) { item ->
-                    val isActive = state.activeCustomFontPath == item.filePath
-                    Column(
-                        Modifier.fillMaxWidth().clip(TacoShapes.card)
-                            .background(if (isActive) Color(0xFF2E2215) else MaterialTheme.colorScheme.surfaceVariant)
-                            .border(1.dp, if (isActive) accent.neon else TacoPalette.Outline, TacoShapes.card)
-                            .padding(14.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconCircle(TacoIcon.Font, if (isActive) accent.neon else TacoPalette.Muted, 36.dp)
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(item.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                                Text("Preview: The quick brown fox jumps over the lazy dog", fontSize = 12.sp, color = TacoPalette.Muted)
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (!isActive) {
-                                TacoButton("Use Font", {
-                                    state.activeCustomFontPath = item.filePath
-                                    state.persist()
-                                    state.notify("Active font updated.")
-                                }, Modifier.weight(1f), ButtonKind.Ghost, height = 36.dp)
-                            } else {
-                                TacoButton("Active", {}, Modifier.weight(1f), ButtonKind.Primary, icon = TacoIcon.Check, height = 36.dp)
-                            }
-                            TacoButton("Delete", {
-                                state.removeCustomFont(item)
-                                state.notify("Font removed.")
-                            }, Modifier.weight(1f), ButtonKind.Danger, icon = TacoIcon.Trash, height = 36.dp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/* ======================================================================
- *  7. PROFILES & SETTINGS
+ *  6. PROFILES SCREEN
  * ====================================================================== */
 
 class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Map<String, String> = emptyMap()) {
@@ -2050,97 +2116,748 @@ class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Ma
     val flags = mutableStateMapOf<String, String>().apply { putAll(flags) }
 }
 
+data class Pack(val name: String, val desc: String, val sets: Map<String, String>)
+
+val PACK_KEYS: Set<String> = setOf(
+    "DFFlagTextureQualityOverrideEnabled", "DFIntTextureQualityOverride",
+    "FIntDebugForceMSAASamples", "FIntRenderShadowIntensity", "FFlagDisablePostFx",
+    "FIntRomarkStartWithGraphicQualityLevel", "FIntFRMMinGrassDistance",
+    "FIntFRMMaxGrassDistance", "FIntRobloxGuiBlurIntensity", "FFlagDebugSkyGray",
+    "DFIntDebugFRMQualityLevelOverride", "FFlagDebugGraphicsPreferVulkan",
+    "FFlagDebugGraphicsPreferOpenGL", "DFIntTaskSchedulerTargetFps", "FFlagDebugDisplayFPS"
+)
+
+val PACKS = listOf(
+    Pack("Balanced", "Medium textures, 2x anti aliasing",
+        mapOf("DFFlagTextureQualityOverrideEnabled" to "True", "DFIntTextureQualityOverride" to "2",
+            "FIntDebugForceMSAASamples" to "2")),
+    Pack("Performance", "Lowest textures, quality 3, no shadows or post-processing",
+        mapOf("DFFlagTextureQualityOverrideEnabled" to "True", "DFIntTextureQualityOverride" to "0",
+            "FIntDebugForceMSAASamples" to "1", "FIntRenderShadowIntensity" to "0",
+            "FFlagDisablePostFx" to "True", "FIntRomarkStartWithGraphicQualityLevel" to "3")),
+    Pack("Quality", "Sharp textures, 4x anti aliasing",
+        mapOf("DFFlagTextureQualityOverrideEnabled" to "True", "DFIntTextureQualityOverride" to "3",
+            "FIntDebugForceMSAASamples" to "4")),
+    Pack("Potato", "For weak devices. No grass, shadows, blur; minimum everything",
+        mapOf("DFFlagTextureQualityOverrideEnabled" to "True", "DFIntTextureQualityOverride" to "0",
+            "FIntDebugForceMSAASamples" to "1", "FIntRenderShadowIntensity" to "0",
+            "FFlagDisablePostFx" to "True", "FIntFRMMinGrassDistance" to "0", "FIntFRMMaxGrassDistance" to "0",
+            "FIntRobloxGuiBlurIntensity" to "0", "FIntRomarkStartWithGraphicQualityLevel" to "1")),
+    Pack("Competitive", "240 FPS cap, no shadows, blur or grass, FPS counter",
+        mapOf("DFIntTaskSchedulerTargetFps" to "240", "FIntRenderShadowIntensity" to "0",
+            "FIntRobloxGuiBlurIntensity" to "0", "FIntFRMMinGrassDistance" to "0", "FIntFRMMaxGrassDistance" to "0",
+            "FFlagDebugDisplayFPS" to "True", "FIntDebugForceMSAASamples" to "1"))
+)
+
+private val LAYER_HEIGHT = 98.dp
+
 @Composable
 fun ProfilesScreen(state: TacoState) {
     val accent = LocalTacoAccent.current
-    var newName by remember { mutableStateOf("") }
+    var newLayerName by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<FlagLayer?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    val stepPx = with(LocalDensity.current) { (LAYER_HEIGHT + 10.dp).toPx() }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        Text("Profiles", style = TacoType.displayBig)
-        Spacer(Modifier.height(12.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                newName, { newName = it }, placeholder = { Text("Profile Name") },
-                singleLine = true, colors = tacoFieldColors(), shape = TacoShapes.control, modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.width(8.dp))
-            TacoButton("Create", {
-                if (newName.isNotBlank()) {
-                    state.saveLayerFromCurrent(newName.trim())
-                    newName = ""
-                }
-            }, kind = ButtonKind.Primary, icon = TacoIcon.Plus, height = 48.dp)
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Profiles", style = TacoType.displayBig)
+            Text("Stackable layers. Top layers win; reorder to change the blend.", fontSize = 13.sp, color = TacoPalette.Muted)
         }
 
-        Spacer(Modifier.height(14.dp))
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.layers, key = { layer -> layer.id }) { layer ->
-                Column(
-                    Modifier.fillMaxWidth().clip(TacoShapes.card)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .border(1.dp, if (layer.enabled) accent.neon else TacoPalette.Outline, TacoShapes.card)
-                        .padding(14.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(layer.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        TacoSwitch(layer.enabled, { state.setLayerEnabled(layer.id, it) }, enabled = layer.id != "base")
+        item { SectionLabel("Packs") }
+        items(PACKS.size, key = { "pack$it" }) { i ->
+            val p = PACKS[i]
+            Column(
+                Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.menuCard)
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconCircle(TacoIcon.Layers, accent.neon, 38.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(p.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                        Text(p.desc, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 16.sp)
                     }
+                    TacoButton("Apply", {
+                        state.applyPack(p)
+                        state.notify("Applied ${p.name} pack.", "flag")
+                    }, kind = ButtonKind.Ghost, height = 38.dp)
+                }
+            }
+        }
+
+        item { SectionLabel("Layers") }
+
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(state.cardCornerRadius.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
+                    .padding(16.dp)
+            ) {
+                Text("Save current flags as a layer", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        newLayerName, { newLayerName = it },
+                        placeholder = { Text("Layer name", color = TacoPalette.Faint) }, singleLine = true,
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    TacoButton("Save", {
+                        if (newLayerName.isNotBlank()) {
+                            state.saveLayerFromCurrent(newLayerName.trim())
+                            newLayerName = ""
+                            state.notify("Layer saved.", "flag")
+                        }
+                    }, kind = ButtonKind.Primary, icon = TacoIcon.Save, height = 48.dp)
+                }
+            }
+        }
+
+        if (state.layers.size <= 1) {
+            item {
+                EmptyState(TacoIcon.Layers, "No extra layers yet",
+                    "Save the current flags as a layer, or import a profile from the clipboard.") {
+                    TacoButton("Import from clipboard", { state.importLayerFromClipboard() },
+                        kind = ButtonKind.Ghost, height = 40.dp)
+                }
+            }
+        }
+
+        items(state.layers.asReversed(), key = { it.id }) { layer ->
+            val isBase = layer.id == "base"
+            var dragOffset by remember { mutableFloatStateOf(0f) }
+            LayerCard(
+                layer = layer,
+                isBase = isBase,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(LAYER_HEIGHT)
+                    .zIndex(if (dragOffset != 0f) 1f else 0f)
+                    .graphicsLayer { translationY = dragOffset },
+                onDrag = if (isBase) null else { delta ->
+                    dragOffset += delta
+                    val idx = state.layers.indexOf(layer)
+                    if (dragOffset > stepPx * 0.6f && idx > 1) {
+                        state.moveLayer(idx, idx - 1); dragOffset -= stepPx
+                    } else if (dragOffset < -stepPx * 0.6f && idx < state.layers.lastIndex) {
+                        state.moveLayer(idx, idx + 1); dragOffset += stepPx
+                    }
+                },
+                onDragEnd = { dragOffset = 0f },
+                onToggle = { state.setLayerEnabled(layer.id, it) },
+                onRename = { renameTarget = layer; renameText = layer.name },
+                onDuplicate = { state.duplicateLayer(layer.id) },
+                onDelete = { state.deleteLayer(layer.id) }
+            )
+        }
+    }
+
+    renameTarget?.let { layer ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Rename layer", style = TacoType.display, fontSize = 19.sp) },
+            text = {
+                OutlinedTextField(
+                    renameText, { renameText = it }, singleLine = true,
+                    colors = tacoFieldColors(), shape = TacoShapes.control
+                )
+            },
+            confirmButton = {
+                TacoButton("Rename", {
+                    state.renameLayer(layer.id, renameText.trim())
+                    renameTarget = null
+                }, kind = ButtonKind.Primary, height = 42.dp)
+            },
+            dismissButton = { TacoButton("Cancel", { renameTarget = null }, kind = ButtonKind.Quiet, height = 42.dp) }
+        )
+    }
+}
+
+@Composable
+private fun LayerCard(
+    layer: FlagLayer,
+    isBase: Boolean,
+    modifier: Modifier = Modifier,
+    onDrag: ((Float) -> Unit)?,
+    onDragEnd: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onRename: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val accent = LocalTacoAccent.current
+    val heat = heatLevel(layer.flags.size)
+    val currentDrag by rememberUpdatedState(onDrag)
+    Column(
+        modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+            .border(
+                1.dp,
+                if (layer.enabled) accent.neon.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(20.dp)
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (onDrag != null) {
+                Box(
+                    Modifier.size(34.dp)
+                        .pointerInput(layer.id) {
+                            detectDragGestures(
+                                onDrag = { change, amount -> change.consume(); currentDrag?.invoke(amount.y) },
+                                onDragEnd = onDragEnd,
+                                onDragCancel = onDragEnd
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) { TacoIcon(TacoIcon.Grip, TacoPalette.Faint, 18.dp, 2f) }
+            } else {
+                IconCircle(TacoIcon.Flag, TacoPalette.Faint, 30.dp)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    layer.name + if (isBase) "  (base)" else "",
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                    color = if (layer.enabled) TacoPalette.Cream else TacoPalette.Muted
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${layer.flags.size} flags", style = TacoType.tnum.copy(fontSize = 12.sp), color = TacoPalette.Muted)
+                    Spacer(Modifier.width(8.dp))
+                    repeat(4) { i ->
+                        Box(
+                            Modifier.padding(end = 3.dp).size(6.dp).clip(CircleShape)
+                                .background(if (i <= heat) HEAT_COLORS[i] else TacoPalette.Outline)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(heatName(heat), fontSize = 11.sp, color = TacoPalette.Muted)
+                }
+            }
+            TacoSwitch(layer.enabled, onToggle, enabled = !isBase)
+        }
+        Row(Modifier.padding(top = 4.dp)) {
+            Text("Rename", fontSize = 12.sp, color = accent.neon,
+                modifier = Modifier.clickable(onClick = onRename).padding(end = 16.dp, top = 2.dp))
+            if (!isBase) {
+                Text("Duplicate", fontSize = 12.sp, color = TacoPalette.Muted,
+                    modifier = Modifier.clickable(onClick = onDuplicate).padding(end = 16.dp, top = 2.dp))
+                Text("Delete", fontSize = 12.sp, color = TacoPalette.Salsa,
+                    modifier = Modifier.clickable(onClick = onDelete).padding(top = 2.dp))
+            }
+        }
+    }
+}
+
+/* ======================================================================
+ *  7. GAMES SCREEN
+ * ====================================================================== */
+
+data class PinnedGame(val placeId: String, val profile: String? = null)
+
+fun parsePlaceId(input: String): String? {
+    val t = input.trim()
+    t.toLongOrNull()?.let { return it.toString() }
+    Regex("""place[Ii]d=(\d+)""").find(t)?.let { return it.groupValues[1] }
+    Regex("""/games/(\d+)""").find(t)?.let { return it.groupValues[1] }
+    Regex("""(\d{5,})""").find(t)?.let { return it.groupValues[1] }
+    return null
+}
+
+@Composable
+fun GamesScreen(state: TacoState) {
+    val accent = LocalTacoAccent.current
+    val context = LocalContext.current
+    var showAdd by remember { mutableStateOf(false) }
+    var detailGame by remember { mutableStateOf<String?>(null) }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text("Games", style = TacoType.displayBig)
+                    Text("Pin experiences, set a per-game layer, jump straight in.", fontSize = 13.sp, color = TacoPalette.Muted)
+                }
+                TacoButton("Add", { showAdd = true }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 40.dp)
+            }
+        }
+        if (state.games.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                EmptyState(TacoIcon.Gamepad, "No pinned games", "Add by place ID or paste any roblox.com/games link.") {
+                    TacoButton("Add a game", { showAdd = true }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 40.dp)
+                }
+            }
+        }
+        items(state.games.entries.toList(), key = { it.value.placeId }) { entry ->
+            val name = entry.key
+            val game = entry.value
+            Column(
+                Modifier
+                    .clip(TacoShapes.menuCard)
+                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
+                    .border(
+                        1.dp,
+                        if (state.targetGame == name) accent.neon.copy(0.7f) else MaterialTheme.colorScheme.outlineVariant,
+                        TacoShapes.menuCard
+                    )
+                    .combinedClickable(
+                        onClick = { detailGame = name },
+                        onLongClick = {
+                            if (state.hapticsOn) hapticTick(context)
+                            state.launchGameById(game.placeId)
+                        }
+                    )
+                    .padding(16.dp)
+            ) {
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(accent.neon, accent.deep))),
+                    contentAlignment = Alignment.Center
+                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.5f) }
+                Spacer(Modifier.height(14.dp))
+                Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream, maxLines = 1)
+                Spacer(Modifier.height(2.dp))
+                Text("#${game.placeId}", style = TacoType.tnum.copy(fontSize = 12.sp), color = TacoPalette.Muted)
+                game.profile?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text("layer: $it", fontSize = 11.sp, color = accent.neon)
+                }
+                if (state.targetGame == name) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("LAUNCH TARGET", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent.neon)
+                }
+            }
+        }
+    }
+
+    if (showAdd) {
+        var name by remember { mutableStateOf("") }
+        var idOrLink by remember { mutableStateOf("") }
+        var error by remember { mutableStateOf<String?>(null) }
+        AlertDialog(
+            onDismissRequest = { showAdd = false },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Pin a game", style = TacoType.display, fontSize = 19.sp) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        name, { name = it }, label = { Text("Name") }, singleLine = true,
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        idOrLink, { idOrLink = it; error = null },
+                        label = { Text("Place ID or roblox.com link") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = tacoFieldColors(), shape = TacoShapes.control,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    error?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, fontSize = 13.sp, color = TacoPalette.Salsa)
+                    }
+                }
+            },
+            confirmButton = {
+                TacoButton("Pin", {
+                    val id = parsePlaceId(idOrLink)
+                    if (name.isBlank() || id == null) {
+                        error = "Need a name and a valid place ID or link."
+                    } else {
+                        state.addGame(name.trim(), id)
+                        showAdd = false
+                    }
+                }, kind = ButtonKind.Primary, icon = TacoIcon.Plus, height = 46.dp)
+            },
+            dismissButton = { TacoButton("Cancel", { showAdd = false }, kind = ButtonKind.Quiet, height = 46.dp) }
+        )
+    }
+
+    detailGame?.let { name ->
+        val game = state.games[name] ?: return@let
+        ModalBottomSheet(
+            onDismissRequest = { detailGame = null },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = TacoPalette.Cream
+        ) {
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
+                Text(name, style = TacoType.display)
+                Text("Place ID ${game.placeId}", style = TacoType.tnum.copy(fontSize = 13.sp), color = TacoPalette.Muted)
+                Spacer(Modifier.height(14.dp))
+                Text("PROFILE LAYER", style = TacoType.label)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CategoryChip("None", game.profile == null) { state.setGameProfile(name, null) }
+                    state.layers.filter { it.id != "base" }.forEach { layer ->
+                        CategoryChip(layer.name, game.profile == layer.name) { state.setGameProfile(name, layer.name) }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TacoButton("Launch", {
+                        if (state.hapticsOn) hapticCrunch(context)
+                        state.launchGameById(game.placeId)
+                        detailGame = null
+                    }, Modifier.weight(2f), ButtonKind.Primary, TacoIcon.Play, 48.dp)
+                    TacoButton("Set target", {
+                        state.targetGame = name; state.notify("Target: $name"); detailGame = null
+                    }, Modifier.weight(1f), ButtonKind.Ghost, height = 48.dp)
+                    TacoButton("", {
+                        state.removeGame(name); detailGame = null
+                    }, Modifier.width(48.dp), ButtonKind.Danger, TacoIcon.Trash, 48.dp)
                 }
             }
         }
     }
 }
 
+/* ======================================================================
+ *  8. SETTINGS SCREEN & IMAGE DECODER
+ * ====================================================================== */
+
 @Composable
-fun GamesScreen(state: TacoState) {
-    Text("Games tab loaded.", modifier = Modifier.padding(16.dp))
+fun rememberImageBitmapFromUri(uriString: String): ImageBitmap? {
+    val context = LocalContext.current
+    var imageBitmap by remember(uriString) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uriString) {
+        if (uriString.isBlank()) {
+            imageBitmap = null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val uri = Uri.parse(uriString)
+                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
+                    }
+                }.onSuccess { bitmap ->
+                    imageBitmap = bitmap
+                }
+            }
+        }
+    }
+    return imageBitmap
 }
 
 @Composable
 fun SettingsScreen(state: TacoState) {
+    val accent = LocalTacoAccent.current
+    val context = LocalContext.current
+    var showChangelog by remember { mutableStateOf(false) }
+    var showLicenses by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            state.bgImageUri = uri.toString()
+            state.persist()
+            state.notify("Custom background image updated.")
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp).padding(bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 18.dp).padding(bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Settings", style = TacoType.displayBig)
 
-        SectionLabel("Shizuku Status")
+        SectionLabel("Shizuku")
         Column(
             Modifier.fillMaxWidth().clip(TacoShapes.card)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(16.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+                .border(1.dp, state.shizuku.color.copy(alpha = 0.5f), TacoShapes.card)
+                .padding(18.dp)
         ) {
-            Text("Shizuku Status: ${state.shizuku.long}", color = state.shizuku.color, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            TacoButton("Request Permission", { state.requestShizukuPermission() }, kind = ButtonKind.Primary, height = 40.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconCircle(TacoIcon.Bolt, state.shizuku.color, 42.dp)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Shizuku ${state.shizuku.long.lowercase()}",
+                        fontSize = 16.sp, fontWeight = FontWeight.Bold, color = state.shizuku.color)
+                    Text("live status", fontSize = 11.sp, color = TacoPalette.Faint)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            val steps = listOf(
+                "Enable Developer options, then Wireless debugging, on this phone.",
+                "Start Shizuku via pairing code (or root start).",
+                "Tap Grant below so TacoStrap can write the flag file.",
+                "Launch from The Comal. Root is optional."
+            )
+            steps.forEachIndexed { i, s ->
+                Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+                    Text("${i + 1}.", style = TacoType.tnum.copy(fontSize = 13.sp), color = accent.neon)
+                    Spacer(Modifier.width(8.dp))
+                    Text(s, fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 18.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TacoButton("Grant", { state.requestShizukuPermission() }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
+                TacoButton("shizuku.rikka.app", {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app"))) }
+                }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
+            }
         }
 
-        SectionLabel("Roblox Configuration")
-        SettingValue("Roblox Package", state.pkg, { state.editPkg() })
-        SettingValue("Flag File Path", state.path, { state.cyclePath() })
+        SectionLabel("Million-Dollar Appearance & Theme")
+        SettingsGroup {
+            Text("Accent & Neon Theme", style = TacoType.body, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Row(
+                Modifier.hScroll().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                TACO_ACCENTS.forEachIndexed { i, a ->
+                    val sel = state.accentIdx == i
+                    val s by animateFloatAsState(if (sel) 1.12f else 1f, TacoMotion.softSpring, label = "ac")
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable { state.accentIdx = i; state.persist() }
+                    ) {
+                        Box(
+                            Modifier.size(44.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(CircleShape)
+                                .background(Brush.horizontalGradient(listOf(a.neon, a.primary, a.deep)))
+                                .then(if (sel) Modifier.border(2.dp, TacoPalette.Cream, CircleShape) else Modifier),
+                            contentAlignment = Alignment.Center
+                        ) { if (sel) TacoIcon(TacoIcon.Check, a.onPrimary, 18.dp, 2.6f) }
+                        Spacer(Modifier.height(6.dp))
+                        Text(a.name, fontSize = 11.sp,
+                            color = if (sel) TacoPalette.Cream else TacoPalette.Muted,
+                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                    }
+                }
+            }
+
+            // Custom Font Selector
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "Sans", 1 to "Mono", 2 to "Serif", 3 to "Cursive").forEach { (idx, label) ->
+                        CategoryChip(label, state.fontIdx == idx) { state.fontIdx = idx; state.persist() }
+                    }
+                }
+            }
+
+            // Glass Opacity Selector
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Card Glass Transparency", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("${(state.glassOpacity * 100).toInt()}%", style = TacoType.tnum, color = accent.neon)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0.70f to "Glassy", 0.85f to "Balanced", 0.95f to "Solid").forEach { (op, label) ->
+                        CategoryChip(label, state.glassOpacity == op) { state.glassOpacity = op; state.persist() }
+                    }
+                }
+            }
+
+            // Corner Radius Selector
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Card Corner Rounding", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("${state.cardCornerRadius} dp", style = TacoType.tnum, color = accent.neon)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(12 to "Sharp", 20 to "Smooth", 28 to "Pill").forEach { (rad, label) ->
+                        CategoryChip(label, state.cardCornerRadius == rad) { state.cardCornerRadius = rad; state.persist() }
+                    }
+                }
+            }
+
+            SettingValue(
+                title = "Custom background wallpaper",
+                value = if (state.bgImageUri.isEmpty()) "Default" else "Active",
+                onClick = { imagePickerLauncher.launch("image/*") },
+                sub = "Tap to pick a gorgeous custom image",
+                icon = TacoIcon.Image
+            )
+            if (state.bgImageUri.isNotEmpty()) {
+                SettingValue(
+                    title = "Remove custom wallpaper",
+                    value = "Reset",
+                    onClick = {
+                        state.bgImageUri = ""
+                        state.persist()
+                        state.notify("Custom background removed.")
+                    },
+                    sub = "Revert to ambient dark gradient"
+                )
+            }
+            SettingSwitch("AMOLED true black", "Pure black background for OLED screens.", state.amoled) { state.amoled = it; state.persist() }
+            SettingSwitch("Haptics", "Crunch on launch and ticks on picks.", state.hapticsOn) { state.hapticsOn = it; state.persist() }
+            SettingSwitch("Reduce motion", "Disables springs, particles and shimmer.", state.reduceMotion) { state.reduceMotion = it; state.persist() }
+        }
+
+        SectionLabel("Connection")
+        SettingsGroup {
+            SettingValue("Package name", state.pkg, { state.editPkg() })
+            SettingValue("Flag file path", state.path, { state.cyclePath() }, sub = "tap to cycle presets")
+            SettingSwitch(
+                "Use root",
+                if (state.rootAvailable == true) "Apply via superuser instead of Shizuku."
+                else "Not detected — optional. Shizuku works without it.",
+                state.useRoot
+            ) { state.useRoot = it; state.persist() }
+            SettingSwitch("Write file on apply", "Writes flags to the flag file during launch.", state.applyOnSave) { state.applyOnSave = it; state.persist() }
+            SettingSwitch("Restart Roblox", "Force-stops Roblox before launching.", state.restart) { state.restart = it; state.persist() }
+            SettingSwitch("Disable frame-rate cap", "Lifts Android's game frame cap above 60 FPS automatically.", state.fpsCap) { state.fpsCap = it; state.persist() }
+            SettingValue("Clear Roblox cache", "frees space", { state.clearCache() })
+        }
+
+        SectionLabel("Messages")
+        SettingsGroup {
+            Text("Errors always show regardless of these toggles.",
+                fontSize = 12.sp, color = TacoPalette.Faint,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+            SettingSwitch("Flag messages", "Saved / applied / imported confirmations.", state.msgFlag) { state.msgFlag = it; state.persist() }
+            SettingSwitch("Launch messages", "Roblox and game launch confirmations.", state.msgLaunch) { state.msgLaunch = it; state.persist() }
+            SettingSwitch("Other messages", "Copies, backups and other actions.", state.msgOther) { state.msgOther = it; state.persist() }
+        }
+
+        SectionLabel("Backup")
+        SettingsGroup {
+            SettingValue("Export backup", "flags, layers and games as one JSON", { state.exportBackup() }, icon = TacoIcon.Save)
+            SettingValue("Import backup", "restores from clipboard", { state.importBackup() }, icon = TacoIcon.Copy)
+            SettingValue("Copy diagnostics", "a support report", { state.copyDiagnostics() }, icon = TacoIcon.Doc)
+        }
+
+        SectionLabel("About")
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("TacoStrap", style = TacoType.displayBig.copy(fontSize = 42.sp), color = accent.neon)
+            Text("Million-Dollar Edition · ${state.appVersion}", style = TacoType.tnum.copy(fontSize = 13.sp), color = TacoPalette.Muted)
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TacoButton("Changelog", { showChangelog = true }, kind = ButtonKind.Quiet, height = 40.dp)
+                TacoButton("Licenses", { showLicenses = true }, kind = ButtonKind.Quiet, height = 40.dp)
+                TacoButton("Allowlist", {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://devforum.roblox.com/t/allowlist-for-local-client-configuration-via-fast-flags/3966569")))
+                    }
+                }, kind = ButtonKind.Quiet, icon = TacoIcon.Globe, height = 40.dp)
+            }
+        }
+    }
+
+    if (showChangelog) {
+        AlertDialog(
+            onDismissRequest = { showChangelog = false },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
+            text = {
+                Text(
+                    "5.8 — Million-Dollar Enterprise Edition\n" +
+                        "· Custom App Font Selector (Sans, Mono, Serif, Cursive)\n" +
+                        "· Frosted glassmorphism cards with custom corner rounding\n" +
+                        "· Adjustable card transparency & neon accent glow shaders\n" +
+                        "· Griddle dial with multi-stage neon particle sizzle\n" +
+                        "· Universal allowlist bypass for all fast flags & desyncs\n",
+                    fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
+                )
+            },
+            confirmButton = { TacoButton("Close", { showChangelog = false }, kind = ButtonKind.Quiet, height = 40.dp) }
+        )
+    }
+    if (showLicenses) {
+        AlertDialog(
+            onDismissRequest = { showLicenses = false },
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(26.dp),
+            title = { Text("Licenses", style = TacoType.display, fontSize = 19.sp) },
+            text = { Text("TacoStrap is built with Jetpack Compose and Shizuku (Apache License 2.0).", fontSize = 13.sp, color = TacoPalette.Muted) },
+            confirmButton = { TacoButton("Close", { showLicenses = false }, kind = ButtonKind.Quiet, height = 40.dp) }
+        )
     }
 }
 
 @Composable
-private fun SettingValue(title: String, value: String, onClick: () -> Unit) {
+private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
+            .padding(vertical = 8.dp),
+        content = content
+    )
+}
+
+@Composable
+private fun SettingSwitch(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        Modifier.fillMaxWidth().clickable { onChange(!checked) }
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        Text(value, fontSize = 12.sp, color = LocalTacoAccent.current.neon)
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+            Text(sub, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 16.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        TacoSwitch(checked, onChange)
+    }
+}
+
+@Composable
+private fun SettingValue(title: String, value: String, onClick: () -> Unit, sub: String? = null, icon: TacoIcon? = null) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) { IconCircle(icon, LocalTacoAccent.current.neon, 34.dp); Spacer(Modifier.width(12.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+            if (sub != null) Text(sub, fontSize = 12.sp, color = TacoPalette.Muted)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            value, style = TacoType.mono.copy(fontSize = 12.sp),
+            color = LocalTacoAccent.current.neon, maxLines = 2,
+            modifier = Modifier.weight(1.2f), textAlign = TextAlign.End
+        )
+        Spacer(Modifier.width(8.dp))
+        TacoIcon(TacoIcon.Down, TacoPalette.Faint, 14.dp, 2.2f)
     }
 }
 
 /* ======================================================================
- *  8. APP STATE & PERSISTENCE
+ *  9. APP STATE + MILLION-DOLLAR PERSISTENCE
  * ====================================================================== */
-
-data class PinnedGame(val placeId: String)
 
 var appContext: Context? = null
 private fun clipMgr(ctx: Context) = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -2152,9 +2869,10 @@ class TacoState(
     val scope: CoroutineScope,
     val snackbar: SnackbarHostState
 ) {
+    val appVersion = APP_VERSION
+
     val draftFlags = mutableStateMapOf<String, String>()
     val layers = mutableStateListOf<FlagLayer>()
-    val customFonts = mutableStateListOf<FontItem>()
     val games = mutableStateMapOf<String, PinnedGame>()
     private var savedFlags by mutableStateOf<Map<String, String>>(emptyMap())
 
@@ -2169,70 +2887,102 @@ class TacoState(
     var amoled by mutableStateOf(prefs.getBoolean("trueBlack", false))
     var hapticsOn by mutableStateOf(prefs.getBoolean("haptics", true))
     var reduceMotion by mutableStateOf(prefs.getBoolean("reduceMotion", false))
+    var msgFlag by mutableStateOf(prefs.getBoolean("msgFlag", true))
+    var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
+    var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
     var bgImageUri by mutableStateOf(prefs.getString("bgImageUri", "") ?: "")
-    var activeCustomFontPath by mutableStateOf(prefs.getString("activeFontPath", null))
 
+    // Million-Dollar Appearance Customizations
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
     var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
     var robloxVersion by mutableStateOf<String?>(null)
+    var channel by mutableStateOf("release")
 
     var mode by mutableStateOf(LaunchMode.SAVE_LAUNCH)
     var launchState by mutableStateOf<LaunchState>(LaunchState.Idle)
     var targetGame by mutableStateOf<String?>(null)
     private var launchJob: Job? = null
 
-    val activeCustomFontName: String?
-        get() = customFonts.find { it.filePath == activeCustomFontPath }?.name
-
     init {
         runCatching { draftFlags.putAll(parseFlags(prefs.getString("flags", "{}") ?: "{}")) }
         savedFlags = draftFlags.toMap()
         layers += FlagLayer("base", "Base flags", true, draftFlags.toMap())
+
+        val layersJson = prefs.getString("layers2", null)
+        if (layersJson != null) {
+            runCatching {
+                val arr = JSONArray(layersJson)
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    layers += FlagLayer(
+                        o.getString("id"), o.getString("name"), o.optBoolean("enabled", false),
+                        parseFlags(o.getJSONObject("flags").toString())
+                    )
+                }
+            }
+        } else {
+            runCatching {
+                parseFlags(prefs.getString("presets", "{}") ?: "{}").forEach { (name, json) ->
+                    runCatching {
+                        layers += FlagLayer(UUID.randomUUID().toString(), name, false, parseFlags(json))
+                    }
+                }
+            }
+        }
+
+        runCatching {
+            val profiles = runCatching { parseFlags(prefs.getString("gameLayers", "{}") ?: "{}") }.getOrDefault(emptyMap())
+            parseFlags(prefs.getString("games", "{}") ?: "{}").forEach { (name, id) ->
+                games[name] = PinnedGame(id, profiles[name])
+            }
+        }
     }
 
-    fun mergedFlags(): Map<String, String> {
+    fun mergedFlags(extraLayer: String? = null): Map<String, String> {
         val out = LinkedHashMap<String, String>()
         layers.forEach { if (it.enabled) out.putAll(it.flags) }
+        if (extraLayer != null) layers.firstOrNull { it.name == extraLayer }?.let { out.putAll(it.flags) }
         return out
     }
 
-    fun activeLayerName(): String = layers.lastOrNull { it.enabled && it.id != "base" }?.name ?: "Base flags"
+    fun activeLayerName(): String =
+        layers.lastOrNull { it.enabled && it.id != "base" }?.name ?: "Base flags"
 
     fun isAllowed(key: String): Boolean = allowlist.isAllowed(key)
 
     fun pendingCount(): Int {
-        val keys = (savedFlags.keys + draftFlags.keys).toSet()
+        val keys = savedFlags.keys + draftFlags.keys
         return keys.count { savedFlags[it] != draftFlags[it] }
+    }
+
+    private fun baseLayer() = layers.first { it.id == "base" }
+
+    private fun syncBase() {
+        val b = baseLayer()
+        b.flags.clear(); b.flags.putAll(draftFlags.toMap())
     }
 
     fun discardDraft() {
         draftFlags.clear(); draftFlags.putAll(savedFlags)
+        syncBase()
+        notify("Changes discarded.", "flag")
     }
 
     fun applyDraft() {
         savedFlags = draftFlags.toMap()
+        syncBase()
         persist()
+        notify("Flags saved.", "flag")
     }
 
-    fun addCustomFont(item: FontItem) {
-        customFonts.add(item)
-        if (activeCustomFontPath == null) activeCustomFontPath = item.filePath
-        persist()
-    }
-
-    fun removeCustomFont(item: FontItem) {
-        customFonts.remove(item)
-        if (activeCustomFontPath == item.filePath) activeCustomFontPath = null
-        File(item.filePath).delete()
-        persist()
-    }
-
-    fun saveLayerFromCurrent(name: String) {
-        layers += FlagLayer(UUID.randomUUID().toString(), name, true, draftFlags.toMap())
-        persist()
+    fun moveLayer(from: Int, to: Int) {
+        if (from in layers.indices && to in layers.indices && from != 0 && to != 0) {
+            layers.add(to, layers.removeAt(from))
+            persist()
+        }
     }
 
     fun setLayerEnabled(id: String, enabled: Boolean) {
@@ -2241,108 +2991,320 @@ class TacoState(
         persist()
     }
 
-    fun targetLabel(): String = targetGame ?: "Home (Roblox App)"
+    fun renameLayer(id: String, name: String) {
+        if (name.isEmpty()) return
+        val l = layers.firstOrNull { it.id == id } ?: return
+        val old = l.name
+        l.name = name
+        games.entries.toList().forEach { (k, g) -> if (g.profile == old) games[k] = g.copy(profile = name) }
+        persist()
+    }
+
+    fun duplicateLayer(id: String) {
+        layers.firstOrNull { it.id == id }?.let {
+            val i = layers.indexOf(it)
+            layers.add(i + 1, FlagLayer(UUID.randomUUID().toString(), it.name + " copy", false, it.flags.toMap()))
+        }
+        persist()
+    }
+
+    fun deleteLayer(id: String) {
+        if (id == "base") return
+        val l = layers.firstOrNull { it.id == id } ?: return
+        layers.remove(l)
+        games.entries.toList().forEach { (k, g) -> if (g.profile == l.name) games[k] = g.copy(profile = null) }
+        persist()
+    }
+
+    fun saveLayerFromCurrent(name: String) {
+        layers += FlagLayer(UUID.randomUUID().toString(), name, true, draftFlags.toMap())
+        persist()
+    }
+
+    fun importLayerFromClipboard() {
+        val ctx = appContext ?: return
+        val text = clipMgr(ctx).primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        val msg = runCatching {
+            val m = parseFlags(text)
+            layers += FlagLayer(UUID.randomUUID().toString(), "Imported layer", true, m)
+            persist()
+            "Imported ${m.size} flags as a layer."
+        }.getOrElse { "Failed: clipboard isn't valid JSON." }
+        notify(msg)
+    }
+
+    fun applyPack(p: Pack) {
+        PACK_KEYS.forEach { draftFlags.remove(it) }
+        draftFlags.putAll(p.sets)
+        applyDraft()
+    }
+
+    fun duplicateDraftFlag(key: String) {
+        draftFlags[key + "_copy"] = draftFlags[key] ?: ""
+    }
+
+    fun addGame(name: String, placeId: String) {
+        games[name] = PinnedGame(placeId)
+        persist()
+        notify("Pinned $name.")
+    }
+
+    fun removeGame(name: String) {
+        games.remove(name)
+        if (targetGame == name) targetGame = null
+        persist()
+    }
+
+    fun setGameProfile(name: String, profile: String?) {
+        games[name]?.let { games[name] = it.copy(profile = profile) }
+        persist()
+    }
+
+    fun targetLabel(): String = targetGame?.let { "$it (#${games[it]?.placeId})" } ?: "Home (Roblox app)"
 
     fun launchGameById(placeId: String) {
         scope.launch {
-            engine.launchGame(pkg, placeId, useRoot, restart)
+            val g = games.values.firstOrNull { it.placeId == placeId }
+            val sh = engine.shizukuState()
+            if (!sh.ok && !useRoot) {
+                notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
+            }
+            if (applyOnSave) {
+                val r = engine.applyFlags(toJson(mergedFlags(g?.profile)), path, pkg, fpsCap, useRoot)
+                if (r.startsWith("Failed")) { notify(r); return@launch }
+            }
+            val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
+            notify(launchMsg, "launch")
         }
     }
 
     fun runLaunch() {
         if (launchState is LaunchState.Running) return
         launchJob?.cancel()
-        val merged = mergedFlags()
-        val steps = listOf(
-            LaunchStep("Checking Shizuku"),
-            LaunchStep("Injecting FastFlags"),
-            LaunchStep("Applying Custom Font"),
-            LaunchStep("Verifying Files"),
-            LaunchStep("Launching Roblox")
-        )
-        launchState = LaunchState.Running(steps, 0)
+        val target = targetGame?.let { games[it] }
+        val merged = mergedFlags(target?.profile)
+        val m = mode
+        val steps = mutableListOf<LaunchStep>()
+        steps += LaunchStep("Check Shizuku")
+        if (m != LaunchMode.VERIFY) steps += LaunchStep("Apply ${merged.size} flags")
+        steps += LaunchStep("Verify")
+        if (m == LaunchMode.SAVE_LAUNCH) steps += LaunchStep("Launch Roblox")
+        val vIdx = steps.indexOfFirst { it.title == "Verify" }
+        launchState = LaunchState.Running(steps.toList(), 0)
 
         launchJob = scope.launch job@{
+            fun push(i: Int, status: StepStatus, detail: String = "") {
+                steps[i] = steps[i].copy(status = status, detail = detail)
+                launchState = LaunchState.Running(steps.toList(), i)
+            }
+            fun fail(i: Int, msg: String) {
+                launchState = LaunchState.Failed(msg, steps.toList(), i)
+            }
             try {
-                if (!engine.shizukuState().ok && !useRoot) {
-                    launchState = LaunchState.Failed("Shizuku binder connection required.", steps, 0)
+                val sh = engine.shizukuState()
+                if (!sh.ok && !useRoot) {
+                    steps[0] = steps[0].copy(status = StepStatus.Failed, detail = sh.long)
+                    fail(0, "Shizuku ${sh.long.lowercase()}. Open status sheet for fix steps, or enable root.")
                     return@job
                 }
+                push(0, StepStatus.Done, if (useRoot) "via root" else "connected")
 
-                // Step 1: Flags
-                launchState = LaunchState.Running(steps, 1)
-                engine.applyFlags(toJson(merged), path, pkg, fpsCap, useRoot)
+                if (m != LaunchMode.VERIFY) {
+                    if (applyOnSave) {
+                        val msg = engine.applyFlags(toJson(merged), path, pkg, fpsCap, useRoot)
+                        if (msg.startsWith("Failed")) {
+                            steps[1] = steps[1].copy(status = StepStatus.Failed, detail = msg)
+                            fail(1, msg); return@job
+                        }
+                        push(1, StepStatus.Done, msg)
+                    } else {
+                        push(1, StepStatus.Skipped, "write-on-apply disabled in Settings")
+                    }
+                }
 
-                // Step 2: Font
-                launchState = LaunchState.Running(steps, 2)
-                engine.applyCustomFont(activeCustomFontPath, pkg, useRoot)
+                val vmsg = engine.verify(toJson(merged), path, useRoot)
+                if (vmsg.startsWith("Verify failed")) {
+                    steps[vIdx] = steps[vIdx].copy(status = StepStatus.Failed, detail = vmsg)
+                    fail(vIdx, vmsg); return@job
+                }
+                push(vIdx, StepStatus.Done, vmsg)
 
-                // Step 3: Verify
-                launchState = LaunchState.Running(steps, 3)
-                engine.verify(toJson(merged), path, useRoot)
-
-                // Step 4: Launch
-                launchState = LaunchState.Running(steps, 4)
-                val msg = engine.launchRoblox(pkg, useRoot, restart)
-                launchState = LaunchState.Success(msg, steps)
+                val finalMsg: String
+                if (m == LaunchMode.SAVE_LAUNCH) {
+                    val lIdx = steps.lastIndex
+                    val msg = if (target != null) engine.launchGame(pkg, target.placeId, useRoot, restart)
+                    else engine.launchRoblox(pkg, useRoot, restart)
+                    if (msg.startsWith("Failed")) {
+                        steps[lIdx] = steps[lIdx].copy(status = StepStatus.Failed, detail = msg)
+                        fail(lIdx, msg); return@job
+                    }
+                    push(lIdx, StepStatus.Done, msg)
+                    finalMsg = if (target != null) "Launched $targetGame." else "Roblox is served."
+                } else {
+                    finalMsg = if (m == LaunchMode.VERIFY) "Verification complete." else "Flags applied and verified."
+                }
+                launchState = LaunchState.Success(finalMsg, steps.toList())
+                notify(finalMsg, "launch")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
-                launchState = LaunchState.Failed(e.message ?: "Launch error", steps, 0)
+                launchState = LaunchState.Failed(e.message ?: "Unknown error", steps.toList(), 0)
             }
         }
     }
 
-    fun cancelLaunch() { launchJob?.cancel(); launchState = LaunchState.Idle }
-    fun retryLaunch() { cancelLaunch(); runLaunch() }
+    fun cancelLaunch() {
+        launchJob?.cancel()
+        launchState = LaunchState.Idle
+    }
+
+    fun retryLaunch() {
+        cancelLaunch()
+        runLaunch()
+    }
 
     fun requestShizukuPermission() {
         runCatching { rikka.shizuku.Shizuku.requestPermission(1001) }
+            .onFailure { notify("Failed: start Shizuku first.") }
     }
 
     fun editPkg() {
         pkg = if (pkg == DEFAULT_PKG) "com.roblox.client.chrome" else DEFAULT_PKG
         persist()
+        robloxVersion = null
+        notify("Package set to $pkg")
     }
 
     fun cyclePath() {
         path = if (path == DEFAULT_PATH) ALT_PATH else DEFAULT_PATH
         persist()
+        notify("Flag file path updated.")
+    }
+
+    fun clearCache() { scope.launch { notify(engine.clearCache(pkg, useRoot)) } }
+
+    fun importFromUrl(url: String) {
+        scope.launch {
+            val (ok, body) = withContext(Dispatchers.IO) { fetchText(url) }
+            val msg = if (ok) runCatching {
+                val m = parseFlags(body)
+                draftFlags.putAll(m)
+                "Imported ${m.size} flags from URL."
+            }.getOrElse { "Failed: not valid JSON." } else "Failed: $body"
+            notify(msg, "flag")
+        }
+    }
+
+    fun exportBackup() {
+        val json = JSONObject().apply {
+            put("app", "TacoStrap"); put("version", APP_VERSION)
+            put("flags", JSONObject(toJson(draftFlags)))
+            put("layers", JSONObject().also { o ->
+                layers.filter { it.id != "base" }.forEach { o.put(it.name, JSONObject(toJson(it.flags))) }
+            })
+            put("games", JSONObject().also { o -> games.forEach { (n, g) -> o.put(n, g.placeId) } })
+        }.toString(2)
+        copyText("TacoStrap backup", json)
+        notify("Backup copied to clipboard.")
+    }
+
+    fun importBackup() {
+        val ctx = appContext ?: return
+        val text = clipMgr(ctx).primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
+        val msg = runCatching {
+            val o = JSONObject(text)
+            o.optJSONObject("flags")?.let { j -> draftFlags.clear(); draftFlags.putAll(parseFlags(j.toString())) }
+            o.optJSONObject("layers")?.let { j ->
+                layers.removeAll { it.id != "base" }
+                j.keys().forEach { n ->
+                    layers += FlagLayer(UUID.randomUUID().toString(), n, false, parseFlags(j.getJSONObject(n).toString()))
+                }
+            }
+            o.optJSONObject("games")?.let { j ->
+                games.clear()
+                parseFlags(j.toString()).forEach { (n, id) -> games[n] = PinnedGame(id) }
+            }
+            applyDraft()
+            "Backup imported."
+        }.getOrElse { "Failed: copy a backup to the clipboard first." }
+        notify(msg)
+    }
+
+    fun copyDiagnostics() {
+        copyText(
+            "diagnostics",
+            "TacoStrap $APP_VERSION\nShizuku: ${shizuku.long}\nRoot available: $rootAvailable (in use: $useRoot)\n" +
+                "Package: $pkg (${robloxVersion ?: "?"})\nPath: $path\nFlags: ${draftFlags.size}\nLayers: ${layers.size}"
+        )
+        notify("Diagnostics copied.")
+    }
+
+    fun copyText(label: String, text: String) {
+        appContext?.let { clipMgr(it).setPrimaryClip(ClipData.newPlainText(label, text)) }
     }
 
     fun notify(msg: String, kind: String = "other") {
-        scope.launch { snackbar.showSnackbar(msg) }
+        val enabled = when (kind) { "flag" -> msgFlag; "launch" -> msgLaunch; else -> msgOther }
+        if (enabled || msg.startsWith("Failed") || msg.startsWith("Verify failed")) {
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                snackbar.showSnackbar(msg)
+            }
+        }
     }
 
     fun persist() {
+        val layersArr = JSONArray()
+        layers.filter { it.id != "base" }.forEach {
+            layersArr.put(
+                JSONObject().put("id", it.id).put("name", it.name).put("enabled", it.enabled)
+                    .put("flags", JSONObject(toJson(it.flags)))
+            )
+        }
         prefs.edit()
             .putString("flags", toJson(savedFlags))
+            .putString("layers2", layersArr.toString())
+            .putString("games", toJson(games.entries.associate { it.key to it.value.placeId }))
+            .putString("gameLayers", toJson(games.entries.filter { it.value.profile != null }.associate { it.key to it.value.profile!! }))
             .putString("path2", path).putString("pkg", pkg)
-            .putString("activeFontPath", activeCustomFontPath)
+            .putBoolean("root", useRoot).putBoolean("applyOnSave", applyOnSave)
+            .putBoolean("restart", restart).putBoolean("fps", fpsCap)
+            .putInt("accent", accentIdx).putInt("fontIdx", fontIdx).putBoolean("trueBlack", amoled)
+            .putBoolean("haptics", hapticsOn).putBoolean("reduceMotion", reduceMotion)
+            .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)
+            .putBoolean("msgOther", msgOther)
+            .putString("bgImageUri", bgImageUri)
+            .putFloat("glassOpacity", glassOpacity)
+            .putInt("cardCornerRadius", cardCornerRadius)
             .apply()
     }
 
     suspend fun refreshLoop() {
         rootAvailable = withContext(Dispatchers.IO) { engine.rootAvailable() }
+        var tick = 0
         while (currentCoroutineContext().isActive) {
             shizuku = engine.shizukuState()
-            if (robloxVersion == null && (shizuku.ok || useRoot)) {
+            if (robloxVersion == null && (shizuku.ok || useRoot) && tick % 8 == 0) {
                 robloxVersion = engine.robloxVersion(pkg, useRoot)
             }
+            tick++
             delay(1500)
         }
     }
 }
 
 /* ======================================================================
- *  9. MAIN ACTIVITY & NAV ROOT
+ *  10. NAVIGATION + MAINACTIVITY
  * ====================================================================== */
 
-private val TAB_ROUTES = listOf("home", "flags", "fonts", "profiles", "settings")
+private val TAB_ROUTES = listOf("home", "flags", "profiles", "games", "settings")
 private val TAB_ICONS = listOf(
-    TacoIcon.Home to "Home", TacoIcon.Flag to "Flags", TacoIcon.Font to "Fonts",
-    TacoIcon.Layers to "Profiles", TacoIcon.Sliders to "Settings"
+    TacoIcon.Home to "Home", TacoIcon.Flag to "Flags", TacoIcon.Layers to "Profiles",
+    TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
 
 class MainActivity : ComponentActivity() {
+
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -2377,47 +3339,68 @@ fun TacoRoot() {
         BackHandler(enabled = currentRoute != "home") { currentRoute = "home" }
         val cs = MaterialTheme.colorScheme
         val accent = LocalTacoAccent.current
+        val customBgBitmap = rememberImageBitmapFromUri(state.bgImageUri)
 
         Box(Modifier.fillMaxSize().background(cs.background)) {
+            if (customBgBitmap != null) {
+                Image(
+                    bitmap = customBgBitmap,
+                    contentDescription = "Custom Background",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.5f
+                )
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
+            }
+
             Box(Modifier.fillMaxSize().tacoGrain()) {
                 Crossfade(
                     targetState = currentRoute,
-                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 80.dp),
+                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 86.dp),
                     animationSpec = tween(200),
                     label = "nav"
                 ) { r ->
                     when (r) {
                         "flags" -> FlagsScreen(state)
-                        "fonts" -> CustomFontScreen(state)
                         "profiles" -> ProfilesScreen(state)
+                        "games" -> GamesScreen(state)
                         "settings" -> SettingsScreen(state)
                         else -> HomeScreen(state) { target -> currentRoute = target }
                     }
                 }
 
-                Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(10.dp)) {
+                Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
+                    val current = currentRoute
                     Row(
                         Modifier.fillMaxWidth()
                             .clip(CircleShape)
                             .background(cs.surfaceVariant.copy(alpha = 0.94f))
                             .border(1.dp, accent.neon.copy(0.35f), CircleShape)
-                            .padding(4.dp),
+                            .padding(6.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         TAB_ROUTES.forEachIndexed { i, route ->
-                            val selected = currentRoute == route
+                            val selected = current == route
                             val (icon, label) = TAB_ICONS[i]
+                            val w by animateFloatAsState(
+                                if (selected) 1.75f else 1f,
+                                if (state.reduceMotion) tween(0) else spring(dampingRatio = 0.75f, stiffness = 420f),
+                                label = "tabw"
+                            )
                             val tint = if (selected) accent.neon else TacoPalette.Muted
                             Row(
-                                Modifier.height(44.dp).clip(CircleShape)
-                                    .clickable { currentRoute = route }
-                                    .padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                Modifier.weight(w).height(46.dp).clip(CircleShape)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) { currentRoute = route },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
                             ) {
-                                TacoIcon(icon, tint, 20.dp)
+                                TacoIcon(icon, tint, 21.dp)
                                 if (selected) {
                                     Spacer(Modifier.width(6.dp))
-                                    Text(label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
                         }
@@ -2426,10 +3409,10 @@ fun TacoRoot() {
 
                 SnackbarHost(
                     hostState = snackbar,
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 80.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp)
                 ) { d ->
                     Snackbar(
-                        d, shape = RoundedCornerShape(16.dp),
+                        d, shape = RoundedCornerShape(18.dp),
                         containerColor = cs.surfaceVariant,
                         contentColor = cs.onSurface,
                         actionColor = accent.neon
