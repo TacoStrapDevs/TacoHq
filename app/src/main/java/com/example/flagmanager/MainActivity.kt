@@ -1810,8 +1810,8 @@ fun FlagsScreen(state: TacoState) {
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
                             focusedBorderColor = accent.neon, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity)
                         ),
                         shape = RoundedCornerShape(state.cardCornerRadius.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -2911,7 +2911,7 @@ fun SettingsScreen(state: TacoState) {
                 Text(
                     "6.2 — Million-Dollar Enterprise Edition\n" +
                         "· Fully removed the stray label causing settings bottom gaps\n" +
-                        "· Bound FFlags search bar corner radius directly to the card corner setting\n",
+                        "· Bound FFlags search bar corner radius and glass opacity directly to the card settings\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
