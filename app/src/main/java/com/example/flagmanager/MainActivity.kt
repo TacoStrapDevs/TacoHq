@@ -455,7 +455,7 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
-        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft pixel style font mapping
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE)
         else -> FontFamily.SansSerif
     }
     val scheme = darkColorScheme(
@@ -796,7 +796,7 @@ fun AllowlistBadge(allowed: Boolean?) {
 }
 
 @Composable
-fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapesItem()) {
+fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(16.dp)) {
     if (LocalReduceMotion.current) {
         Box(modifier.clip(shape).background(TacoPalette.SurfaceHigh))
         return
@@ -823,13 +823,10 @@ object TacoShapes {
 }
 
 @Composable
-fun TacoShapesItem(radius: Int = 20): Shape = RoundedCornerShape(radius.dp)
-
-@Composable
 fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable () -> Unit)? = null) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 32.dp),
-        horizontalAlignment = Alignment.CenterVertically
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         IconCircle(icon, LocalTacoAccent.current.neon, 58.dp)
         Spacer(Modifier.height(14.dp))
@@ -2058,7 +2055,11 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
             }
             is FS.Range -> {
                 Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     OutlinedTextField(
                         draft[fs.a] ?: "", { t ->
                             if (t.isBlank()) draft.remove(fs.a) else { draft[fs.a] = t.trim(); if (draft[fs.b] == null) draft[fs.b] = fs.db }
