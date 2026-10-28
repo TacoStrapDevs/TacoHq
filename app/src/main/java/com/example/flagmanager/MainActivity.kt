@@ -95,6 +95,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -1411,7 +1412,7 @@ fun MenuCarousel(
 ) {
     val accent = LocalTacoAccent.current
     LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        items(games, key = { it.second }) { (name, id) ->
+        items(games, key = { pair -> pair.second }) { (name, id) ->
             Column(
                 Modifier.width(150.dp)
                     .clip(TacoShapes.menuCard)
@@ -1770,7 +1771,7 @@ fun FlagsScreen(state: TacoState) {
                 val rows = list.filter { it.matches(search) }
                 if (rows.isNotEmpty()) {
                     item(key = "sec_$title") { SectionLabel(title) }
-                    items(rows, key = { "fs_${it.title}" }) { fs -> FlagSettingRow(fs, draft, state) }
+                    items(rows, key = { fs -> "fs_${fs.title}" }) { fs -> FlagSettingRow(fs, draft, state) }
                 }
             }
         }
@@ -1784,7 +1785,7 @@ fun FlagsScreen(state: TacoState) {
                     }
                 }
             }
-            items(customKeys, key = { "c$it" }) { key ->
+            items(customKeys, key = { key -> "c$key" }) { key ->
                 CustomFlagRow(
                     name = key, value = draft[key] ?: "",
                     allowed = state.isAllowed(key),
@@ -2000,7 +2001,7 @@ fun CustomFontScreen(state: TacoState) {
             EmptyState(TacoIcon.Font, "No custom fonts uploaded", "Upload a .ttf/.otf file from your phone storage.")
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(state.customFonts, key = { it.id }) { item ->
+                items(state.customFonts, key = { item -> item.id }) { item ->
                     val isActive = state.activeCustomFontPath == item.filePath
                     Column(
                         Modifier.fillMaxWidth().clip(TacoShapes.card)
@@ -2075,7 +2076,7 @@ fun ProfilesScreen(state: TacoState) {
         Spacer(Modifier.height(14.dp))
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.layers, key = { it.id }) { layer ->
+            items(state.layers, key = { layer -> layer.id }) { layer ->
                 Column(
                     Modifier.fillMaxWidth().clip(TacoShapes.card)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -2139,6 +2140,8 @@ private fun SettingValue(title: String, value: String, onClick: () -> Unit) {
  *  8. APP STATE & PERSISTENCE
  * ====================================================================== */
 
+data class PinnedGame(val placeId: String)
+
 var appContext: Context? = null
 private fun clipMgr(ctx: Context) = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
@@ -2201,7 +2204,7 @@ class TacoState(
     fun isAllowed(key: String): Boolean = allowlist.isAllowed(key)
 
     fun pendingCount(): Int {
-        val keys = savedFlags.keys + draftFlags.keys
+        val keys = (savedFlags.keys + draftFlags.keys).toSet()
         return keys.count { savedFlags[it] != draftFlags[it] }
     }
 
