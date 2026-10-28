@@ -164,7 +164,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -176,10 +175,10 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /* ======================================================================
- *  1. ENGINE: JSON helpers + multi-path deployment
+ *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "5.8"
+const val APP_VERSION = "5.9"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -255,6 +254,7 @@ interface Bootstrapper {
     suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean): String
     suspend fun launchGame(pkg: String, id: String, root: Boolean, restart: Boolean): String
     suspend fun robloxVersion(pkg: String, root: Boolean): String?
+    suspend fun applyCustomFont(context: Context, fontBytes: ByteArray?, fontName: String, pkg: String, root: Boolean): String
     fun rootAvailable(): Boolean
     suspend fun clearCache(pkg: String, root: Boolean): String
 }
@@ -320,6 +320,22 @@ object DefaultBootstrapper : Bootstrapper {
         withContext(Dispatchers.IO) {
             val (ok, out) = runCmd("dumpsys package ${shq(pkg)} | grep -m1 versionName", root)
             if (ok && out.contains("=")) out.substringAfter("=").trim().ifBlank { null } else null
+        }
+
+    override suspend fun applyCustomFont(context: Context, fontBytes: ByteArray?, fontName: String, pkg: String, root: Boolean): String =
+        withContext(Dispatchers.IO) {
+            val fontDir = "/data/data/$pkg/files/content/fonts"
+            val mkCmd = "mkdir -p ${shq(fontDir)}"
+            runCmd(mkCmd, root)
+
+            if (fontBytes != null) {
+                val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
+                val targetFile = "$fontDir/custom_font.ttf"
+                val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
+                val (ok, out) = runCmd(writeCmd, root)
+                if (!ok) return@withContext "Failed to inject font file: $out"
+            }
+            "Successfully injected font ($fontName) into Roblox!"
         }
 
     override fun rootAvailable(): Boolean = isRootAvailable()
@@ -526,7 +542,7 @@ fun hapticTick(context: Context) {
 
 enum class TacoIcon {
     Home, Layers, Flag, Gamepad, Sliders, Play, Check, Close, Plus, Search, Copy, Trash,
-    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image
+    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image, Type
 }
 
 private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
@@ -633,6 +649,11 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 2f) 
                 drawRoundRect(tint, Offset(3f * s, 5f * s), Size(18f * s, 14f * s), CornerRadius(2f * s), style = st)
                 drawCircle(tint, 2.5f * s, Offset(8f * s, 10f * s))
                 pl(tint, st, s, 3f, 16f, 9f, 11f, 14f, 15f, 18f, 12f, 21f, 15f)
+            }
+            TacoIcon.Type -> {
+                pl(tint, st, s, 4f, 7f, 20f, 7f)
+                pl(tint, st, s, 12f, 7f, 12f, 19f)
+                pl(tint, st, s, 9f, 19f, 15f, 19f)
             }
         }
     }
@@ -2107,7 +2128,100 @@ private fun CustomFlagRow(
 }
 
 /* ======================================================================
- *  6. PROFILES SCREEN
+ *  6. FONTS SCREEN (NEW: Custom Font Injection to Roblox Without Root)
+ * ====================================================================== */
+
+@Composable
+fun FontsScreen(state: TacoState) {
+    val accent = LocalTacoAccent.current
+    val context = LocalContext.current
+
+    val fontPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            state.customFontUri = uri.toString()
+            state.selectedFontPreset = "Custom (.ttf)"
+            state.persist()
+            state.injectCustomFont(uri)
+        }
+    }
+
+    val presets = listOf("Default Roblox Font", "JetBrains Mono", "Inter Bold", "Comic Sans", "Product Sans")
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Roblox Custom Fonts", style = TacoType.displayBig)
+            Text("Inject custom typography directly into Roblox without root using Shizuku.", fontSize = 13.sp, color = TacoPalette.Muted)
+        }
+
+        item { SectionLabel("Upload Custom .TTF File") }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(TacoShapes.card)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+                    .border(1.dp, accent.neon.copy(0.5f), TacoShapes.card)
+                    .padding(18.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconCircle(TacoIcon.Type, accent.neon, 42.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Custom Font File", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                        Text(if (state.customFontUri.isEmpty()) "No font file selected" else "File loaded & ready", fontSize = 12.sp, color = TacoPalette.Muted)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TacoButton("Choose .ttf file", { fontPickerLauncher.launch(arrayOf("font/*", "application/octet-stream", "*/*")) }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Plus, 46.dp)
+                    if (state.customFontUri.isNotEmpty()) {
+                        TacoButton("Inject", { state.injectCustomFont(Uri.parse(state.customFontUri)) }, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
+                    }
+                }
+            }
+        }
+
+        item { SectionLabel("Font Presets") }
+        items(presets, key = { it }) { preset ->
+            val sel = state.selectedFontPreset == preset
+            Column(
+                Modifier.fillMaxWidth().clip(TacoShapes.card)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+                    .border(1.dp, if (sel) accent.neon else MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
+                    .clickable {
+                        state.selectedFontPreset = preset
+                        state.persist()
+                        state.injectPresetFont(preset)
+                    }
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconCircle(TacoIcon.Star, if (sel) accent.neon else TacoPalette.Faint, 36.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(preset, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                        Text("Instant preset injection", fontSize = 12.sp, color = TacoPalette.Muted)
+                    }
+                    if (sel) {
+                        TacoIcon(TacoIcon.Check, accent.neon, 20.dp, 2.5f)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* ======================================================================
+ *  7. PROFILES SCREEN
  * ====================================================================== */
 
 class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Map<String, String> = emptyMap()) {
@@ -2363,7 +2477,7 @@ private fun LayerCard(
 }
 
 /* ======================================================================
- *  7. GAMES SCREEN
+ *  8. GAMES SCREEN
  * ====================================================================== */
 
 data class PinnedGame(val placeId: String, val profile: String? = null)
@@ -2533,7 +2647,7 @@ fun GamesScreen(state: TacoState) {
 }
 
 /* ======================================================================
- *  8. SETTINGS SCREEN & IMAGE DECODER
+ *  9. SETTINGS SCREEN & IMAGE DECODER
  * ====================================================================== */
 
 @Composable
@@ -2781,7 +2895,8 @@ fun SettingsScreen(state: TacoState) {
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "5.8 — Million-Dollar Enterprise Edition\n" +
+                    "5.9 — Million-Dollar Enterprise Edition\n" +
+                        "· Custom Font Injection into Roblox without root!\n" +
                         "· Custom App Font Selector (Sans, Mono, Serif, Cursive)\n" +
                         "· Frosted glassmorphism cards with custom corner rounding\n" +
                         "· Adjustable card transparency & neon accent glow shaders\n" +
@@ -2856,7 +2971,7 @@ private fun SettingValue(title: String, value: String, onClick: () -> Unit, sub:
 }
 
 /* ======================================================================
- *  9. APP STATE + MILLION-DOLLAR PERSISTENCE
+ *  10. APP STATE + MILLION-DOLLAR PERSISTENCE
  * ====================================================================== */
 
 var appContext: Context? = null
@@ -2891,6 +3006,8 @@ class TacoState(
     var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
     var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
     var bgImageUri by mutableStateOf(prefs.getString("bgImageUri", "") ?: "")
+    var customFontUri by mutableStateOf(prefs.getString("customFontUri", "") ?: "")
+    var selectedFontPreset by mutableStateOf(prefs.getString("selectedFontPreset", "Default Roblox Font") ?: "Default Roblox Font")
 
     // Million-Dollar Appearance Customizations
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
@@ -3061,6 +3178,29 @@ class TacoState(
     }
 
     fun targetLabel(): String = targetGame?.let { "$it (#${games[it]?.placeId})" } ?: "Home (Roblox app)"
+
+    fun injectCustomFont(uri: Uri) {
+        val ctx = appContext ?: return
+        scope.launch {
+            val bytes = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes == null) {
+                notify("Failed to read font file bytes.")
+                return@launch
+            }
+            val res = engine.applyCustomFont(ctx, bytes, "Custom Font", pkg, useRoot)
+            notify(res)
+        }
+    }
+
+    fun injectPresetFont(presetName: String) {
+        val ctx = appContext ?: return
+        scope.launch {
+            val res = engine.applyCustomFont(ctx, null, presetName, pkg, useRoot)
+            notify(res)
+        }
+    }
 
     fun launchGameById(placeId: String) {
         scope.launch {
@@ -3274,6 +3414,8 @@ class TacoState(
             .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)
             .putBoolean("msgOther", msgOther)
             .putString("bgImageUri", bgImageUri)
+            .putString("customFontUri", customFontUri)
+            .putString("selectedFontPreset", selectedFontPreset)
             .putFloat("glassOpacity", glassOpacity)
             .putInt("cardCornerRadius", cardCornerRadius)
             .apply()
@@ -3294,13 +3436,13 @@ class TacoState(
 }
 
 /* ======================================================================
- *  10. NAVIGATION + MAINACTIVITY
+ *  11. NAVIGATION + MAINACTIVITY
  * ====================================================================== */
 
-private val TAB_ROUTES = listOf("home", "flags", "profiles", "games", "settings")
+private val TAB_ROUTES = listOf("home", "flags", "profiles", "fonts", "games", "settings")
 private val TAB_ICONS = listOf(
     TacoIcon.Home to "Home", TacoIcon.Flag to "Flags", TacoIcon.Layers to "Profiles",
-    TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
+    TacoIcon.Type to "Fonts", TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
 
 class MainActivity : ComponentActivity() {
@@ -3363,6 +3505,7 @@ fun TacoRoot() {
                     when (r) {
                         "flags" -> FlagsScreen(state)
                         "profiles" -> ProfilesScreen(state)
+                        "fonts" -> FontsScreen(state)
                         "games" -> GamesScreen(state)
                         "settings" -> SettingsScreen(state)
                         else -> HomeScreen(state) { target -> currentRoute = target }
@@ -3397,10 +3540,10 @@ fun TacoRoot() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
-                                TacoIcon(icon, tint, 21.dp)
+                                TacoIcon(icon, tint, 19.dp)
                                 if (selected) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
                         }
