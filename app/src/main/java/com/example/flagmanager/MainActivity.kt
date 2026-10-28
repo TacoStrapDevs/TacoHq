@@ -781,7 +781,9 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
             text,
             Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-            color = if (selected) accent.onPrimary else TacoPalette.Muted
+            color = if (selected) accent.onPrimary else TacoPalette.Muted,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -1781,14 +1783,19 @@ fun FlagsScreen(state: TacoState) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         stickyHeader {
-            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+            val cs = MaterialTheme.colorScheme
+            val hasBg = state.bgImageUri.isNotEmpty()
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(cs.background.copy(alpha = if (hasBg) 0.55f else 1f))
+            ) {
                 if (!loaded) {
                     ShimmerBox(Modifier.fillMaxWidth().height(76.dp), RoundedCornerShape(18.dp))
                 } else {
                     if (pending > 0) {
                         Row(
                             Modifier.fillMaxWidth().clip(TacoShapes.control)
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .background(cs.surfaceVariant.copy(alpha = state.glassOpacity))
                                 .border(1.dp, accent.neon.copy(0.5f), TacoShapes.control)
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1802,29 +1809,22 @@ fun FlagsScreen(state: TacoState) {
                         }
                         Spacer(Modifier.height(10.dp))
                     }
-                    Box(
-                        Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(state.cardCornerRadius.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
-                            .padding(4.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = search, onValueChange = { search = it },
-                            placeholder = { Text("Search ${draft.size} flags", color = TacoPalette.Faint) },
-                            singleLine = true,
-                            leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
-                                focusedBorderColor = accent.neon, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent
-                            ),
-                            shape = RoundedCornerShape(state.cardCornerRadius.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    OutlinedTextField(
+                        value = search, onValueChange = { search = it },
+                        placeholder = { Text("Search ${draft.size} flags", color = TacoPalette.Faint) },
+                        singleLine = true,
+                        leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
+                            focusedBorderColor = accent.neon,
+                            unfocusedBorderColor = cs.outlineVariant,
+                            focusedContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity),
+                            unfocusedContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity),
+                            disabledContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity)
+                        ),
+                        shape = RoundedCornerShape(state.cardCornerRadius.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         categories.forEach { c -> CategoryChip(c, category == c) { category = c } }
@@ -2797,7 +2797,7 @@ fun SettingsScreen(state: TacoState) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0 to "Sans", 1 to "Mono", 2 to "Serif", 3 to "Cursive", 4 to "Minecraft").forEach { (idx, label) ->
                         CategoryChip(label, state.fontIdx == idx) { state.fontIdx = idx; state.persist() }
                     }
@@ -2811,7 +2811,7 @@ fun SettingsScreen(state: TacoState) {
                     Text("${(state.glassOpacity * 100).toInt()}%", style = TacoType.tnum, color = accent.neon)
                 }
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.70f to "Glassy", 0.85f to "Balanced", 0.95f to "Solid").forEach { (op, label) ->
                         CategoryChip(label, state.glassOpacity == op) { state.glassOpacity = op; state.persist() }
                     }
@@ -2825,7 +2825,7 @@ fun SettingsScreen(state: TacoState) {
                     Text("${state.cardCornerRadius} dp", style = TacoType.tnum, color = accent.neon)
                 }
                 Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(12 to "Sharp", 20 to "Smooth", 28 to "Pill").forEach { (rad, label) ->
                         CategoryChip(label, state.cardCornerRadius == rad) { state.cardCornerRadius = rad; state.persist() }
                     }
@@ -2919,8 +2919,8 @@ fun SettingsScreen(state: TacoState) {
             text = {
                 Text(
                     "6.2 — Million-Dollar Enterprise Edition\n" +
-                        "· Cleaned up layout structure for bottom settings card text\n" +
-                        "· Wrapped FFlags search bar inside a container box matching card corner rounding & glass opacity\n",
+                        "· Fixed the settings chip rows so long labels no longer wrap and leave a gap\n" +
+                        "· Flags search bar now blends with your custom wallpaper\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
