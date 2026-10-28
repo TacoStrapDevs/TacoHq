@@ -394,7 +394,8 @@ val TACO_ACCENTS = listOf(
 
 val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
 val LocalReduceMotion = compositionLocalOf { false }
-val LocalCustomFont = compositionLocalOf { FontFamily.SansSerif }
+// FIX: explicit type so any FontFamily can be provided (not just GenericFontFamily)
+val LocalCustomFont = compositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
 object TacoType {
     @Composable
