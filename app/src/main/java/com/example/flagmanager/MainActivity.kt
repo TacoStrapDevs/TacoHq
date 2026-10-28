@@ -3395,7 +3395,7 @@ fun TacoRoot() {
                                         indication = null
                                     ) { currentRoute = route },
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Alignment.Center
+                                horizontalArrangement = Arrangement.Center
                             ) {
                                 TacoIcon(icon, tint, 21.dp)
                                 if (selected) {
