@@ -459,7 +459,7 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
     val accent = TACO_ACCENTS[accentIdx.coerceIn(0, TACO_ACCENTS.lastIndex)]
     val base = if (amoled) TacoPalette.CharcoalDeep else TacoPalette.Charcoal
     val surface = if (amoled) Color(0xFF100B08) else TacoPalette.Surface
-    val fontFamily = when (fontIdx) {
+    val fontFamily: FontFamily = when (fontIdx) {
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
