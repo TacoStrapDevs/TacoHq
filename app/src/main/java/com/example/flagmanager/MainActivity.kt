@@ -463,6 +463,7 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft pixel style font
         else -> FontFamily.SansSerif
     }
     val scheme = darkColorScheme(
@@ -1806,7 +1807,7 @@ fun FlagsScreen(state: TacoState) {
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
                         ),
-                        shape = TacoShapes.control,
+                        shape = RoundedCornerShape(state.cardCornerRadius.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -2771,12 +2772,12 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Custom Font Selector
+            // Custom Font Selector with Minecraft Font option
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(0 to "Sans", 1 to "Mono", 2 to "Serif", 3 to "Cursive").forEach { (idx, label) ->
+                    listOf(0 to "Sans", 1 to "Mono", 2 to "Serif", 3 to "Cursive", 4 to "Minecraft").forEach { (idx, label) ->
                         CategoryChip(label, state.fontIdx == idx) { state.fontIdx = idx; state.persist() }
                     }
                 }
@@ -2898,7 +2899,7 @@ fun SettingsScreen(state: TacoState) {
                 Text(
                     "5.9 — Million-Dollar Enterprise Edition\n" +
                         "· Custom Font Injection into Roblox without root!\n" +
-                        "· Custom App Font Selector (Sans, Mono, Serif, Cursive)\n" +
+                        "· Custom App Font Selector (Sans, Mono, Serif, Cursive, Minecraft)\n" +
                         "· Frosted glassmorphism cards with custom corner rounding\n" +
                         "· Adjustable card transparency & neon accent glow shaders\n" +
                         "· Griddle dial with multi-stage neon particle sizzle\n" +
