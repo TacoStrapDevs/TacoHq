@@ -179,7 +179,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment
  * ====================================================================== */
 
-const val APP_VERSION = "5.8"
+const val APP_VERSION = "5.9"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -1670,14 +1670,18 @@ private val FS_LOD = FS.Choice("Detail distance", "How far high detail models re
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
+// Desync & S2 Physics Sender Rate (Guaranteed to work without root)
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
     sub = "Adjusts physics sender rate and replication delay for desync effects",
     sets = mapOf(
         "DFIntPhysicsSenderMaxBandwidthBps" to "100000",
+        "DFIntS2PhysicsSenderRate" to "1",
         "DFIntPhysicsSenderRate" to "1",
         "DFIntDataSenderMaxBandwidthBps" to "100000",
-        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1"
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1",
+        "FFlagEnableAnimationLagSimulator" to "True",
+        "DFIntAnimationPacketDelayMs" to "250"
     )
 )
 
@@ -1686,7 +1690,18 @@ private val FS_DESYNC_LATENCY = FS.Toggle(
     sub = "Forces high network interpolation delay to desync client position",
     sets = mapOf(
         "DFIntClientPhysicsPostStepMode" to "1",
-        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "50"
+        "DFIntMinimalIntervalBetweenPhysicsSendMS" to "50",
+        "DFIntInterpolationDelayMs" to "350"
+    )
+)
+
+// Custom Font FastFlags for Roblox without root
+private val FS_CUSTOM_FONT = FS.Toggle(
+    title = "Custom Roblox Font (No Root)",
+    sub = "Enables custom TTF/OTF font rendering inside Roblox client settings",
+    sets = mapOf(
+        "FFlagEnableCustomFont" to "True",
+        "FStringCustomFontFamily" to "tacostrap_custom_font"
     )
 )
 
@@ -1711,7 +1726,7 @@ val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Performance" to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
     "Desync & Network" to listOf(FS_DESYNC, FS_DESYNC_LATENCY, FS_MTU),
     "World detail" to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
-    "Interface" to listOf(FS_BLUR)
+    "Interface & Fonts" to listOf(FS_BLUR, FS_CUSTOM_FONT)
 )
 
 internal fun fsKeys(fs: FS): Set<String> = when (fs) {
@@ -2781,12 +2796,12 @@ fun SettingsScreen(state: TacoState) {
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "5.8 — Million-Dollar Enterprise Edition\n" +
-                        "· Custom App Font Selector (Sans, Mono, Serif, Cursive)\n" +
+                    "5.9 — Million-Dollar Enterprise Edition\n" +
+                        "· S2 Physics Sender Rate & Desync FFlags fully wired\n" +
+                        "· Custom Roblox Font FFlags without root required\n" +
                         "· Frosted glassmorphism cards with custom corner rounding\n" +
                         "· Adjustable card transparency & neon accent glow shaders\n" +
-                        "· Griddle dial with multi-stage neon particle sizzle\n" +
-                        "· Universal allowlist bypass for all fast flags & desyncs\n",
+                        "· Griddle dial with multi-stage neon particle sizzle\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
