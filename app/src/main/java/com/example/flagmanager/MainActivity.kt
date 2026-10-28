@@ -1802,20 +1802,29 @@ fun FlagsScreen(state: TacoState) {
                         }
                         Spacer(Modifier.height(10.dp))
                     }
-                    OutlinedTextField(
-                        value = search, onValueChange = { search = it },
-                        placeholder = { Text("Search ${draft.size} flags", color = TacoPalette.Faint) },
-                        singleLine = true,
-                        leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
-                            focusedBorderColor = accent.neon, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity)
-                        ),
-                        shape = RoundedCornerShape(state.cardCornerRadius.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(state.cardCornerRadius.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
+                            .padding(4.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = search, onValueChange = { search = it },
+                            placeholder = { Text("Search ${draft.size} flags", color = TacoPalette.Faint) },
+                            singleLine = true,
+                            leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
+                                focusedBorderColor = accent.neon, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            ),
+                            shape = RoundedCornerShape(state.cardCornerRadius.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         categories.forEach { c -> CategoryChip(c, category == c) { category = c } }
@@ -2910,8 +2919,8 @@ fun SettingsScreen(state: TacoState) {
             text = {
                 Text(
                     "6.2 — Million-Dollar Enterprise Edition\n" +
-                        "· Fully removed the stray label causing settings bottom gaps\n" +
-                        "· Bound FFlags search bar corner radius and glass opacity directly to the card settings\n",
+                        "· Cleaned up layout structure for bottom settings card text\n" +
+                        "· Wrapped FFlags search bar inside a container box matching card corner rounding & glass opacity\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
