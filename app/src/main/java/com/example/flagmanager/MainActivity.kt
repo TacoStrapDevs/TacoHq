@@ -1787,7 +1787,7 @@ fun FlagsScreen(state: TacoState) {
             val hasBg = state.bgImageUri.isNotEmpty()
             Column(
                 Modifier.fillMaxWidth()
-                    .background(cs.background.copy(alpha = if (hasBg) 0.55f else 1f))
+                    .background(if (hasBg) Color.Transparent else cs.background)
             ) {
                 if (!loaded) {
                     ShimmerBox(Modifier.fillMaxWidth().height(76.dp), RoundedCornerShape(18.dp))
