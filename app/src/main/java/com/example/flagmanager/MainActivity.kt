@@ -179,7 +179,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "6.1"
+const val APP_VERSION = "6.2"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -2909,11 +2909,9 @@ fun SettingsScreen(state: TacoState) {
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "6.1 — Million-Dollar Enterprise Edition\n" +
-                        "· Fixed Flags search bar shape & border outline uniformity\n" +
-                        "· Removed layout gaps & empty padding spaces in Settings\n" +
-                        "· Added Minecraft pixel font & multiple app font selectors\n" +
-                        "· Smart Shizuku grant button hiding when already connected\n",
+                    "6.2 — Million-Dollar Enterprise Edition\n" +
+                        "· Fully removed the stray label causing settings bottom gaps\n" +
+                        "· Bound FFlags search bar corner radius directly to the card corner setting\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
