@@ -164,6 +164,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -3182,9 +3183,11 @@ class TacoState(
     fun injectCustomFont(uri: Uri) {
         val ctx = appContext ?: return
         scope.launch {
-            val bytes = runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            }.getOrNull()
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.getOrNull()
+            }
             if (bytes == null) {
                 notify("Failed to read font file bytes.")
                 return@launch
