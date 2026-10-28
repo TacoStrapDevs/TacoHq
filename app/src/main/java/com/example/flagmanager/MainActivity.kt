@@ -179,7 +179,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "5.9"
+const val APP_VERSION = "6.0"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -394,7 +394,6 @@ val TACO_ACCENTS = listOf(
 
 val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
 val LocalReduceMotion = compositionLocalOf { false }
-// FIX: explicit type so any FontFamily can be provided (not just GenericFontFamily)
 val LocalCustomFont = compositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
 object TacoType {
@@ -442,14 +441,6 @@ class FoldedSheetShape(private val fold: Dp = 22.dp, private val rest: Dp = 12.d
     }
 }
 
-object TacoShapes {
-    val menuCard: Shape = FoldedSheetShape()
-    val sheet = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
-    val card = RoundedCornerShape(20.dp)
-    val control = RoundedCornerShape(16.dp)
-    val pill = CircleShape
-}
-
 object TacoMotion {
     val softSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 400f)
     val shimmer = tween<Float>(1200)
@@ -464,7 +455,7 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
-        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft pixel style font
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft pixel style font mapping
         else -> FontFamily.SansSerif
     }
     val scheme = darkColorScheme(
@@ -805,7 +796,7 @@ fun AllowlistBadge(allowed: Boolean?) {
 }
 
 @Composable
-fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control) {
+fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapesItem()) {
     if (LocalReduceMotion.current) {
         Box(modifier.clip(shape).background(TacoPalette.SurfaceHigh))
         return
@@ -824,11 +815,21 @@ fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control)
     )
 }
 
+object TacoShapes {
+    val sheet = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    val card = RoundedCornerShape(20.dp)
+    val control = RoundedCornerShape(16.dp)
+    val pill = CircleShape
+}
+
+@Composable
+fun TacoShapesItem(radius: Int = 20): Shape = RoundedCornerShape(radius.dp)
+
 @Composable
 fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable () -> Unit)? = null) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterVertically
     ) {
         IconCircle(icon, LocalTacoAccent.current.neon, 58.dp)
         Spacer(Modifier.height(14.dp))
@@ -879,27 +880,30 @@ fun StatusStrip(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifi
             .background(TacoPalette.SurfaceHigh.copy(alpha = 0.75f))
             .border(1.dp, TacoPalette.Outline.copy(alpha = 0.5f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         statuses.forEachIndexed { i, s ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f, fill = false)
+            ) {
                 Box(
                     Modifier.size(8.dp).clip(CircleShape)
                         .background(if (s.optional && s.color == TacoPalette.Faint) Color.Transparent else s.color)
                         .border(1.dp, s.color, CircleShape)
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(s.label, style = TacoType.label)
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(s.label, style = TacoType.label, maxLines = 1)
+                Spacer(Modifier.width(3.dp))
                 Text(
-                    s.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    s.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                     color = if (s.optional) TacoPalette.Muted else TacoPalette.Cream
                 )
             }
             if (i < statuses.lastIndex) {
-                Text("·", color = TacoPalette.Faint, modifier = Modifier.padding(horizontal = 6.dp))
+                Text("·", color = TacoPalette.Faint, modifier = Modifier.padding(horizontal = 4.dp))
             }
         }
     }
@@ -1408,9 +1412,9 @@ fun MenuCarousel(
         items(games, key = { it.second }) { (name, id) ->
             Column(
                 Modifier.width(156.dp)
-                    .clip(TacoShapes.menuCard)
+                    .clip(FoldedSheetShape())
                     .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
-                    .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
+                    .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
                     .combinedClickable(
                         onClick = { onPick(name) },
                         onLongClick = { onLongLaunch(id) },
@@ -1432,8 +1436,8 @@ fun MenuCarousel(
         item {
             Column(
                 Modifier.width(124.dp).height(118.dp)
-                    .clip(TacoShapes.menuCard)
-                    .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
+                    .clip(FoldedSheetShape())
+                    .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
                     .clickable(onClick = onAddGame),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -1580,8 +1584,8 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 if (state.games.isEmpty()) {
                     Column(
-                        Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
-                            .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
+                        Modifier.fillMaxWidth().clip(FoldedSheetShape())
+                            .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
                             .padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -2131,7 +2135,7 @@ private fun CustomFlagRow(
 }
 
 /* ======================================================================
- *  6. FONTS SCREEN (NEW: Custom Font Injection to Roblox Without Root)
+ *  6. FONTS SCREEN
  * ====================================================================== */
 
 @Composable
@@ -2290,9 +2294,9 @@ fun ProfilesScreen(state: TacoState) {
         items(PACKS.size, key = { "pack$it" }) { i ->
             val p = PACKS[i]
             Column(
-                Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
+                Modifier.fillMaxWidth().clip(FoldedSheetShape())
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.menuCard)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, FoldedSheetShape())
                     .padding(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2529,12 +2533,12 @@ fun GamesScreen(state: TacoState) {
             val game = entry.value
             Column(
                 Modifier
-                    .clip(TacoShapes.menuCard)
+                    .clip(FoldedSheetShape())
                     .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
                     .border(
                         1.dp,
                         if (state.targetGame == name) accent.neon.copy(0.7f) else MaterialTheme.colorScheme.outlineVariant,
-                        TacoShapes.menuCard
+                        FoldedSheetShape()
                     )
                     .combinedClickable(
                         onClick = { detailGame = name },
@@ -2650,7 +2654,7 @@ fun GamesScreen(state: TacoState) {
 }
 
 /* ======================================================================
- *  9. SETTINGS SCREEN & IMAGE DECODER
+ *  9. SETTINGS SCREEN
  * ====================================================================== */
 
 @Composable
@@ -2898,13 +2902,13 @@ fun SettingsScreen(state: TacoState) {
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "5.9 — Million-Dollar Enterprise Edition\n" +
-                        "· Custom Font Injection into Roblox without root!\n" +
-                        "· Custom App Font Selector (Sans, Mono, Serif, Cursive, Minecraft)\n" +
+                    "6.0 — Million-Dollar Enterprise Edition\n" +
+                        "· Shizuku oval layout stabilized & fixed sizing\n" +
+                        "· Minecraft pixel font & multi-font options added!\n" +
+                        "· Custom Font Injection into Roblox without root\n" +
                         "· Frosted glassmorphism cards with custom corner rounding\n" +
                         "· Adjustable card transparency & neon accent glow shaders\n" +
-                        "· Griddle dial with multi-stage neon particle sizzle\n" +
-                        "· Universal allowlist bypass for all fast flags & desyncs\n",
+                        "· Griddle dial with multi-stage neon particle sizzle\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
@@ -3012,7 +3016,6 @@ class TacoState(
     var customFontUri by mutableStateOf(prefs.getString("customFontUri", "") ?: "")
     var selectedFontPreset by mutableStateOf(prefs.getString("selectedFontPreset", "Default Roblox Font") ?: "Default Roblox Font")
 
-    // Million-Dollar Appearance Customizations
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
     var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
 
