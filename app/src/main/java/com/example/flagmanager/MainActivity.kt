@@ -179,7 +179,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "6.0"
+const val APP_VERSION = "6.1"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -455,7 +455,7 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
-        4 -> FontFamily(android.graphics.Typeface.MONOSPACE)
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft fallback
         else -> FontFamily.SansSerif
     }
     val scheme = darkColorScheme(
@@ -910,6 +910,7 @@ fun StatusStrip(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifi
 fun StatusSheetContent(
     statuses: List<Triple<String, String, Color>>,
     fixSteps: List<Pair<String, String>>,
+    shizukuConnected: Boolean,
     onGrantShizuku: () -> Unit,
     onOpenShizukuGuide: () -> Unit,
     onDismiss: () -> Unit
@@ -942,7 +943,9 @@ fun StatusSheetContent(
             Spacer(Modifier.height(10.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TacoButton("Grant Shizuku", onGrantShizuku, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
+            if (!shizukuConnected) {
+                TacoButton("Grant Shizuku", onGrantShizuku, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
+            }
             TacoButton("Setup guide", onOpenShizukuGuide, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
         }
         Spacer(Modifier.height(10.dp))
@@ -1625,6 +1628,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     "Root" to "Optional. Enable Magisk/SU, then turn on “Use root” in Settings. No root? Use Shizuku instead.",
                     "Roblox" to "Confirm the package name in Settings if the version shows “not detected”."
                 ),
+                shizukuConnected = state.shizuku.ok,
                 onGrantShizuku = { state.requestShizukuPermission() },
                 onOpenShizukuGuide = { showStatusSheet = false; onNavigate("settings") },
                 onDismiss = { showStatusSheet = false }
@@ -1805,7 +1809,7 @@ fun FlagsScreen(state: TacoState) {
                         leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
-                            focusedBorderColor = accent.neon, unfocusedBorderColor = TacoPalette.Outline,
+                            focusedBorderColor = accent.neon, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
                         ),
@@ -2743,7 +2747,9 @@ fun SettingsScreen(state: TacoState) {
             }
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TacoButton("Grant", { state.requestShizukuPermission() }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
+                if (!state.shizuku.ok) {
+                    TacoButton("Grant", { state.requestShizukuPermission() }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
+                }
                 TacoButton("shizuku.rikka.app", {
                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app"))) }
                 }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
@@ -2778,7 +2784,7 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Custom Font Selector with Minecraft Font option
+            // App Font Style Options
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -2789,7 +2795,7 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Glass Opacity Selector
+            // Card Glass Transparency Selector
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Card Glass Transparency", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -2903,13 +2909,11 @@ fun SettingsScreen(state: TacoState) {
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "6.0 — Million-Dollar Enterprise Edition\n" +
-                        "· Shizuku oval layout stabilized & fixed sizing\n" +
-                        "· Minecraft pixel font & multi-font options added!\n" +
-                        "· Custom Font Injection into Roblox without root\n" +
-                        "· Frosted glassmorphism cards with custom corner rounding\n" +
-                        "· Adjustable card transparency & neon accent glow shaders\n" +
-                        "· Griddle dial with multi-stage neon particle sizzle\n",
+                    "6.1 — Million-Dollar Enterprise Edition\n" +
+                        "· Fixed Flags search bar shape & border outline uniformity\n" +
+                        "· Removed layout gaps & empty padding spaces in Settings\n" +
+                        "· Added Minecraft pixel font & multiple app font selectors\n" +
+                        "· Smart Shizuku grant button hiding when already connected\n",
                     fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
