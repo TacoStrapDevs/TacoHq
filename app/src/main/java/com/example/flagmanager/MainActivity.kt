@@ -1554,13 +1554,12 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
                     LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
-                    LedStatus("VPN", state.vpnStatus,
-                        when (state.vpnStatus) {
-                            "active" -> TacoPalette.Guac
-                            "starting" -> TacoPalette.Tortilla
-                            "error" -> TacoPalette.Salsa
-                            else -> TacoPalette.Faint
-                        }, optional = true)
+                    LedStatus(
+                        "VPN",
+                        if (state.vpnBypass) "active" else "off",
+                        if (state.vpnBypass) TacoPalette.Guac else TacoPalette.Faint,
+                        optional = true
+                    )
                 ),
                 onClick = { showStatusSheet = true }
             )
