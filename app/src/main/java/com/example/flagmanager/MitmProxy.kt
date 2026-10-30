@@ -2,71 +2,138 @@ package com.example.flagmanager
 
 import android.util.Log
 import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * Local HTTP diagnostic listener. It deliberately does not rewrite Roblox responses,
- * inject FastFlags, intercept HTTPS, or bypass application allowlists.
+ * MitmProxy
+ *
+ * Local TCP diagnostic listener.
+ * This is NOT a VPN tunnel and does not intercept Roblox HTTPS traffic.
  */
 object MitmProxy {
+
     private const val TAG = "MitmProxy"
-    @Volatile private var running = false
-    @Volatile private var serverSocket: ServerSocket? = null
+
+    @Volatile
+    private var running = false
+
+    @Volatile
+    private var serverSocket: ServerSocket? = null
+
+    @Volatile
+    private var activePort: Int = -1
 
     @Synchronized
-    @Throws(Exception::class)
     fun start(port: Int) {
-        if (running) return
-        val socket = ServerSocket(port) // Bind synchronously so startup errors are reported accurately.
-        serverSocket = socket
-        running = true
-        thread(name = "TacoStrap-HTTP-listener", isDaemon = true) {
-            try {
-                while (running) {
-                    val client = try { socket.accept() } catch (e: Exception) {
-                        if (running) Log.e(TAG, "Accept failed", e)
-                        break
-                    }
-                    thread(name = "TacoStrap-HTTP-client", isDaemon = true) { handle(client) }
+        if (running) {
+            Log.d(TAG, "Already running on port $activePort")
+            return
+        }
+
+        try {
+            val socket = ServerSocket(port)
+            serverSocket = socket
+            activePort = port
+            running = true
+
+            Log.d(TAG, "Diagnostic listener started on port $port")
+
+            thread(
+                name = "MitmProxy-Accept",
+                isDaemon = true
+            ) {
+                acceptConnections(socket)
+            }
+
+        } catch (e: Exception) {
+            running = false
+            serverSocket = null
+            activePort = -1
+
+            Log.e(TAG, "Failed to start listener", e)
+        }
+    }
+
+    private fun acceptConnections(server: ServerSocket) {
+        try {
+            while (running && !server.isClosed) {
+                val client = server.accept()
+
+                thread(
+                    name = "MitmProxy-Client",
+                    isDaemon = true
+                ) {
+                    handleConnection(client)
                 }
-            } finally {
-                running = false
-                runCatching { socket.close() }
-                if (serverSocket === socket) serverSocket = null
+            }
+        } catch (e: Exception) {
+            if (running) {
+                Log.e(TAG, "Accept loop failed", e)
+            }
+        } finally {
+            synchronized(this) {
+                if (serverSocket === server) {
+                    running = false
+                    serverSocket = null
+                    activePort = -1
+                }
             }
         }
-        Log.i(TAG, "Diagnostic listener bound on :$port")
+    }
+
+    private fun handleConnection(client: Socket) {
+        client.use { socket ->
+            try {
+                socket.soTimeout = 5000
+
+                val reader = BufferedReader(
+                    InputStreamReader(socket.getInputStream())
+                )
+
+                val firstLine = reader.readLine() ?: return
+
+                Log.d(TAG, "Received connection: $firstLine")
+
+                val output: OutputStream = socket.getOutputStream()
+
+                val response = """
+                    HTTP/1.1 501 Not Implemented
+                    Content-Type: text/plain; charset=utf-8
+                    Connection: close
+
+                    This diagnostic listener does not proxy or intercept traffic.
+                """.trimIndent().replace("\n", "\r\n")
+
+                output.write(response.toByteArray(Charsets.UTF_8))
+                output.flush()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Connection error", e)
+            }
+        }
     }
 
     @Synchronized
     fun stop() {
         running = false
-        runCatching { serverSocket?.close() }
-        serverSocket = null
-    }
 
-    fun isRunning(): Boolean = running && serverSocket?.isBound == true && !serverSocket!!.isClosed
-
-    private fun handle(client: Socket) {
-        client.use { socket ->
-            socket.soTimeout = 5_000
-            val reader: BufferedReader = socket.getInputStream().bufferedReader()
-            val requestLine = reader.readLine() ?: return
-            // Drain headers; this listener is diagnostic and does not forward or modify traffic.
-            while (true) {
-                val line = reader.readLine() ?: break
-                if (line.isEmpty()) break
-            }
-            val body = "TacoStrap local diagnostic listener is running. No Roblox traffic was intercepted.\n"
-                .toByteArray(Charsets.UTF_8)
-            val output = socket.getOutputStream()
-            output.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n" +
-                "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
-            output.write(body)
-            output.flush()
-            Log.d(TAG, "Diagnostic request received: $requestLine")
+        try {
+            serverSocket?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing listener", e)
         }
+
+        serverSocket = null
+        activePort = -1
+
+        Log.d(TAG, "Diagnostic listener stopped")
     }
+
+    fun isRunning(): Boolean = running
+
+    fun getActivePort(): Int = activePort
 }
