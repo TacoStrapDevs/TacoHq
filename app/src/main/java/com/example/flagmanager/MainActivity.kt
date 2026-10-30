@@ -13,7 +13,6 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -169,6 +168,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import android.net.VpnService
+import android.net.VpnService.Builder
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -177,28 +178,17 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /* ======================================================================
- *  1. ENGINE: JSON helpers + multi-path deployment + Native JNI Bridge
+ *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "5.0"
+const val APP_VERSION = "6.2"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
 const val EXE_PATH = "/data/data/com.roblox.client/files/exe/ClientSettings/ClientAppSettings.json"
 
-/** Native Memory Bridge for Pure Offset live RAM patching via C++ (JNI) */
-object NativeMemoryBridge {
-    init {
-        runCatching { System.loadLibrary("tacostrap_native") }
-    }
-    external fun nativeInit(pid: Int): Boolean
-    external fun nativeSetMaxFPS(fpsOffset: Long, maxFps: Double): Boolean
-    external fun nativeSetWalkspeed(humanoidAddress: Long, walkspeedOffset: Long, speed: Float): Boolean
-}
-
-/** Parses a flat JSON object into string->string. Booleans become "True"/"False". */
 fun parseFlags(text: String): Map<String, String> {
-    val o = JSONObject(text.ifBlank { "{}" })
+    val o = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
     val out = LinkedHashMap<String, String>()
     val it = o.keys()
     while (it.hasNext()) {
@@ -211,10 +201,6 @@ fun parseFlags(text: String): Map<String, String> {
     return out
 }
 
-/** 
- * Writes flags as JSON using native bool, int, long, and double/float types 
- * so Roblox parses them correctly without ignoring quotes.
- */
 fun toJson(map: Map<String, String>, indent: Int = 0): String {
     val o = JSONObject()
     map.forEach { (k, v) ->
@@ -264,8 +250,6 @@ fun fetchText(url: String): Pair<Boolean, String> = try {
     else false to "HTTP $code"
 } catch (e: Throwable) { false to (e.message ?: "network error") }
 
-/* ---- Bootstrapper interface + implementation ---- */
-
 interface Bootstrapper {
     fun shizukuState(): ShizukuState
     suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String
@@ -273,6 +257,7 @@ interface Bootstrapper {
     suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean): String
     suspend fun launchGame(pkg: String, id: String, root: Boolean, restart: Boolean): String
     suspend fun robloxVersion(pkg: String, root: Boolean): String?
+    suspend fun applyCustomFont(context: Context, fontBytes: ByteArray?, fontName: String, pkg: String, root: Boolean): String
     fun rootAvailable(): Boolean
     suspend fun clearCache(pkg: String, root: Boolean): String
 }
@@ -290,7 +275,6 @@ object DefaultBootstrapper : Bootstrapper {
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
-            
             val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
             var success = false
             var lastOut = ""
@@ -300,11 +284,7 @@ object DefaultBootstrapper : Bootstrapper {
                 val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
                 val cmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(p)} && chmod 644 ${shq(p)}"
                 val (ok, out) = runCmd(cmd, root)
-                if (ok) {
-                    success = true
-                } else {
-                    lastOut = out
-                }
+                if (ok) success = true else lastOut = out
             }
 
             if (!success) return@withContext "Failed: ${lastOut.ifBlank { "could not write flag file" }}"
@@ -345,6 +325,22 @@ object DefaultBootstrapper : Bootstrapper {
             if (ok && out.contains("=")) out.substringAfter("=").trim().ifBlank { null } else null
         }
 
+    override suspend fun applyCustomFont(context: Context, fontBytes: ByteArray?, fontName: String, pkg: String, root: Boolean): String =
+        withContext(Dispatchers.IO) {
+            val fontDir = "/data/data/$pkg/files/content/fonts"
+            val mkCmd = "mkdir -p ${shq(fontDir)}"
+            runCmd(mkCmd, root)
+
+            if (fontBytes != null) {
+                val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
+                val targetFile = "$fontDir/custom_font.ttf"
+                val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
+                val (ok, out) = runCmd(writeCmd, root)
+                if (!ok) return@withContext "Failed to inject font file: $out"
+            }
+            "Successfully injected font ($fontName) into Roblox!"
+        }
+
     override fun rootAvailable(): Boolean = isRootAvailable()
 
     override suspend fun clearCache(pkg: String, root: Boolean): String =
@@ -370,60 +366,63 @@ sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, 
 }
 
 /* ======================================================================
- *  2. THEME & PALETTE
+ *  2. THEME & ADVANCED MILLION-DOLLAR PALETTE
  * ====================================================================== */
 
 object TacoPalette {
-    val Charcoal = Color(0xFF120D0A)
-    val CharcoalDeep = Color(0xFF0C0906)
-    val Surface = Color(0xFF1B140E)
-    val SurfaceHigh = Color(0xFF251B12)
-    val Tortilla = Color(0xFFF5B544)
-    val TortillaDeep = Color(0xFFC98A2B)
-    val Salsa = Color(0xFFF2572B)
-    val Guac = Color(0xFF6BBF59)
-    val Cream = Color(0xFFFFF1DC)
-    val Muted = Color(0xFFCBB896)
-    val Faint = Color(0xFF7E6F5C)
-    val Outline = Color(0xFF3D2F21)
+    val Charcoal = Color(0xFF0F0B09)
+    val CharcoalDeep = Color(0xFF070504)
+    val Surface = Color(0xFF18120E)
+    val SurfaceHigh = Color(0xFF221913)
+    val Tortilla = Color(0xFFFFB84D)
+    val TortillaDeep = Color(0xFFD4932A)
+    val Salsa = Color(0xFFF75931)
+    val Guac = Color(0xFF5CD674)
+    val Cream = Color(0xFFFFF7ED)
+    val Muted = Color(0xFFB8A48B)
+    val Faint = Color(0xFF6E5E4E)
+    val Outline = Color(0xFF382A1D)
 }
 
-data class TacoAccent(val name: String, val primary: Color, val onPrimary: Color, val deep: Color)
+data class TacoAccent(val name: String, val primary: Color, val onPrimary: Color, val deep: Color, val neon: Color)
 
 val TACO_ACCENTS = listOf(
-    TacoAccent("Tortilla", TacoPalette.Tortilla, TacoPalette.CharcoalDeep, TacoPalette.TortillaDeep),
-    TacoAccent("Salsa", TacoPalette.Salsa, Color(0xFF2A0E06), Color(0xFFB53A16)),
-    TacoAccent("Guac", TacoPalette.Guac, Color(0xFF0E220A), Color(0xFF4C9440)),
-    TacoAccent("Horchata", Color(0xFFE8A87C), Color(0xFF2A1508), Color(0xFFB97A4E)),
+    TacoAccent("Amber Gold", TacoPalette.Tortilla, TacoPalette.CharcoalDeep, TacoPalette.TortillaDeep, Color(0xFFFFD166)),
+    TacoAccent("Cyber Crimson", TacoPalette.Salsa, Color(0xFF2A0A04), Color(0xFFC73D17), Color(0xFFFF6B6B)),
+    TacoAccent("Neon Emerald", TacoPalette.Guac, Color(0xFF061A0C), Color(0xFF3B9E50), Color(0xFF4EED77)),
+    TacoAccent("Solar Flare", Color(0xFFFF8E3C), Color(0xFF241002), Color(0xFFCC5E13), Color(0xFFFFB35C)),
+    TacoAccent("Electric Orchid", Color(0xFFB062FF), Color(0xFF140424), Color(0xFF7F35D4), Color(0xFFD18FFF))
 )
 
 val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
 val LocalReduceMotion = compositionLocalOf { false }
+val LocalCustomFont = compositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
 object TacoType {
-    val Display = FontFamily.SansSerif
+    @Composable
+    fun getDisplayFamily(): FontFamily = LocalCustomFont.current
 
-    val displayBig = TextStyle(
-        fontFamily = Display, fontWeight = FontWeight.ExtraBold, fontSize = 34.sp,
+    val displayBig @Composable get() = TextStyle(
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.ExtraBold, fontSize = 34.sp,
         letterSpacing = (-0.8).sp, color = TacoPalette.Cream
     )
-    val display = TextStyle(
-        fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 22.sp,
+    val display @Composable get() = TextStyle(
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.Bold, fontSize = 22.sp,
         letterSpacing = (-0.3).sp, color = TacoPalette.Cream
     )
-    val body = TextStyle(
-        fontFamily = Display, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = TacoPalette.Cream
+    val body @Composable get() = TextStyle(
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.Medium, fontSize = 15.sp, color = TacoPalette.Cream
     )
-    val label = TextStyle(
-        fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 11.sp,
+    val label @Composable get() = TextStyle(
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.SemiBold, fontSize = 11.sp,
         letterSpacing = 1.4.sp, color = TacoPalette.Muted
     )
-    val mono = TextStyle(
+    val mono @Composable get() = TextStyle(
         fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 13.sp,
         color = TacoPalette.Cream
     )
-    val tnum = TextStyle(
-        fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 15.sp,
+    val tnum @Composable get() = TextStyle(
+        fontFamily = getDisplayFamily(), fontWeight = FontWeight.Bold, fontSize = 15.sp,
         fontFeatureSettings = "tnum", color = TacoPalette.Cream
     )
 }
@@ -444,24 +443,23 @@ class FoldedSheetShape(private val fold: Dp = 22.dp, private val rest: Dp = 12.d
     }
 }
 
-object TacoShapes {
-    val menuCard: Shape = FoldedSheetShape()
-    val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-    val card = RoundedCornerShape(18.dp)
-    val control = RoundedCornerShape(14.dp)
-    val pill = CircleShape
-}
-
 object TacoMotion {
-    val softSpring = spring<Float>(dampingRatio = 0.8f, stiffness = 380f)
-    val shimmer = tween<Float>(1100)
+    val softSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 400f)
+    val shimmer = tween<Float>(1200)
 }
 
 @Composable
-fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, content: @Composable () -> Unit) {
+fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: Int, content: @Composable () -> Unit) {
     val accent = TACO_ACCENTS[accentIdx.coerceIn(0, TACO_ACCENTS.lastIndex)]
     val base = if (amoled) TacoPalette.CharcoalDeep else TacoPalette.Charcoal
-    val surface = if (amoled) Color(0xFF130E0A) else TacoPalette.Surface
+    val surface = if (amoled) Color(0xFF100B08) else TacoPalette.Surface
+    val fontFamily: FontFamily = when (fontIdx) {
+        1 -> FontFamily.Monospace
+        2 -> FontFamily.Serif
+        3 -> FontFamily.Cursive
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft fallback
+        else -> FontFamily.SansSerif
+    }
     val scheme = darkColorScheme(
         primary = accent.primary, onPrimary = accent.onPrimary,
         primaryContainer = accent.deep, onPrimaryContainer = TacoPalette.Cream,
@@ -471,11 +469,12 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, content: @
         surface = base, onSurface = TacoPalette.Cream,
         surfaceVariant = surface, onSurfaceVariant = TacoPalette.Muted,
         error = TacoPalette.Salsa, onError = Color(0xFF2A0E06),
-        outline = TacoPalette.Outline, outlineVariant = Color(0xFF2A2016)
+        outline = TacoPalette.Outline, outlineVariant = Color(0xFF2E2016)
     )
     CompositionLocalProvider(
         LocalTacoAccent provides accent,
         LocalReduceMotion provides reduceMotion,
+        LocalCustomFont provides fontFamily,
         LocalContentColor provides TacoPalette.Cream
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
@@ -486,8 +485,8 @@ private val grainTile: ImageBitmap by lazy {
     val ib = ImageBitmap(96, 96)
     val c = ComposeCanvas(ib)
     val rnd = java.util.Random(42)
-    val paint = Paint().apply { color = Color.White.copy(alpha = 0.02f) }
-    repeat(240) { c.drawCircle(Offset(rnd.nextFloat() * 96f, rnd.nextFloat() * 96f), 0.8f, paint) }
+    val paint = Paint().apply { color = Color.White.copy(alpha = 0.025f) }
+    repeat(260) { c.drawCircle(Offset(rnd.nextFloat() * 96f, rnd.nextFloat() * 96f), 0.85f, paint) }
     ib
 }
 
@@ -497,12 +496,12 @@ fun Modifier.tacoGrain(): Modifier = this.drawBehind {
         srcOffset = IntOffset.Zero,
         srcSize = IntSize(grainTile.width, grainTile.height),
         dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
-        alpha = 0.5f
+        alpha = 0.55f
     )
 }
 
 /* ======================================================================
- *  3. COMPONENTS & ICONS
+ *  3. COMPONENTS & MILLION-DOLLAR UI ELEMENTS
  * ====================================================================== */
 
 enum class StepStatus { Pending, Running, Done, Failed, Skipped }
@@ -522,9 +521,9 @@ fun hapticCrunch(context: Context) {
     runCatching {
         val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         if (Build.VERSION.SDK_INT >= 26) {
-            v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 30, 40, 60), -1))
+            v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 25, 35, 50), -1))
         } else @Suppress("DEPRECATION") {
-            v.vibrate(70)
+            v.vibrate(60)
         }
     }
 }
@@ -532,14 +531,14 @@ fun hapticCrunch(context: Context) {
 fun hapticTick(context: Context) {
     runCatching {
         val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(12, 64))
-        else @Suppress("DEPRECATION") v.vibrate(12)
+        if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(10, 50))
+        else @Suppress("DEPRECATION") v.vibrate(10)
     }
 }
 
 enum class TacoIcon {
     Home, Layers, Flag, Gamepad, Sliders, Play, Check, Close, Plus, Search, Copy, Trash,
-    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image
+    Grip, Globe, Doc, Bolt, Warn, Info, Star, Refresh, Save, Up, Down, Dot, Image, Type
 }
 
 private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
@@ -551,7 +550,7 @@ private fun DrawScope.pl(c: Color, st: Stroke, s: Float, vararg p: Float) {
 }
 
 @Composable
-fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f) {
+fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 2f) {
     Canvas(Modifier.size(size)) {
         val s = this.size.width / 24f
         val st = Stroke(width = stroke * s, cap = StrokeCap.Round, join = StrokeJoin.Round)
@@ -573,14 +572,14 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f
                 drawRoundRect(tint, Offset(3f * s, 7.5f * s), Size(18f * s, 10f * s), CornerRadius(5f * s), style = st)
                 pl(tint, st, s, 7.5f, 10.5f, 7.5f, 14.5f)
                 pl(tint, st, s, 5.5f, 12.5f, 9.5f, 12.5f)
-                drawCircle(tint, 1.1f * s, Offset(15.5f * s, 11.5f * s))
-                drawCircle(tint, 1.1f * s, Offset(18f * s, 13.5f * s))
+                drawCircle(tint, 1.2f * s, Offset(15.5f * s, 11.5f * s))
+                drawCircle(tint, 1.2f * s, Offset(18f * s, 13.5f * s))
             }
             TacoIcon.Sliders -> {
                 pl(tint, st, s, 4f, 7f, 20f, 7f); pl(tint, st, s, 4f, 12f, 20f, 12f); pl(tint, st, s, 4f, 17f, 20f, 17f)
-                drawCircle(tint, 2f * s, Offset(9f * s, 7f * s), style = st)
-                drawCircle(tint, 2f * s, Offset(15f * s, 12f * s), style = st)
-                drawCircle(tint, 2f * s, Offset(7f * s, 17f * s), style = st)
+                drawCircle(tint, 2.1f * s, Offset(9f * s, 7f * s), style = st)
+                drawCircle(tint, 2.1f * s, Offset(15f * s, 12f * s), style = st)
+                drawCircle(tint, 2.1f * s, Offset(7f * s, 17f * s), style = st)
             }
             TacoIcon.Play -> pl(tint, st, s, 8f, 5f, 19f, 12f, 8f, 19f, 8f, 5f)
             TacoIcon.Check -> pl(tint, st, s, 5f, 12.5f, 10f, 17.5f, 19f, 7f)
@@ -641,11 +640,16 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f
             }
             TacoIcon.Up -> pl(tint, st, s, 5f, 15f, 12f, 8f, 19f, 15f)
             TacoIcon.Down -> pl(tint, st, s, 5f, 9f, 12f, 16f, 19f, 9f)
-            TacoIcon.Dot -> drawCircle(tint, 2.2f * s, Offset(12f * s, 12f * s))
+            TacoIcon.Dot -> drawCircle(tint, 2.3f * s, Offset(12f * s, 12f * s))
             TacoIcon.Image -> {
                 drawRoundRect(tint, Offset(3f * s, 5f * s), Size(18f * s, 14f * s), CornerRadius(2f * s), style = st)
                 drawCircle(tint, 2.5f * s, Offset(8f * s, 10f * s))
                 pl(tint, st, s, 3f, 16f, 9f, 11f, 14f, 15f, 18f, 12f, 21f, 15f)
+            }
+            TacoIcon.Type -> {
+                pl(tint, st, s, 4f, 7f, 20f, 7f)
+                pl(tint, st, s, 12f, 7f, 12f, 19f)
+                pl(tint, st, s, 9f, 19f, 15f, 19f)
             }
         }
     }
@@ -654,13 +658,13 @@ fun TacoIcon(kind: TacoIcon, tint: Color, size: Dp = 22.dp, stroke: Float = 1.9f
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     val accent = LocalTacoAccent.current
-    Row(modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.padding(top = 8.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(width = 4.dp, height = 14.dp).clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(accent.primary, accent.deep)))
+                .background(Brush.verticalGradient(listOf(accent.neon, accent.primary)))
         )
         Spacer(Modifier.width(8.dp))
-        Text(text.uppercase(), style = TacoType.label, color = accent.primary)
+        Text(text.uppercase(), style = TacoType.label, color = accent.neon)
     }
 }
 
@@ -669,13 +673,14 @@ fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean =
     val accent = LocalTacoAccent.current
     val reduce = LocalReduceMotion.current
     val x by animateDpAsState(
-        if (checked) 25.dp else 4.dp,
-        if (reduce) tween(0) else spring(dampingRatio = 0.6f, stiffness = 520f),
+        if (checked) 26.dp else 4.dp,
+        if (reduce) tween(0) else spring(dampingRatio = 0.58f, stiffness = 550f),
         label = "swx"
     )
     Box(
-        Modifier.width(52.dp).height(30.dp).clip(CircleShape)
+        Modifier.width(54.dp).height(32.dp).clip(CircleShape)
             .background(if (enabled) TacoPalette.SurfaceHigh else TacoPalette.Surface)
+            .border(1.dp, if (checked) accent.primary.copy(0.6f) else TacoPalette.Outline, CircleShape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -689,8 +694,8 @@ fun TacoSwitch(checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean =
             )
         }
         Box(
-            Modifier.offset(x = x, y = 3.dp).size(24.dp).clip(CircleShape)
-                .background(if (checked) TacoPalette.Cream else TacoPalette.Faint)
+            Modifier.offset(x = x, y = 4.dp).size(24.dp).clip(CircleShape)
+                .background(if (checked) TacoPalette.Cream else TacoPalette.Muted)
         )
     }
 }
@@ -711,55 +716,53 @@ fun TacoButton(
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        if (pressed) 0.95f else 1f,
-        if (reduce) tween(0) else spring(dampingRatio = 0.55f, stiffness = 600f),
+        if (pressed) 0.94f else 1f,
+        if (reduce) tween(0) else spring(dampingRatio = 0.55f, stiffness = 650f),
         label = "btn"
     )
     val look: Triple<Brush, Color, Color?> = when (kind) {
         ButtonKind.Primary -> Triple(
-            Brush.horizontalGradient(listOf(accent.primary, accent.deep)), accent.onPrimary, null
+            Brush.horizontalGradient(listOf(accent.neon, accent.primary, accent.deep)), accent.onPrimary, accent.neon.copy(0.5f)
         )
         ButtonKind.Ghost -> Triple(
-            Brush.horizontalGradient(listOf(accent.primary.copy(0.14f), accent.primary.copy(0.06f))),
-            accent.primary, accent.primary.copy(0.35f)
+            Brush.horizontalGradient(listOf(accent.primary.copy(0.18f), accent.primary.copy(0.08f))),
+            accent.neon, accent.primary.copy(0.4f)
         )
         ButtonKind.Quiet -> Triple(
             Brush.horizontalGradient(listOf(TacoPalette.SurfaceHigh, TacoPalette.Surface)),
             TacoPalette.Cream, TacoPalette.Outline
         )
         ButtonKind.Danger -> Triple(
-            Brush.horizontalGradient(listOf(TacoPalette.Salsa.copy(0.18f), TacoPalette.Salsa.copy(0.08f))),
-            TacoPalette.Salsa, TacoPalette.Salsa.copy(0.4f)
+            Brush.horizontalGradient(listOf(TacoPalette.Salsa.copy(0.22f), TacoPalette.Salsa.copy(0.08f))),
+            TacoPalette.Salsa, TacoPalette.Salsa.copy(0.45f)
         )
     }
-    val bg = look.first
-    val fg = look.second
-    val bd = look.third
     Row(
         modifier.height(height).graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(CircleShape).background(bg)
-            .then(if (bd != null) Modifier.border(1.dp, bd, CircleShape) else Modifier)
+            .clip(CircleShape).background(look.first)
+            .then(if (look.third != null) Modifier.border(1.dp, look.third!!, CircleShape) else Modifier)
             .clickable(interactionSource = src, indication = null, onClick = onClick)
-            .padding(horizontal = if (text.isEmpty()) 0.dp else 18.dp),
+            .padding(horizontal = if (text.isEmpty()) 0.dp else 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
         if (icon != null) {
-            TacoIcon(icon, fg, 17.dp, 2.1f)
-            if (text.isNotEmpty()) Spacer(Modifier.width(7.dp))
+            TacoIcon(icon, look.second, 17.dp, 2.2f)
+            if (text.isNotEmpty()) Spacer(Modifier.width(8.dp))
         }
-        if (text.isNotEmpty()) Text(text, color = fg, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        if (text.isNotEmpty()) Text(text, color = look.second, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 
 @Composable
-fun IconCircle(icon: TacoIcon, tint: Color, size: Dp = 38.dp, onClick: (() -> Unit)? = null) {
+fun IconCircle(icon: TacoIcon, tint: Color, size: Dp = 40.dp, onClick: (() -> Unit)? = null) {
     Box(
         Modifier.size(size).clip(CircleShape)
-            .background(tint.copy(alpha = 0.14f))
+            .background(tint.copy(alpha = 0.16f))
+            .border(1.dp, tint.copy(alpha = 0.35f), CircleShape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
-    ) { TacoIcon(icon, tint, size * 0.5f, 2f) }
+    ) { TacoIcon(icon, tint, size * 0.48f, 2.1f) }
 }
 
 @Composable
@@ -768,18 +771,21 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
     val a by animateFloatAsState(if (selected) 1f else 0f, tween(220), label = "ca")
     Box(
         Modifier.clip(CircleShape)
-            .border(1.dp, if (selected) Color.Transparent else TacoPalette.Outline, CircleShape)
+            .background(if (selected) Color.Transparent else TacoPalette.SurfaceHigh)
+            .border(1.dp, if (selected) accent.neon.copy(0.7f) else TacoPalette.Outline, CircleShape)
             .clickable(onClick = onClick)
     ) {
         Box(
             Modifier.matchParentSize().graphicsLayer { alpha = a }
-                .background(Brush.horizontalGradient(listOf(accent.primary, accent.deep)))
+                .background(Brush.horizontalGradient(listOf(accent.neon, accent.primary, accent.deep)))
         )
         Text(
             text,
-            Modifier.padding(horizontal = 15.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
             fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-            color = if (selected) accent.onPrimary else TacoPalette.Muted
+            color = if (selected) accent.onPrimary else TacoPalette.Muted,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
@@ -788,13 +794,13 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
 fun AllowlistBadge(allowed: Boolean?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
-        Spacer(Modifier.width(3.dp))
+        Spacer(Modifier.width(4.dp))
         Text("allowed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
     }
 }
 
 @Composable
-fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control) {
+fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(16.dp)) {
     if (LocalReduceMotion.current) {
         Box(modifier.clip(shape).background(TacoPalette.SurfaceHigh))
         return
@@ -813,22 +819,29 @@ fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = TacoShapes.control)
     )
 }
 
+object TacoShapes {
+    val sheet = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    val card = RoundedCornerShape(20.dp)
+    val control = RoundedCornerShape(16.dp)
+    val pill = CircleShape
+}
+
 @Composable
 fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable () -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 28.dp),
+        Modifier.fillMaxWidth().padding(vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        IconCircle(icon, LocalTacoAccent.current.primary, 54.dp)
-        Spacer(Modifier.height(12.dp))
+        IconCircle(icon, LocalTacoAccent.current.neon, 58.dp)
+        Spacer(Modifier.height(14.dp))
         Text(title, style = TacoType.display, fontSize = 18.sp)
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
             sub, fontSize = 13.sp, color = TacoPalette.Muted,
             textAlign = TextAlign.Center, lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 32.dp)
         )
-        if (action != null) { Spacer(Modifier.height(14.dp)); action() }
+        if (action != null) { Spacer(Modifier.height(16.dp)); action() }
     }
 }
 
@@ -836,13 +849,13 @@ fun EmptyState(icon: TacoIcon, title: String, sub: String, action: (@Composable 
 fun SuccessBanner(text: String, modifier: Modifier = Modifier) {
     Row(
         modifier.clip(TacoShapes.control)
-            .background(TacoPalette.Guac.copy(alpha = 0.14f))
-            .border(1.dp, TacoPalette.Guac.copy(alpha = 0.4f), TacoShapes.control)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .background(TacoPalette.Guac.copy(alpha = 0.16f))
+            .border(1.dp, TacoPalette.Guac.copy(alpha = 0.5f), TacoShapes.control)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconCircle(TacoIcon.Check, TacoPalette.Guac, 26.dp)
-        Spacer(Modifier.width(10.dp))
+        IconCircle(TacoIcon.Check, TacoPalette.Guac, 28.dp)
+        Spacer(Modifier.width(12.dp))
         Text(text, color = TacoPalette.Guac, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -851,10 +864,10 @@ fun SuccessBanner(text: String, modifier: Modifier = Modifier) {
 fun Appear(index: Int, content: @Composable () -> Unit) {
     if (LocalReduceMotion.current) { content(); return }
     var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { delay(index * 55L); visible = true }
+    LaunchedEffect(Unit) { delay(index * 50L); visible = true }
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(380)) + slideInVertically(tween(380)) { it / 6 }
+        enter = fadeIn(tween(350)) + slideInVertically(tween(350)) { it / 5 }
     ) { content() }
 }
 
@@ -865,28 +878,33 @@ fun StatusStrip(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifi
     Row(
         modifier.fillMaxWidth()
             .clip(CircleShape)
+            .background(TacoPalette.SurfaceHigh.copy(alpha = 0.75f))
+            .border(1.dp, TacoPalette.Outline.copy(alpha = 0.5f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         statuses.forEachIndexed { i, s ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f, fill = false)
+            ) {
                 Box(
-                    Modifier.size(7.dp).clip(CircleShape)
+                    Modifier.size(8.dp).clip(CircleShape)
                         .background(if (s.optional && s.color == TacoPalette.Faint) Color.Transparent else s.color)
                         .border(1.dp, s.color, CircleShape)
                 )
                 Spacer(Modifier.width(5.dp))
-                Text(s.label, style = TacoType.label)
+                Text(s.label, style = TacoType.label, maxLines = 1)
                 Spacer(Modifier.width(3.dp))
                 Text(
-                    s.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    s.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                     color = if (s.optional) TacoPalette.Muted else TacoPalette.Cream
                 )
             }
             if (i < statuses.lastIndex) {
-                Text("·", color = TacoPalette.Faint, modifier = Modifier.padding(horizontal = 8.dp))
+                Text("·", color = TacoPalette.Faint, modifier = Modifier.padding(horizontal = 4.dp))
             }
         }
     }
@@ -896,43 +914,46 @@ fun StatusStrip(statuses: List<LedStatus>, onClick: () -> Unit, modifier: Modifi
 fun StatusSheetContent(
     statuses: List<Triple<String, String, Color>>,
     fixSteps: List<Pair<String, String>>,
+    shizukuConnected: Boolean,
     onGrantShizuku: () -> Unit,
     onOpenShizukuGuide: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val accent = LocalTacoAccent.current
-    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+    Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
         Text("Kitchen status", style = TacoType.display)
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(16.dp))
         statuses.forEach { (name, state, color) ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-                Spacer(Modifier.width(8.dp))
+                Box(Modifier.size(9.dp).clip(CircleShape).background(color))
+                Spacer(Modifier.width(10.dp))
                 Text(name, style = TacoType.body, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 Text(state, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         fixSteps.forEach { (name, steps) ->
             Column(
                 Modifier.fillMaxWidth().clip(TacoShapes.control)
                     .background(TacoPalette.Surface).border(1.dp, TacoPalette.Outline, TacoShapes.control)
-                    .padding(12.dp)
+                    .padding(14.dp)
             ) {
-                Text(name.uppercase(), style = TacoType.label, color = accent.primary)
+                Text(name.uppercase(), style = TacoType.label, color = accent.neon)
                 Spacer(Modifier.height(4.dp))
                 Text(steps, fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 18.sp)
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TacoButton("Grant Shizuku", onGrantShizuku, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 44.dp)
-            TacoButton("Setup guide", onOpenShizukuGuide, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 44.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (!shizukuConnected) {
+                TacoButton("Grant Shizuku", onGrantShizuku, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
+            }
+            TacoButton("Setup guide", onOpenShizukuGuide, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
         }
-        Spacer(Modifier.height(8.dp))
-        TacoButton("Close", onDismiss, Modifier.fillMaxWidth(), ButtonKind.Quiet, height = 44.dp)
+        Spacer(Modifier.height(10.dp))
+        TacoButton("Close", onDismiss, Modifier.fillMaxWidth(), ButtonKind.Quiet, height = 46.dp)
     }
 }
 
@@ -948,7 +969,7 @@ fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Mo
     Column(modifier) {
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth()) { page ->
             val isSel = page == pagerState.currentPage
-            Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxWidth().height(46.dp), contentAlignment = Alignment.Center) {
                 Text(
                     modes[page],
                     fontSize = if (isSel) 19.sp else 15.sp,
@@ -965,12 +986,12 @@ fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Mo
                 val segW = maxWidth / modes.size
                 Box(
                     Modifier.width(segW).fillMaxHeight()
-                        .offset(x = segW * fracAnim.coerceIn(0f, modes.size - 1f)),
+                        .offset(x = segW * fracAnim.coerceIn(0f, (modes.size - 1).toFloat())),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
-                        Modifier.width(28.dp).height(3.dp).clip(CircleShape)
-                            .background(Brush.horizontalGradient(listOf(accent.primary, accent.deep)))
+                        Modifier.width(32.dp).height(3.dp).clip(CircleShape)
+                            .background(Brush.horizontalGradient(listOf(accent.neon, accent.primary)))
                     )
                 }
             }
@@ -993,34 +1014,34 @@ fun PipelineTimeline(
             }
             is LaunchState.Success -> {
                 launch.steps.forEachIndexed { i, step -> StepRow(step, false, i == launch.steps.lastIndex) }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 SuccessBanner(launch.message)
             }
             is LaunchState.Failed -> {
                 launch.steps.forEachIndexed { i, step -> StepRow(step, i == launch.failedStep, i == launch.steps.lastIndex) }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 Row(
                     Modifier.fillMaxWidth().clip(TacoShapes.control)
-                        .background(TacoPalette.Salsa.copy(alpha = 0.12f))
-                        .border(1.dp, TacoPalette.Salsa.copy(alpha = 0.4f), TacoShapes.control)
-                        .padding(12.dp),
+                        .background(TacoPalette.Salsa.copy(alpha = 0.15f))
+                        .border(1.dp, TacoPalette.Salsa.copy(alpha = 0.45f), TacoShapes.control)
+                        .padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconCircle(TacoIcon.Warn, TacoPalette.Salsa, 28.dp)
-                    Spacer(Modifier.width(10.dp))
+                    IconCircle(TacoIcon.Warn, TacoPalette.Salsa, 30.dp)
+                    Spacer(Modifier.width(12.dp))
                     Text(launch.message, color = TacoPalette.Salsa, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f))
                 }
             }
             LaunchState.Idle -> {}
         }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (launch is LaunchState.Running || launch is LaunchState.Failed) {
-                TacoButton("Retry", onRetry, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Refresh, 42.dp)
+                TacoButton("Retry", onRetry, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Refresh, 44.dp)
             }
             TacoButton(
                 if (launch is LaunchState.Success) "Done" else "Cancel",
-                onCancel, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Close, 42.dp
+                onCancel, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Close, 44.dp
             )
         }
     }
@@ -1032,28 +1053,28 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
     Row(Modifier.fillMaxWidth()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             when (step.status) {
-                StepStatus.Done -> IconCircle(TacoIcon.Check, TacoPalette.Guac, 24.dp)
-                StepStatus.Failed -> IconCircle(TacoIcon.Close, TacoPalette.Salsa, 24.dp)
-                StepStatus.Skipped -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 24.dp)
+                StepStatus.Done -> IconCircle(TacoIcon.Check, TacoPalette.Guac, 26.dp)
+                StepStatus.Failed -> IconCircle(TacoIcon.Close, TacoPalette.Salsa, 26.dp)
+                StepStatus.Skipped -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 26.dp)
                 StepStatus.Running -> {
                     val t = rememberInfiniteTransition(label = "run")
                     val a by t.animateFloat(0.4f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "ra")
-                    IconCircle(TacoIcon.Dot, accent.primary.copy(alpha = if (LocalReduceMotion.current) 1f else a), 24.dp)
+                    IconCircle(TacoIcon.Dot, accent.neon.copy(alpha = if (LocalReduceMotion.current) 1f else a), 26.dp)
                 }
-                StepStatus.Pending -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 24.dp)
+                StepStatus.Pending -> IconCircle(TacoIcon.Dot, TacoPalette.Faint, 26.dp)
             }
             if (!isLast) {
                 Box(
-                    Modifier.width(2.dp).height(26.dp)
+                    Modifier.width(2.dp).height(28.dp)
                         .background(
-                            if (step.status == StepStatus.Done) TacoPalette.Guac.copy(0.5f)
+                            if (step.status == StepStatus.Done) TacoPalette.Guac.copy(0.6f)
                             else TacoPalette.Outline
                         )
                 )
             }
         }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.padding(bottom = if (isLast) 0.dp else 12.dp)) {
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.padding(bottom = if (isLast) 0.dp else 14.dp)) {
             Text(
                 step.title,
                 fontSize = 15.sp,
@@ -1061,7 +1082,7 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
                 color = when (step.status) {
                     StepStatus.Done -> TacoPalette.Cream
                     StepStatus.Failed -> TacoPalette.Salsa
-                    StepStatus.Running -> accent.primary
+                    StepStatus.Running -> accent.neon
                     else -> TacoPalette.Muted
                 }
             )
@@ -1073,15 +1094,15 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
 }
 
 @Composable
-fun OrderTicket(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun OrderTicket(modifier: Modifier = Modifier, cardCorner: Int = 20, glassOpacity: Float = 0.88f, content: @Composable ColumnScope.() -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(cardCorner.dp)
     Box(modifier) {
         Column(
             Modifier.fillMaxWidth().clip(shape)
-                .background(cs.surfaceVariant.copy(alpha = 0.9f))
-                .border(1.dp, cs.outlineVariant, shape)
-                .padding(horizontal = 20.dp, vertical = 18.dp),
+                .background(cs.surfaceVariant.copy(alpha = glassOpacity))
+                .border(1.dp, cs.outlineVariant.copy(alpha = 0.8f), shape)
+                .padding(horizontal = 22.dp, vertical = 20.dp),
             content = content
         )
         TicketEdge(top = true, pageBg = cs.background)
@@ -1094,20 +1115,20 @@ private fun BoxScope.TicketEdge(top: Boolean, pageBg: Color) {
     Row(
         Modifier.align(if (top) Alignment.TopCenter else Alignment.BottomCenter).fillMaxWidth()
             .offset(y = if (top) (-4.5).dp else 4.dp)
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        repeat(18) { Box(Modifier.size(9.dp).clip(CircleShape).background(pageBg)) }
+        repeat(16) { Box(Modifier.size(9.dp).clip(CircleShape).background(pageBg)) }
     }
 }
 
 @Composable
 fun DashedDivider() {
     val c = MaterialTheme.colorScheme.outlineVariant
-    Canvas(Modifier.fillMaxWidth().height(21.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(22.dp)) {
         drawLine(
             c, Offset(0f, size.height / 2), Offset(size.width, size.height / 2),
-            pathEffect = PathEffect.dashPathEffect(floatArrayOf(7f, 7f))
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))
         )
     }
 }
@@ -1122,13 +1143,13 @@ fun TicketLine(
 ) {
     Row(
         Modifier.fillMaxWidth()
-            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick) else Modifier)
-            .padding(vertical = 7.dp),
+            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label.uppercase(), style = TacoType.label, modifier = Modifier.width(92.dp))
+        Text(label.uppercase(), style = TacoType.label, modifier = Modifier.width(96.dp))
         Column(Modifier.weight(1f)) {
-            Text(value, style = TacoType.mono.copy(fontSize = 13.sp, color = valueColor), lineHeight = 17.sp)
+            Text(value, style = TacoType.mono.copy(fontSize = 13.sp, color = valueColor), lineHeight = 18.sp)
             if (sub != null) Text(sub, fontSize = 11.sp, color = TacoPalette.Muted)
         }
         if (onClick != null) {
@@ -1157,7 +1178,7 @@ fun AlertishDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(26.dp),
         title = { Text(title, style = TacoType.display, fontSize = 20.sp) },
         text = {
             Column {
@@ -1165,14 +1186,14 @@ fun AlertishDialog(
                 content?.invoke(this)
             }
         },
-        confirmButton = { TacoButton("Close", onDismiss, kind = ButtonKind.Quiet, height = 40.dp) }
+        confirmButton = { TacoButton("Close", onDismiss, kind = ButtonKind.Quiet, height = 42.dp) }
     )
 }
 
 @Composable
 internal fun tacoFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
-    focusedBorderColor = LocalTacoAccent.current.primary, unfocusedBorderColor = TacoPalette.Outline,
+    focusedBorderColor = LocalTacoAccent.current.neon, unfocusedBorderColor = TacoPalette.Outline,
     focusedContainerColor = MaterialTheme.colorScheme.surface,
     unfocusedContainerColor = MaterialTheme.colorScheme.surface
 )
@@ -1191,26 +1212,26 @@ fun heatLevel(flagCount: Int): Int = when {
 fun heatName(level: Int): String = listOf("Mild", "Medium", "Hot", "Extra hot")[level.coerceIn(0, 3)]
 
 private val HEAT_COLORS = listOf(
-    Color(0xFFF5B544), Color(0xFFF59E3D), Color(0xFFF2572B), Color(0xFFFF3D2E)
+    Color(0xFFFFB84D), Color(0xFFFF9E3D), Color(0xFFF75931), Color(0xFFFF3D2E)
 )
 
 @Composable
 fun SizzleParticles(active: Boolean, modifier: Modifier = Modifier) {
     if (!active || LocalReduceMotion.current) return
     val particles = remember {
-        List(24) { Triple(Random.nextFloat(), 0.5f + Random.nextFloat(), Random.nextFloat() * 6.28f) }
+        List(26) { Triple(Random.nextFloat(), 0.5f + Random.nextFloat(), Random.nextFloat() * 6.28f) }
     }
     val t = rememberInfiniteTransition(label = "siz")
-    val f by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1700, easing = LinearEasing), RepeatMode.Restart), label = "sf")
+    val f by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Restart), label = "sf")
     Canvas(modifier) {
         val cx = size.width / 2
         val top = size.height * 0.42f
         particles.forEachIndexed { i, (off, spd, ph) ->
             val p = (off + f * spd) % 1f
-            val y = top - p * size.height * 0.34f
-            val x = cx + sin(p * 7f + ph) * size.width * 0.16f * p
-            val alpha = (1f - p) * 0.45f
-            val r = 2f + 4f * p
+            val y = top - p * size.height * 0.35f
+            val x = cx + sin(p * 7f + ph) * size.width * 0.17f * p
+            val alpha = (1f - p) * 0.5f
+            val r = 2f + 4.5f * p
             drawCircle(
                 if (i % 3 == 0) TacoPalette.Cream else HEAT_COLORS[(i + 1) % 4],
                 radius = r, center = Offset(x, y), alpha = alpha
@@ -1237,7 +1258,7 @@ fun ComalDial(
     val hold = remember { Animatable(0f) }
     LaunchedEffect(pressed, enabled, idle) {
         if (pressed && enabled && idle) {
-            val res = hold.animateTo(1f, tween(850, easing = LinearEasing))
+            val res = hold.animateTo(1f, tween(800, easing = LinearEasing))
             if (res.endReason == AnimationEndReason.Finished) trigger()
         } else {
             hold.animateTo(0f, if (reduce) tween(0) else spring(dampingRatio = 0.7f))
@@ -1265,14 +1286,14 @@ fun ComalDial(
     val fillColor = when (launch) {
         is LaunchState.Success -> TacoPalette.Guac
         is LaunchState.Failed -> TacoPalette.Salsa
-        else -> accent.primary
+        else -> accent.neon
     }
     val glowPaint = remember {
         android.graphics.Paint().apply {
             isAntiAlias = true
             style = android.graphics.Paint.Style.STROKE
             strokeCap = android.graphics.Paint.Cap.ROUND
-            maskFilter = android.graphics.BlurMaskFilter(26f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            maskFilter = android.graphics.BlurMaskFilter(28f, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
     }
 
@@ -1291,17 +1312,17 @@ fun ComalDial(
         contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.fillMaxSize().padding(6.dp)) {
-            val strokeW = 13.dp.toPx()
+            val strokeW = 14.dp.toPx()
             val rect = Rect(strokeW, strokeW, size.width - strokeW, size.height - strokeW)
             if (idle) {
                 for (i in 0..3) {
                     val start = -90f + i * (segSweep + gap) + gap / 2
-                    drawArc(TacoPalette.Outline.copy(alpha = 0.6f), start, segSweep, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
+                    drawArc(TacoPalette.Outline.copy(alpha = 0.65f), start, segSweep, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
                     val sw = sweeps[i].value
                     if (sw > 1f) {
                         drawArc(HEAT_COLORS[i], start, sw, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
                         drawIntoCanvas { c ->
-                            glowPaint.color = HEAT_COLORS[i].copy(alpha = 0.5f).toArgb()
+                            glowPaint.color = HEAT_COLORS[i].copy(alpha = 0.55f).toArgb()
                             glowPaint.strokeWidth = strokeW
                             c.nativeCanvas.drawArc(
                                 android.graphics.RectF(rect.left, rect.top, rect.right, rect.bottom),
@@ -1311,7 +1332,7 @@ fun ComalDial(
                     }
                 }
             } else {
-                drawArc(TacoPalette.Outline.copy(alpha = 0.6f), -90f, 360f, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
+                drawArc(TacoPalette.Outline.copy(alpha = 0.65f), -90f, 360f, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
                 drawArc(fillColor, -90f, progress * 360f, false, rect.topLeft, rect.size, style = Stroke(strokeW, cap = StrokeCap.Round))
             }
         }
@@ -1320,18 +1341,18 @@ fun ComalDial(
             if (pressed) 0.94f else 1f,
             if (reduce) tween(0) else spring(dampingRatio = 0.5f, stiffness = 500f), label = "disc"
         )
-        Canvas(Modifier.fillMaxSize().padding(30.dp).graphicsLayer { scaleX = discScale; scaleY = discScale }) {
+        Canvas(Modifier.fillMaxSize().padding(32.dp).graphicsLayer { scaleX = discScale; scaleY = discScale }) {
             val r = size.minDimension / 2
             drawCircle(
                 Brush.radialGradient(
-                    listOf(TacoPalette.SurfaceHigh, cs.surfaceVariant, Color(0xFF0A0705)),
+                    listOf(TacoPalette.SurfaceHigh, cs.surfaceVariant, Color(0xFF080503)),
                     center = Offset(size.width / 2, size.height / 2), radius = r
                 ),
                 radius = r
             )
-            drawCircle(accent.primary.copy(alpha = if (running || pressed) 0.5f else 0.22f), radius = r, style = Stroke(1.5.dp.toPx()))
+            drawCircle(accent.neon.copy(alpha = if (running || pressed) 0.6f else 0.28f), radius = r, style = Stroke(1.8.dp.toPx()))
             for (i in 1..3) {
-                drawCircle(TacoPalette.Cream.copy(alpha = 0.03f), radius = r * i / 3.2f, style = Stroke(1.dp.toPx()))
+                drawCircle(TacoPalette.Cream.copy(alpha = 0.035f), radius = r * i / 3.2f, style = Stroke(1.dp.toPx()))
             }
         }
 
@@ -1339,23 +1360,23 @@ fun ComalDial(
             when (launch) {
                 is LaunchState.Running -> {
                     val step = launch.steps.getOrNull(launch.stepIndex)
-                    Text(step?.title ?: "Working…", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = accent.primary)
+                    Text(step?.title ?: "Working…", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, color = accent.neon)
                     Spacer(Modifier.height(4.dp))
-                    CountUpText((progress * 100).toInt(), TacoType.tnum.copy(fontSize = 30.sp), TacoPalette.Cream)
+                    CountUpText((progress * 100).toInt(), TacoType.tnum.copy(fontSize = 32.sp), TacoPalette.Cream)
                     Text("PERCENT", style = TacoType.label)
                 }
                 is LaunchState.Success -> {
-                    TacoIcon(TacoIcon.Check, TacoPalette.Guac, 44.dp, 2.4f)
+                    TacoIcon(TacoIcon.Check, TacoPalette.Guac, 46.dp, 2.5f)
                     Spacer(Modifier.height(6.dp))
                     Text("SERVED", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Guac)
                 }
                 is LaunchState.Failed -> {
-                    TacoIcon(TacoIcon.Warn, TacoPalette.Salsa, 40.dp, 2.2f)
+                    TacoIcon(TacoIcon.Warn, TacoPalette.Salsa, 42.dp, 2.3f)
                     Spacer(Modifier.height(6.dp))
                     Text("BURNED", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = TacoPalette.Salsa)
                 }
                 LaunchState.Idle -> {
-                    TacoIcon(TacoIcon.Play, accent.primary, 40.dp, 2.2f)
+                    TacoIcon(TacoIcon.Play, accent.neon, 42.dp, 2.3f)
                     Spacer(Modifier.height(6.dp))
                     Text(
                         if (enabled) "HOLD TO LAUNCH" else "SHIZUKU REQUIRED",
@@ -1370,11 +1391,11 @@ fun ComalDial(
         }
 
         if (hold.value > 0.001f && idle) {
-            Canvas(Modifier.fillMaxSize().padding(17.dp)) {
+            Canvas(Modifier.fillMaxSize().padding(18.dp)) {
                 val strokeW = 4.dp.toPx()
                 val rect = Rect(strokeW, strokeW, size.width - strokeW, size.height - strokeW)
                 drawArc(
-                    accent.primary, -90f, hold.value * 360f, false, rect.topLeft, rect.size,
+                    accent.neon, -90f, hold.value * 360f, false, rect.topLeft, rect.size,
                     style = Stroke(strokeW, cap = StrokeCap.Round)
                 )
             }
@@ -1391,25 +1412,25 @@ fun MenuCarousel(
     modifier: Modifier = Modifier
 ) {
     val accent = LocalTacoAccent.current
-    LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         items(games, key = { it.second }) { (name, id) ->
             Column(
-                Modifier.width(152.dp)
-                    .clip(TacoShapes.menuCard)
-                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF140F0A))))
-                    .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
+                Modifier.width(156.dp)
+                    .clip(FoldedSheetShape())
+                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
+                    .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
                     .combinedClickable(
                         onClick = { onPick(name) },
                         onLongClick = { onLongLaunch(id) },
                         onLongClickLabel = "Launch $name"
                     )
-                    .padding(14.dp)
+                    .padding(16.dp)
             ) {
                 Box(
-                    Modifier.size(34.dp).clip(CircleShape)
-                        .background(Brush.horizontalGradient(listOf(accent.primary, accent.deep))),
+                    Modifier.size(36.dp).clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(accent.neon, accent.deep))),
                     contentAlignment = Alignment.Center
-                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.4f) }
+                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.5f) }
                 Spacer(Modifier.height(16.dp))
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, color = TacoPalette.Cream)
                 Spacer(Modifier.height(2.dp))
@@ -1418,14 +1439,14 @@ fun MenuCarousel(
         }
         item {
             Column(
-                Modifier.width(120.dp).height(112.dp)
-                    .clip(TacoShapes.menuCard)
-                    .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
+                Modifier.width(124.dp).height(118.dp)
+                    .clip(FoldedSheetShape())
+                    .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
                     .clickable(onClick = onAddGame),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                TacoIcon(TacoIcon.Plus, TacoPalette.Muted, 22.dp)
+                TacoIcon(TacoIcon.Plus, TacoPalette.Muted, 24.dp)
                 Spacer(Modifier.height(6.dp))
                 Text("Add a game", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Muted)
             }
@@ -1475,17 +1496,24 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 statuses = listOf(
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
-                    LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac)
+                    LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
+                    LedStatus("VPN", state.vpnStatus,
+                        when (state.vpnStatus) {
+                            "active" -> TacoPalette.Guac
+                            "starting" -> TacoPalette.Tortilla
+                            "error" -> TacoPalette.Salsa
+                            else -> TacoPalette.Faint
+                        }, optional = true)
                 ),
                 onClick = { showStatusSheet = true }
             )
         }
 
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
 
         Appear(1) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Box(Modifier.fillMaxWidth(0.78f)) {
+                Box(Modifier.fillMaxWidth(0.8f)) {
                     ComalDial(
                         heat = heat,
                         launch = state.launchState,
@@ -1501,7 +1529,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                         modifier = Modifier.fillMaxWidth().aspectRatio(1f)
                     )
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
                 ModeSelector(
                     selected = state.mode.ordinal,
                     onSelect = { state.mode = LaunchMode.entries[it] },
@@ -1524,8 +1552,8 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         Appear(3) {
-            OrderTicket {
-                Text("THE ORDER", style = TacoType.label, color = accent.primary)
+            OrderTicket(cardCorner = state.cardCornerRadius, glassOpacity = state.glassOpacity) {
+                Text("THE ORDER", style = TacoType.label, color = accent.neon)
                 Spacer(Modifier.height(6.dp))
                 DashedDivider()
                 TicketLine(
@@ -1550,7 +1578,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 )
                 TicketLine("Target", state.targetLabel(), onClick = { showTargetDialog = true })
                 DashedDivider()
-                Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("tacostrap · hold-to-launch armed", style = TacoType.label)
                     if (state.launchState is LaunchState.Success) {
                         Text("SERVED ✓", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Guac)
@@ -1567,12 +1595,12 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 if (state.games.isEmpty()) {
                     Column(
-                        Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
-                            .border(1.dp, TacoPalette.Outline, TacoShapes.menuCard)
-                            .padding(20.dp),
+                        Modifier.fillMaxWidth().clip(FoldedSheetShape())
+                            .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
+                            .padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        TacoIcon(TacoIcon.Gamepad, TacoPalette.Faint, 26.dp)
+                        TacoIcon(TacoIcon.Gamepad, TacoPalette.Faint, 28.dp)
                         Spacer(Modifier.height(8.dp))
                         Text("Nothing on the menu yet", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Muted)
                         Spacer(Modifier.height(10.dp))
@@ -1611,6 +1639,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     "Root" to "Optional. Enable Magisk/SU, then turn on “Use root” in Settings. No root? Use Shizuku instead.",
                     "Roblox" to "Confirm the package name in Settings if the version shows “not detected”."
                 ),
+                shizukuConnected = state.shizuku.ok,
                 onGrantShizuku = { state.requestShizukuPermission() },
                 onOpenShizukuGuide = { showStatusSheet = false; onNavigate("settings") },
                 onDismiss = { showStatusSheet = false }
@@ -1648,7 +1677,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 }
 
 /* ======================================================================
- *  5. FLAGS SCREEN & PURE OFFSET (LIVE MEMORY PATCHING)
+ *  5. FLAGS SCREEN
  * ====================================================================== */
 
 sealed class FS(val title: String, val sub: String) {
@@ -1681,7 +1710,6 @@ private val FS_LOD = FS.Choice("Detail distance", "How far high detail models re
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
-// Desync & Physics Flags
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
     sub = "Adjusts physics sender rate and replication delay for desync effects",
@@ -1746,10 +1774,10 @@ fun FlagsScreen(state: TacoState) {
     var urlDialog by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { delay(350); loaded = true }
+    LaunchedEffect(Unit) { delay(300); loaded = true }
 
     val draft = state.draftFlags
-    val categories = listOf("All") + SECTIONS.map { it.first } + "Custom" + "Pure Offset"
+    val categories = listOf("All") + SECTIONS.map { it.first } + "Custom"
     val pending = state.pendingCount()
 
     val managedKeys = remember { SECTIONS.flatMap { (_, l) -> l.flatMap { fsKeys(it) } }.toSet() }
@@ -1764,19 +1792,24 @@ fun FlagsScreen(state: TacoState) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         stickyHeader {
-            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+            val cs = MaterialTheme.colorScheme
+            val hasBg = state.bgImageUri.isNotEmpty()
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(if (hasBg) Color.Transparent else cs.background)
+            ) {
                 if (!loaded) {
                     ShimmerBox(Modifier.fillMaxWidth().height(76.dp), RoundedCornerShape(18.dp))
                 } else {
                     if (pending > 0) {
                         Row(
                             Modifier.fillMaxWidth().clip(TacoShapes.control)
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .border(1.dp, accent.primary.copy(0.4f), TacoShapes.control)
+                                .background(cs.surfaceVariant.copy(alpha = state.glassOpacity))
+                                .border(1.dp, accent.neon.copy(0.5f), TacoShapes.control)
                                 .padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            CountUpText(pending, TacoType.tnum.copy(fontSize = 16.sp), accent.primary)
+                            CountUpText(pending, TacoType.tnum.copy(fontSize = 16.sp), accent.neon)
                             Spacer(Modifier.width(8.dp))
                             Text("pending changes", fontSize = 13.sp, color = TacoPalette.Muted, modifier = Modifier.weight(1f))
                             TacoButton("Discard", { state.discardDraft() }, kind = ButtonKind.Quiet, height = 34.dp)
@@ -1792,11 +1825,13 @@ fun FlagsScreen(state: TacoState) {
                         leadingIcon = { TacoIcon(TacoIcon.Search, TacoPalette.Muted, 18.dp) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = TacoPalette.Cream, unfocusedTextColor = TacoPalette.Cream,
-                            focusedBorderColor = accent.primary, unfocusedBorderColor = TacoPalette.Outline,
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                            focusedBorderColor = accent.neon,
+                            unfocusedBorderColor = cs.outlineVariant,
+                            focusedContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity),
+                            unfocusedContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity),
+                            disabledContainerColor = cs.surfaceVariant.copy(alpha = state.glassOpacity)
                         ),
-                        shape = TacoShapes.control,
+                        shape = RoundedCornerShape(state.cardCornerRadius.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -1811,45 +1846,6 @@ fun FlagsScreen(state: TacoState) {
         if (!loaded) {
             items(6) { ShimmerBox(Modifier.fillMaxWidth().height(56.dp)) }
             return@LazyColumn
-        }
-
-        if (category == "Pure Offset") {
-            item(key = "sec_pure_offset") { SectionLabel("Pure Offset (Live RAM)") }
-            item(key = "pure_offset_card") {
-                Column(
-                    Modifier.fillMaxWidth().clip(TacoShapes.card)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                        .border(1.dp, accent.primary.copy(0.4f), TacoShapes.card)
-                        .padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Pure Offset Mode", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                            Text("Live native RAM memory patching (via JNI/C++)", fontSize = 12.sp, color = TacoPalette.Muted)
-                        }
-                        TacoSwitch(state.pureOffsetEnabled, { state.pureOffsetEnabled = it; state.persist() })
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = state.pureMaxFps, onValueChange = { state.pureMaxFps = it; state.persist() },
-                        label = { Text("Target Max FPS (Double)") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = state.fpsOffset, onValueChange = { state.fpsOffset = it; state.persist() },
-                        label = { Text("libroblox.so FPS Offset (Hex/Dec, e.g. 0x1A2B)") }, singleLine = true,
-                        colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    TacoButton("Apply Live Memory Patch", {
-                        state.applyPureOffsets()
-                    }, Modifier.fillMaxWidth(), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
-                }
-            }
         }
 
         if (category == "All" || SECTIONS.any { it.first == category }) {
@@ -1908,7 +1904,7 @@ fun FlagsScreen(state: TacoState) {
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = TacoPalette.Cream
         ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 26.dp)) {
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
                 Text(if (isNew) "Add a flag" else "Edit flag", style = TacoType.display)
                 Spacer(Modifier.height(6.dp))
                 if (!isNew) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1931,11 +1927,11 @@ fun FlagsScreen(state: TacoState) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (!isNew) {
                         TacoButton("Delete", {
                             draft.remove(key); state.notify("Flag removed.", "flag"); editorKey = null
-                        }, Modifier.weight(1f), ButtonKind.Danger, TacoIcon.Trash, 44.dp)
+                        }, Modifier.weight(1f), ButtonKind.Danger, TacoIcon.Trash, 46.dp)
                     }
                     TacoButton("Save", {
                         val n = name.trim()
@@ -1945,7 +1941,7 @@ fun FlagsScreen(state: TacoState) {
                             state.notify("Flag saved.", "flag")
                         }
                         editorKey = null
-                    }, Modifier.weight(2f), ButtonKind.Primary, TacoIcon.Check, 44.dp)
+                    }, Modifier.weight(2f), ButtonKind.Primary, TacoIcon.Check, 46.dp)
                 }
             }
         }
@@ -1957,7 +1953,7 @@ fun FlagsScreen(state: TacoState) {
         AlertDialog(
             onDismissRequest = { jsonSheet = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Import / export JSON", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Column {
@@ -1967,7 +1963,7 @@ fun FlagsScreen(state: TacoState) {
                         colors = tacoFieldColors(), shape = TacoShapes.control,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    if (msg.isNotEmpty()) Text(msg, fontSize = 13.sp, color = accent.primary)
+                    if (msg.isNotEmpty()) Text(msg, fontSize = 13.sp, color = accent.neon)
                 }
             },
             confirmButton = {
@@ -1994,7 +1990,7 @@ fun FlagsScreen(state: TacoState) {
         AlertDialog(
             onDismissRequest = { urlDialog = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Import from URL", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 OutlinedTextField(
@@ -2017,7 +2013,7 @@ fun FlagsScreen(state: TacoState) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Clear all flags?", style = TacoType.display, fontSize = 19.sp) },
             text = { Text("Removes ${draft.size} flags. Saved layers are kept.", color = TacoPalette.Muted) },
             confirmButton = {
@@ -2032,10 +2028,10 @@ fun FlagsScreen(state: TacoState) {
 @Composable
 private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, state: TacoState) {
     Column(
-        Modifier.fillMaxWidth().clip(TacoShapes.card)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(state.cardCornerRadius.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
+            .padding(horizontal = 18.dp, vertical = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -2051,7 +2047,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
         }
         when (fs) {
             is FS.Choice -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(Modifier.hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val managed = fs.opts.flatMap { it.sets.keys }.toSet()
                     val cur = fs.opts.indexOfFirst { o ->
@@ -2067,7 +2063,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
                 }
             }
             is FS.Num -> {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     draft[fs.key] ?: "", { t ->
                         if (t.isBlank()) draft.remove(fs.key) else draft[fs.key] = t.trim()
@@ -2080,8 +2076,12 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
                 )
             }
             is FS.Range -> {
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     OutlinedTextField(
                         draft[fs.a] ?: "", { t ->
                             if (t.isBlank()) draft.remove(fs.a) else { draft[fs.a] = t.trim(); if (draft[fs.b] == null) draft[fs.b] = fs.db }
@@ -2089,7 +2089,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
                         placeholder = { Text(fs.da, color = TacoPalette.Faint) }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.width(96.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
+                        modifier = Modifier.width(98.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
                     )
                     Text("  to  ", fontSize = 12.sp, color = TacoPalette.Muted)
                     OutlinedTextField(
@@ -2099,7 +2099,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
                         placeholder = { Text(fs.db, color = TacoPalette.Faint) }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         colors = tacoFieldColors(), shape = TacoShapes.control,
-                        modifier = Modifier.width(96.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
+                        modifier = Modifier.width(98.dp), textStyle = TacoType.tnum.copy(fontSize = 14.sp)
                     )
                 }
             }
@@ -2123,11 +2123,11 @@ private fun CustomFlagRow(
     val accent = LocalTacoAccent.current
     val isBool = value.equals("true", true) || value.equals("false", true)
     Column(
-        Modifier.fillMaxWidth().clip(TacoShapes.card)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
             .clickable(onClick = onEdit)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 18.dp, vertical = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -2138,16 +2138,16 @@ private fun CustomFlagRow(
             if (isBool) {
                 TacoSwitch(value.equals("true", true), onToggle)
             } else {
-                Text(value, style = TacoType.tnum.copy(fontSize = 14.sp), color = accent.primary, maxLines = 1)
+                Text(value, style = TacoType.tnum.copy(fontSize = 14.sp), color = accent.neon, maxLines = 1)
             }
         }
         if (!isBool) {
             Spacer(Modifier.height(6.dp))
             Text(value, style = TacoType.mono.copy(fontSize = 12.sp), color = TacoPalette.Muted, maxLines = 2)
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
         Row {
-            Text("Edit", fontSize = 12.sp, color = accent.primary,
+            Text("Edit", fontSize = 12.sp, color = accent.neon,
                 modifier = Modifier.clickable(onClick = onEdit).padding(end = 16.dp, top = 4.dp))
             Text("Duplicate", fontSize = 12.sp, color = TacoPalette.Muted,
                 modifier = Modifier.clickable(onClick = onDuplicate).padding(end = 16.dp, top = 4.dp))
@@ -2158,7 +2158,100 @@ private fun CustomFlagRow(
 }
 
 /* ======================================================================
- *  6. PROFILES SCREEN
+ *  6. FONTS SCREEN
+ * ====================================================================== */
+
+@Composable
+fun FontsScreen(state: TacoState) {
+    val accent = LocalTacoAccent.current
+    val context = LocalContext.current
+
+    val fontPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            state.customFontUri = uri.toString()
+            state.selectedFontPreset = "Custom (.ttf)"
+            state.persist()
+            state.injectCustomFont(uri)
+        }
+    }
+
+    val presets = listOf("Default Roblox Font", "JetBrains Mono", "Inter Bold", "Comic Sans", "Product Sans")
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Roblox Custom Fonts", style = TacoType.displayBig)
+            Text("Inject custom typography directly into Roblox without root using Shizuku.", fontSize = 13.sp, color = TacoPalette.Muted)
+        }
+
+        item { SectionLabel("Upload Custom .TTF File") }
+        item {
+            Column(
+                Modifier.fillMaxWidth().clip(TacoShapes.card)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+                    .border(1.dp, accent.neon.copy(0.5f), TacoShapes.card)
+                    .padding(18.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconCircle(TacoIcon.Type, accent.neon, 42.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Custom Font File", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                        Text(if (state.customFontUri.isEmpty()) "No font file selected" else "File loaded & ready", fontSize = 12.sp, color = TacoPalette.Muted)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TacoButton("Choose .ttf file", { fontPickerLauncher.launch(arrayOf("font/*", "application/octet-stream", "*/*")) }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Plus, 46.dp)
+                    if (state.customFontUri.isNotEmpty()) {
+                        TacoButton("Inject", { state.injectCustomFont(Uri.parse(state.customFontUri)) }, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
+                    }
+                }
+            }
+        }
+
+        item { SectionLabel("Font Presets") }
+        items(presets, key = { it }) { preset ->
+            val sel = state.selectedFontPreset == preset
+            Column(
+                Modifier.fillMaxWidth().clip(TacoShapes.card)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+                    .border(1.dp, if (sel) accent.neon else MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
+                    .clickable {
+                        state.selectedFontPreset = preset
+                        state.persist()
+                        state.injectPresetFont(preset)
+                    }
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconCircle(TacoIcon.Star, if (sel) accent.neon else TacoPalette.Faint, 36.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(preset, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
+                        Text("Instant preset injection", fontSize = 12.sp, color = TacoPalette.Muted)
+                    }
+                    if (sel) {
+                        TacoIcon(TacoIcon.Check, accent.neon, 20.dp, 2.5f)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* ======================================================================
+ *  7. PROFILES SCREEN
  * ====================================================================== */
 
 class FlagLayer(val id: String, name: String, enabled: Boolean = true, flags: Map<String, String> = emptyMap()) {
@@ -2200,7 +2293,7 @@ val PACKS = listOf(
             "FFlagDebugDisplayFPS" to "True", "FIntDebugForceMSAASamples" to "1"))
 )
 
-private val LAYER_HEIGHT = 96.dp
+private val LAYER_HEIGHT = 98.dp
 
 @Composable
 fun ProfilesScreen(state: TacoState) {
@@ -2224,14 +2317,14 @@ fun ProfilesScreen(state: TacoState) {
         items(PACKS.size, key = { "pack$it" }) { i ->
             val p = PACKS[i]
             Column(
-                Modifier.fillMaxWidth().clip(TacoShapes.menuCard)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.menuCard)
-                    .padding(14.dp)
+                Modifier.fillMaxWidth().clip(FoldedSheetShape())
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, FoldedSheetShape())
+                    .padding(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconCircle(TacoIcon.Layers, accent.primary, 36.dp)
-                    Spacer(Modifier.width(12.dp))
+                    IconCircle(TacoIcon.Layers, accent.neon, 38.dp)
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(p.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
                         Text(p.desc, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 16.sp)
@@ -2248,13 +2341,13 @@ fun ProfilesScreen(state: TacoState) {
 
         item {
             Column(
-                Modifier.fillMaxWidth().clip(TacoShapes.card)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
-                    .padding(14.dp)
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(state.cardCornerRadius.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = state.glassOpacity))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(state.cardCornerRadius.dp))
+                    .padding(16.dp)
             ) {
                 Text("Save current flags as a layer", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         newLayerName, { newLayerName = it },
@@ -2262,14 +2355,14 @@ fun ProfilesScreen(state: TacoState) {
                         colors = tacoFieldColors(), shape = TacoShapes.control,
                         modifier = Modifier.weight(1f)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(10.dp))
                     TacoButton("Save", {
                         if (newLayerName.isNotBlank()) {
                             state.saveLayerFromCurrent(newLayerName.trim())
                             newLayerName = ""
                             state.notify("Layer saved.", "flag")
                         }
-                    }, kind = ButtonKind.Primary, icon = TacoIcon.Save, height = 46.dp)
+                    }, kind = ButtonKind.Primary, icon = TacoIcon.Save, height = 48.dp)
                 }
             }
         }
@@ -2317,7 +2410,7 @@ fun ProfilesScreen(state: TacoState) {
         AlertDialog(
             onDismissRequest = { renameTarget = null },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Rename layer", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 OutlinedTextField(
@@ -2353,19 +2446,19 @@ private fun LayerCard(
     val currentDrag by rememberUpdatedState(onDrag)
     Column(
         modifier
-            .clip(TacoShapes.card)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
             .border(
                 1.dp,
-                if (layer.enabled) accent.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outlineVariant,
-                TacoShapes.card
+                if (layer.enabled) accent.neon.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(20.dp)
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (onDrag != null) {
                 Box(
-                    Modifier.size(32.dp)
+                    Modifier.size(34.dp)
                         .pointerInput(layer.id) {
                             detectDragGestures(
                                 onDrag = { change, amount -> change.consume(); currentDrag?.invoke(amount.y) },
@@ -2376,9 +2469,9 @@ private fun LayerCard(
                     contentAlignment = Alignment.Center
                 ) { TacoIcon(TacoIcon.Grip, TacoPalette.Faint, 18.dp, 2f) }
             } else {
-                IconCircle(TacoIcon.Flag, TacoPalette.Faint, 28.dp)
+                IconCircle(TacoIcon.Flag, TacoPalette.Faint, 30.dp)
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     layer.name + if (isBase) "  (base)" else "",
@@ -2400,21 +2493,21 @@ private fun LayerCard(
             }
             TacoSwitch(layer.enabled, onToggle, enabled = !isBase)
         }
-        Row {
-            Text("Rename", fontSize = 12.sp, color = accent.primary,
-                modifier = Modifier.clickable(onClick = onRename).padding(end = 14.dp, top = 4.dp))
+        Row(Modifier.padding(top = 4.dp)) {
+            Text("Rename", fontSize = 12.sp, color = accent.neon,
+                modifier = Modifier.clickable(onClick = onRename).padding(end = 16.dp, top = 2.dp))
             if (!isBase) {
                 Text("Duplicate", fontSize = 12.sp, color = TacoPalette.Muted,
-                    modifier = Modifier.clickable(onClick = onDuplicate).padding(end = 14.dp, top = 4.dp))
+                    modifier = Modifier.clickable(onClick = onDuplicate).padding(end = 16.dp, top = 2.dp))
                 Text("Delete", fontSize = 12.sp, color = TacoPalette.Salsa,
-                    modifier = Modifier.clickable(onClick = onDelete).padding(top = 4.dp))
+                    modifier = Modifier.clickable(onClick = onDelete).padding(top = 2.dp))
             }
         }
     }
 }
 
 /* ======================================================================
- *  7. GAMES SCREEN
+ *  8. GAMES SCREEN
  * ====================================================================== */
 
 data class PinnedGame(val placeId: String, val profile: String? = null)
@@ -2439,8 +2532,8 @@ fun GamesScreen(state: TacoState) {
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Row(verticalAlignment = Alignment.Bottom) {
@@ -2463,12 +2556,12 @@ fun GamesScreen(state: TacoState) {
             val game = entry.value
             Column(
                 Modifier
-                    .clip(TacoShapes.menuCard)
-                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF140F0A))))
+                    .clip(FoldedSheetShape())
+                    .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, Color(0xFF15100B))))
                     .border(
                         1.dp,
-                        if (state.targetGame == name) accent.primary.copy(0.6f) else MaterialTheme.colorScheme.outlineVariant,
-                        TacoShapes.menuCard
+                        if (state.targetGame == name) accent.neon.copy(0.7f) else MaterialTheme.colorScheme.outlineVariant,
+                        FoldedSheetShape()
                     )
                     .combinedClickable(
                         onClick = { detailGame = name },
@@ -2477,24 +2570,24 @@ fun GamesScreen(state: TacoState) {
                             state.launchGameById(game.placeId)
                         }
                     )
-                    .padding(14.dp)
+                    .padding(16.dp)
             ) {
                 Box(
-                    Modifier.size(36.dp).clip(CircleShape)
-                        .background(Brush.horizontalGradient(listOf(accent.primary, accent.deep))),
+                    Modifier.size(38.dp).clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(accent.neon, accent.deep))),
                     contentAlignment = Alignment.Center
-                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.4f) }
+                ) { TacoIcon(TacoIcon.Play, accent.onPrimary, 15.dp, 2.5f) }
                 Spacer(Modifier.height(14.dp))
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream, maxLines = 1)
                 Spacer(Modifier.height(2.dp))
                 Text("#${game.placeId}", style = TacoType.tnum.copy(fontSize = 12.sp), color = TacoPalette.Muted)
                 game.profile?.let {
                     Spacer(Modifier.height(4.dp))
-                    Text("layer: $it", fontSize = 11.sp, color = accent.primary)
+                    Text("layer: $it", fontSize = 11.sp, color = accent.neon)
                 }
                 if (state.targetGame == name) {
                     Spacer(Modifier.height(4.dp))
-                    Text("LAUNCH TARGET", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent.primary)
+                    Text("LAUNCH TARGET", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent.neon)
                 }
             }
         }
@@ -2507,7 +2600,7 @@ fun GamesScreen(state: TacoState) {
         AlertDialog(
             onDismissRequest = { showAdd = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Pin a game", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Column {
@@ -2539,9 +2632,9 @@ fun GamesScreen(state: TacoState) {
                         state.addGame(name.trim(), id)
                         showAdd = false
                     }
-                }, kind = ButtonKind.Primary, icon = TacoIcon.Plus, height = 44.dp)
+                }, kind = ButtonKind.Primary, icon = TacoIcon.Plus, height = 46.dp)
             },
-            dismissButton = { TacoButton("Cancel", { showAdd = false }, kind = ButtonKind.Quiet, height = 44.dp) }
+            dismissButton = { TacoButton("Cancel", { showAdd = false }, kind = ButtonKind.Quiet, height = 46.dp) }
         )
     }
 
@@ -2552,7 +2645,7 @@ fun GamesScreen(state: TacoState) {
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = TacoPalette.Cream
         ) {
-            Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 26.dp)) {
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
                 Text(name, style = TacoType.display)
                 Text("Place ID ${game.placeId}", style = TacoType.tnum.copy(fontSize = 13.sp), color = TacoPalette.Muted)
                 Spacer(Modifier.height(14.dp))
@@ -2565,7 +2658,7 @@ fun GamesScreen(state: TacoState) {
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TacoButton("Launch", {
                         if (state.hapticsOn) hapticCrunch(context)
                         state.launchGameById(game.placeId)
@@ -2584,7 +2677,7 @@ fun GamesScreen(state: TacoState) {
 }
 
 /* ======================================================================
- *  8. SETTINGS SCREEN & IMAGE DECODER
+ *  9. SETTINGS SCREEN
  * ====================================================================== */
 
 @Composable
@@ -2611,7 +2704,7 @@ fun rememberImageBitmapFromUri(uriString: String): ImageBitmap? {
 }
 
 @Composable
-fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
+fun SettingsScreen(state: TacoState) {
     val accent = LocalTacoAccent.current
     val context = LocalContext.current
     var showChangelog by remember { mutableStateOf(false) }
@@ -2636,27 +2729,27 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 18.dp).padding(bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Settings", style = TacoType.displayBig)
 
         SectionLabel("Shizuku")
         Column(
             Modifier.fillMaxWidth().clip(TacoShapes.card)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                .border(1.dp, state.shizuku.color.copy(alpha = 0.4f), TacoShapes.card)
-                .padding(16.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+                .border(1.dp, state.shizuku.color.copy(alpha = 0.5f), TacoShapes.card)
+                .padding(18.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconCircle(TacoIcon.Bolt, state.shizuku.color, 40.dp)
-                Spacer(Modifier.width(12.dp))
+                IconCircle(TacoIcon.Bolt, state.shizuku.color, 42.dp)
+                Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Shizuku ${state.shizuku.long.lowercase()}",
                         fontSize = 16.sp, fontWeight = FontWeight.Bold, color = state.shizuku.color)
                     Text("live status", fontSize = 11.sp, color = TacoPalette.Faint)
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             val steps = listOf(
                 "Enable Developer options, then Wireless debugging, on this phone.",
                 "Start Shizuku via pairing code (or root start).",
@@ -2665,26 +2758,28 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
             )
             steps.forEachIndexed { i, s ->
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-                    Text("${i + 1}.", style = TacoType.tnum.copy(fontSize = 13.sp), color = accent.primary)
+                    Text("${i + 1}.", style = TacoType.tnum.copy(fontSize = 13.sp), color = accent.neon)
                     Spacer(Modifier.width(8.dp))
                     Text(s, fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 18.sp)
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TacoButton("Grant", { state.requestShizukuPermission() }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Bolt, 44.dp)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!state.shizuku.ok) {
+                    TacoButton("Grant", { state.requestShizukuPermission() }, Modifier.weight(1f), ButtonKind.Primary, TacoIcon.Bolt, 46.dp)
+                }
                 TacoButton("shizuku.rikka.app", {
                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app"))) }
-                }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 44.dp)
+                }, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
             }
         }
 
-        SectionLabel("Appearance & Background")
+        SectionLabel("Million-Dollar Appearance & Theme")
         SettingsGroup {
-            Text("Accent", style = TacoType.body, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+            Text("Accent & Neon Theme", style = TacoType.body, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             Row(
                 Modifier.hScroll().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 TACO_ACCENTS.forEachIndexed { i, a ->
                     val sel = state.accentIdx == i
@@ -2694,50 +2789,84 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
                         modifier = Modifier.clickable { state.accentIdx = i; state.persist() }
                     ) {
                         Box(
-                            Modifier.size(42.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(CircleShape)
-                                .background(Brush.horizontalGradient(listOf(a.primary, a.deep)))
+                            Modifier.size(44.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(CircleShape)
+                                .background(Brush.horizontalGradient(listOf(a.neon, a.primary, a.deep)))
                                 .then(if (sel) Modifier.border(2.dp, TacoPalette.Cream, CircleShape) else Modifier),
                             contentAlignment = Alignment.Center
                         ) { if (sel) TacoIcon(TacoIcon.Check, a.onPrimary, 18.dp, 2.6f) }
-                        Spacer(Modifier.height(5.dp))
+                        Spacer(Modifier.height(6.dp))
                         Text(a.name, fontSize = 11.sp,
                             color = if (sel) TacoPalette.Cream else TacoPalette.Muted,
                             fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
                     }
                 }
             }
+
+            // App Font Style Options
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "Sans", 1 to "Mono", 2 to "Serif", 3 to "Cursive", 4 to "Minecraft").forEach { (idx, label) ->
+                        CategoryChip(label, state.fontIdx == idx) { state.fontIdx = idx; state.persist() }
+                    }
+                }
+            }
+
+            // Card Glass Transparency Selector
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Card Glass Transparency", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("${(state.glassOpacity * 100).toInt()}%", style = TacoType.tnum, color = accent.neon)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0.70f to "Glassy", 0.85f to "Balanced", 0.95f to "Solid").forEach { (op, label) ->
+                        CategoryChip(label, state.glassOpacity == op) { state.glassOpacity = op; state.persist() }
+                    }
+                }
+            }
+
+            // Corner Radius Selector
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Card Corner Rounding", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("${state.cardCornerRadius} dp", style = TacoType.tnum, color = accent.neon)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(12 to "Sharp", 20 to "Smooth", 28 to "Pill").forEach { (rad, label) ->
+                        CategoryChip(label, state.cardCornerRadius == rad) { state.cardCornerRadius = rad; state.persist() }
+                    }
+                }
+            }
+
             SettingValue(
-                title = "Custom background image",
+                title = "Custom background wallpaper",
                 value = if (state.bgImageUri.isEmpty()) "Default" else "Active",
                 onClick = { imagePickerLauncher.launch("image/*") },
-                sub = "Tap to pick a custom wallpaper image",
+                sub = "Tap to pick a gorgeous custom image",
                 icon = TacoIcon.Image
             )
             if (state.bgImageUri.isNotEmpty()) {
                 SettingValue(
-                    title = "Remove background image",
+                    title = "Remove custom wallpaper",
                     value = "Reset",
                     onClick = {
                         state.bgImageUri = ""
                         state.persist()
                         state.notify("Custom background removed.")
                     },
-                    sub = "Revert to solid/amoled background"
+                    sub = "Revert to ambient dark gradient"
                 )
             }
-            SettingSwitch("AMOLED true black", "Pure black background on OLED screens.", state.amoled) { state.amoled = it; state.persist() }
+            SettingSwitch("AMOLED true black", "Pure black background for OLED screens.", state.amoled) { state.amoled = it; state.persist() }
             SettingSwitch("Haptics", "Crunch on launch and ticks on picks.", state.hapticsOn) { state.hapticsOn = it; state.persist() }
             SettingSwitch("Reduce motion", "Disables springs, particles and shimmer.", state.reduceMotion) { state.reduceMotion = it; state.persist() }
         }
 
         SectionLabel("Connection")
         SettingsGroup {
-            SettingSwitch(
-                "VPN service",
-                "Requests Android VPN permission and starts FlagVpnService.",
-                vpnEnabled,
-                onVpnToggle
-            )
             SettingValue("Package name", state.pkg, { state.editPkg() })
             SettingValue("Flag file path", state.path, { state.cyclePath() }, sub = "tap to cycle presets")
             SettingSwitch(
@@ -2749,6 +2878,29 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
             SettingSwitch("Write file on apply", "Writes flags to the flag file during launch.", state.applyOnSave) { state.applyOnSave = it; state.persist() }
             SettingSwitch("Restart Roblox", "Force-stops Roblox before launching.", state.restart) { state.restart = it; state.persist() }
             SettingSwitch("Disable frame-rate cap", "Lifts Android's game frame cap above 60 FPS automatically.", state.fpsCap) { state.fpsCap = it; state.persist() }
+            SettingSwitch(
+                title = "VPN flag bypass",
+                sub = "Intercepts Roblox's CDN flag fetch and injects all flags — bypasses the binary allowlist. Requires VPN permission.",
+                checked = state.vpnBypass
+            ) { enabled ->
+                state.vpnBypass = enabled
+                state.persist()
+                if (enabled) state.startVpnBypass(context)
+                else state.stopVpnBypass(context)
+            }
+            if (state.vpnStatus != "off") {
+                SettingValue(
+                    title = "VPN bypass status",
+                    value = state.vpnStatus,
+                    onClick = {},
+                    sub = when (state.vpnStatus) {
+                        "active" -> "CDN interception live — all flags including blocked ones are injected"
+                        "starting" -> "Waiting for VPN permission grant…"
+                        "error" -> "Proxy error — check logcat for details"
+                        else -> ""
+                    }
+                )
+            }
             SettingValue("Clear Roblox cache", "frees space", { state.clearCache() })
         }
 
@@ -2771,13 +2923,13 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
 
         SectionLabel("About")
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("TacoStrap", style = TacoType.displayBig.copy(fontSize = 40.sp), color = accent.primary)
-            Text("for Android · ${state.appVersion}", style = TacoType.tnum.copy(fontSize = 13.sp), color = TacoPalette.Muted)
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("TacoStrap", style = TacoType.displayBig.copy(fontSize = 42.sp), color = accent.neon)
+            Text("Million-Dollar Edition · ${state.appVersion}", style = TacoType.tnum.copy(fontSize = 13.sp), color = TacoPalette.Muted)
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TacoButton("Changelog", { showChangelog = true }, kind = ButtonKind.Quiet, height = 40.dp)
                 TacoButton("Licenses", { showLicenses = true }, kind = ButtonKind.Quiet, height = 40.dp)
                 TacoButton("Allowlist", {
@@ -2794,19 +2946,14 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
         AlertDialog(
             onDismissRequest = { showChangelog = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("What's new", style = TacoType.display, fontSize = 19.sp) },
             text = {
                 Text(
-                    "5.0 — The Comal\n" +
-                        "· Hold-to-launch griddle dial with heat meter\n" +
-                        "· Launch pipeline with live timeline, cancel, retry\n" +
-                        "· Custom Background Image Wallpaper Support\n" +
-                        "· Multi-path deployment ensuring 100% flag compatibility\n" +
-                        "· Stackable, reorderable flag layers\n" +
-                        "· Per-game layers, pinned-game menu carousel\n" +
-                        "· Universal allowlist bypass for all flags & desyncs\n",
-                    fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 19.sp
+                    "6.2 — Million-Dollar Enterprise Edition\n" +
+                        "· Fixed the settings chip rows so long labels no longer wrap and leave a gap\n" +
+                        "· Flags search bar now blends with your custom wallpaper\n",
+                    fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 20.sp
                 )
             },
             confirmButton = { TacoButton("Close", { showChangelog = false }, kind = ButtonKind.Quiet, height = 40.dp) }
@@ -2816,7 +2963,7 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
         AlertDialog(
             onDismissRequest = { showLicenses = false },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(26.dp),
             title = { Text("Licenses", style = TacoType.display, fontSize = 19.sp) },
             text = { Text("TacoStrap is built with Jetpack Compose and Shizuku (Apache License 2.0).", fontSize = 13.sp, color = TacoPalette.Muted) },
             confirmButton = { TacoButton("Close", { showLicenses = false }, kind = ButtonKind.Quiet, height = 40.dp) }
@@ -2827,10 +2974,10 @@ fun SettingsScreen(state: TacoState, vpnEnabled: Boolean, onVpnToggle: (Boolean)
 @Composable
 private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(TacoShapes.card)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, TacoShapes.card)
-            .padding(vertical = 6.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
+            .padding(vertical = 8.dp),
         content = content
     )
 }
@@ -2839,14 +2986,14 @@ private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
 private fun SettingSwitch(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable { onChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
             Text(sub, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 16.sp)
         }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(12.dp))
         TacoSwitch(checked, onChange)
     }
 }
@@ -2855,10 +3002,10 @@ private fun SettingSwitch(title: String, sub: String, checked: Boolean, onChange
 private fun SettingValue(title: String, value: String, onClick: () -> Unit, sub: String? = null, icon: TacoIcon? = null) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (icon != null) { IconCircle(icon, LocalTacoAccent.current.primary, 32.dp); Spacer(Modifier.width(10.dp)) }
+        if (icon != null) { IconCircle(icon, LocalTacoAccent.current.neon, 34.dp); Spacer(Modifier.width(12.dp)) }
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
             if (sub != null) Text(sub, fontSize = 12.sp, color = TacoPalette.Muted)
@@ -2866,16 +3013,16 @@ private fun SettingValue(title: String, value: String, onClick: () -> Unit, sub:
         Spacer(Modifier.width(8.dp))
         Text(
             value, style = TacoType.mono.copy(fontSize = 12.sp),
-            color = LocalTacoAccent.current.primary, maxLines = 2,
+            color = LocalTacoAccent.current.neon, maxLines = 2,
             modifier = Modifier.weight(1.2f), textAlign = TextAlign.End
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         TacoIcon(TacoIcon.Down, TacoPalette.Faint, 14.dp, 2.2f)
     }
 }
 
 /* ======================================================================
- *  9. APP STATE + PURE OFFSET LOGIC
+ *  10. APP STATE + MILLION-DOLLAR PERSISTENCE
  * ====================================================================== */
 
 var appContext: Context? = null
@@ -2902,6 +3049,7 @@ class TacoState(
     var restart by mutableStateOf(prefs.getBoolean("restart", true))
     var fpsCap by mutableStateOf(prefs.getBoolean("fps", false))
     var accentIdx by mutableStateOf(prefs.getInt("accent", 0).coerceIn(0, TACO_ACCENTS.lastIndex))
+    var fontIdx by mutableStateOf(prefs.getInt("fontIdx", 0))
     var amoled by mutableStateOf(prefs.getBoolean("trueBlack", false))
     var hapticsOn by mutableStateOf(prefs.getBoolean("haptics", true))
     var reduceMotion by mutableStateOf(prefs.getBoolean("reduceMotion", false))
@@ -2909,11 +3057,15 @@ class TacoState(
     var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
     var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
     var bgImageUri by mutableStateOf(prefs.getString("bgImageUri", "") ?: "")
+    var customFontUri by mutableStateOf(prefs.getString("customFontUri", "") ?: "")
+    var selectedFontPreset by mutableStateOf(prefs.getString("selectedFontPreset", "Default Roblox Font") ?: "Default Roblox Font")
 
-    // Pure Offset settings
-    var pureOffsetEnabled by mutableStateOf(prefs.getBoolean("pureOffsetEnabled", false))
-    var pureMaxFps by mutableStateOf(prefs.getString("pureMaxFps", "120.0") ?: "120.0")
-    var fpsOffset by mutableStateOf(prefs.getString("fpsOffset", "0x0") ?: "0x0")
+    var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
+    var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
+
+    // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
+    var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
+    var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
@@ -3081,37 +3233,28 @@ class TacoState(
 
     fun targetLabel(): String = targetGame?.let { "$it (#${games[it]?.placeId})" } ?: "Home (Roblox app)"
 
-    /** Applies live RAM memory patches via native C++ bridge (Pure Offset) */
-    fun applyPureOffsets() {
-        scope.launch(Dispatchers.IO) {
-            val (ok, out) = runCmd("pidof $pkg", useRoot)
-            val pid = out.trim().toIntOrNull()
-            if (pid == null || pid <= 0) {
-                notify("Pure Offset failed: Roblox process not found. Launch Roblox first!")
+    fun injectCustomFont(uri: Uri) {
+        val ctx = appContext ?: return
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.getOrNull()
+            }
+            if (bytes == null) {
+                notify("Failed to read font file bytes.")
                 return@launch
             }
-            val initOk = NativeMemoryBridge.nativeInit(pid)
-            if (!initOk) {
-                notify("Pure Offset failed: could not locate libroblox.so for PID $pid")
-                return@launch
-            }
-            val offsetVal = runCatching {
-                val s = fpsOffset.trim()
-                if (s.startsWith("0x", true)) s.substring(2).toLong(16) else s.toLong()
-            }.getOrDefault(0L)
+            val res = engine.applyCustomFont(ctx, bytes, "Custom Font", pkg, useRoot)
+            notify(res)
+        }
+    }
 
-            if (offsetVal == 0L) {
-                notify("Pure Offset failed: invalid or zero FPS offset.")
-                return@launch
-            }
-
-            val fpsVal = pureMaxFps.toDoubleOrNull() ?: 120.0
-            val success = NativeMemoryBridge.nativeSetMaxFPS(offsetVal, fpsVal)
-            if (success) {
-                notify("Pure Offset applied successfully (PID $pid, MaxFPS: $fpsVal)")
-            } else {
-                notify("Pure Offset failed to write memory at offset.")
-            }
+    fun injectPresetFont(presetName: String) {
+        val ctx = appContext ?: return
+        scope.launch {
+            val res = engine.applyCustomFont(ctx, null, presetName, pkg, useRoot)
+            notify(res)
         }
     }
 
@@ -3128,12 +3271,6 @@ class TacoState(
             }
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
             notify(launchMsg, "launch")
-
-            // If Pure Offset is enabled, wait for game to spin up and apply live RAM patch automatically
-            if (pureOffsetEnabled) {
-                delay(2500)
-                applyPureOffsets()
-            }
         }
     }
 
@@ -3147,6 +3284,7 @@ class TacoState(
         steps += LaunchStep("Check Shizuku")
         if (m != LaunchMode.VERIFY) steps += LaunchStep("Apply ${merged.size} flags")
         steps += LaunchStep("Verify")
+        if (vpnBypass) steps += LaunchStep("VPN bypass")
         if (m == LaunchMode.SAVE_LAUNCH) steps += LaunchStep("Launch Roblox")
         val vIdx = steps.indexOfFirst { it.title == "Verify" }
         launchState = LaunchState.Running(steps.toList(), 0)
@@ -3188,6 +3326,22 @@ class TacoState(
                 }
                 push(vIdx, StepStatus.Done, vmsg)
 
+                // VPN bypass step — inject flags via CDN interception
+                if (vpnBypass) {
+                    val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
+                    if (vpnIdx >= 0) {
+                        push(vpnIdx, StepStatus.Running, "starting CDN interceptor…")
+                        // FlagVpnService handles the actual proxy; we just signal it to update flags
+                        val ctx = appContext
+                        if (ctx != null) {
+                            FlagVpnService.updateFlags(ctx, toJson(merged))
+                            push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
+                        } else {
+                            push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
+                        }
+                    }
+                }
+
                 val finalMsg: String
                 if (m == LaunchMode.SAVE_LAUNCH) {
                     val lIdx = steps.lastIndex
@@ -3199,12 +3353,6 @@ class TacoState(
                     }
                     push(lIdx, StepStatus.Done, msg)
                     finalMsg = if (target != null) "Launched $targetGame." else "Roblox is served."
-
-                    // If Pure Offset is enabled, apply live memory patch after launching
-                    if (pureOffsetEnabled) {
-                        delay(2500)
-                        applyPureOffsets()
-                    }
                 } else {
                     finalMsg = if (m == LaunchMode.VERIFY) "Verification complete." else "Flags applied and verified."
                 }
@@ -3299,7 +3447,7 @@ class TacoState(
         copyText(
             "diagnostics",
             "TacoStrap $APP_VERSION\nShizuku: ${shizuku.long}\nRoot available: $rootAvailable (in use: $useRoot)\n" +
-                "Package: $pkg (${robloxVersion ?: "?"})\nPath: $path\nFlags: ${draftFlags.size}\nLayers: ${layers.size}\nPure Offset: $pureOffsetEnabled"
+                "Package: $pkg (${robloxVersion ?: "?"})\nPath: $path\nFlags: ${draftFlags.size}\nLayers: ${layers.size}"
         )
         notify("Diagnostics copied.")
     }
@@ -3334,15 +3482,59 @@ class TacoState(
             .putString("path2", path).putString("pkg", pkg)
             .putBoolean("root", useRoot).putBoolean("applyOnSave", applyOnSave)
             .putBoolean("restart", restart).putBoolean("fps", fpsCap)
-            .putInt("accent", accentIdx).putBoolean("trueBlack", amoled)
+            .putInt("accent", accentIdx).putInt("fontIdx", fontIdx).putBoolean("trueBlack", amoled)
             .putBoolean("haptics", hapticsOn).putBoolean("reduceMotion", reduceMotion)
             .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)
             .putBoolean("msgOther", msgOther)
             .putString("bgImageUri", bgImageUri)
-            .putBoolean("pureOffsetEnabled", pureOffsetEnabled)
-            .putString("pureMaxFps", pureMaxFps)
-            .putString("fpsOffset", fpsOffset)
+            .putString("customFontUri", customFontUri)
+            .putString("selectedFontPreset", selectedFontPreset)
+            .putFloat("glassOpacity", glassOpacity)
+            .putInt("cardCornerRadius", cardCornerRadius)
+            .putBoolean("vpnBypass", vpnBypass)
             .apply()
+    }
+
+    fun startVpnBypass(context: Context) {
+        val flags = toJson(mergedFlags())
+        val intent = FlagVpnService.buildStartIntent(context, flags)
+        if (intent != null) {
+            vpnStatus = "starting"
+            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
+            // Store it so MainActivity can launch it. We signal via vpnStatus.
+            _pendingVpnIntent = intent
+            notify("Grant VPN permission to enable bypass.", "other")
+        } else {
+            // Already prepared — start directly.
+            context.startService(FlagVpnService.buildDirectIntent(context, flags))
+            vpnStatus = "active"
+            notify("VPN bypass active — CDN interception live.", "other")
+        }
+    }
+
+    fun stopVpnBypass(context: Context) {
+        context.stopService(android.content.Intent(context, FlagVpnService::class.java))
+        vpnStatus = "off"
+        notify("VPN bypass stopped.", "other")
+    }
+
+    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
+    var _pendingVpnIntent: android.content.Intent? = null
+
+    fun onVpnPermissionGranted(context: Context) {
+        val flags = toJson(mergedFlags())
+        context.startService(FlagVpnService.buildDirectIntent(context, flags))
+        vpnStatus = "active"
+        _pendingVpnIntent = null
+        notify("VPN bypass active — CDN interception live.", "other")
+    }
+
+    fun onVpnPermissionDenied() {
+        vpnBypass = false
+        vpnStatus = "off"
+        _pendingVpnIntent = null
+        persist()
+        notify("VPN permission denied — bypass disabled.", "other")
     }
 
     suspend fun refreshLoop() {
@@ -3360,75 +3552,59 @@ class TacoState(
 }
 
 /* ======================================================================
- *  10. NAVIGATION + MAINACTIVITY
+ *  11. NAVIGATION + MAINACTIVITY
  * ====================================================================== */
 
-private val TAB_ROUTES = listOf("home", "flags", "profiles", "games", "settings")
+private val TAB_ROUTES = listOf("home", "flags", "profiles", "fonts", "games", "settings")
 private val TAB_ICONS = listOf(
     TacoIcon.Home to "Home", TacoIcon.Flag to "Flags", TacoIcon.Layers to "Profiles",
-    TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
+    TacoIcon.Type to "Fonts", TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
+
+// Application subclass so MainActivity can access TacoState for VPN permission callbacks.
+// Add android:name=".TacoApplication" to <application> in AndroidManifest.xml.
+class TacoApplication : android.app.Application() {
+    var tacoState: TacoState? = null
+}
 
 class MainActivity : ComponentActivity() {
 
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
-    // Compose-observable state keeps the Settings toggle in sync with the permission result.
-    private var vpnEnabled by mutableStateOf(false)
-
-    private val vpnPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            startVpnService()
-        } else {
-            vpnEnabled = false
-        }
-    }
-
-    private fun vpnServiceIntent(): Intent =
-        Intent().setClassName(this, "$packageName.FlagVpnService")
-
-    private fun startVpnService() {
-        val intent = vpnServiceIntent()
-        val started = runCatching {
-            startForegroundService(intent)
-        }
-        if (started.isSuccess) {
-            vpnEnabled = true
-        } else {
-            vpnEnabled = false
-            android.widget.Toast.makeText(
-                this,
-                "Could not start FlagVpnService. Check that the service class and manifest entry exist.",
-                android.widget.Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    private fun onVpnToggle(enabled: Boolean) {
-        if (!enabled) {
-            stopService(vpnServiceIntent())
-            vpnEnabled = false
-            return
-        }
-
-        val permissionIntent = VpnService.prepare(this)
-        if (permissionIntent != null) {
-            vpnPermissionLauncher.launch(permissionIntent)
-        } else {
-            startVpnService()
-        }
-    }
+    // VPN permission result launcher — Android requires startActivityForResult for VpnService.prepare()
+    private lateinit var vpnPermLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(permListener) }
+
+        vpnPermLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val state = (application as? TacoApplication)?.tacoState
+            if (result.resultCode == RESULT_OK) {
+                state?.onVpnPermissionGranted(this)
+            } else {
+                state?.onVpnPermissionDenied()
+            }
+        }
+
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
-        setContent { TacoRoot(vpnEnabled = vpnEnabled, onVpnToggle = ::onVpnToggle) }
+        setContent {
+            // Observe pending VPN intent from state and launch it
+            LaunchedEffect(Unit) {
+                while (true) {
+                    delay(300)
+                    val state = (application as? TacoApplication)?.tacoState
+                    val intent = state?._pendingVpnIntent
+                    if (intent != null) {
+                        vpnPermLauncher.launch(intent)
+                    }
+                }
+            }
+            TacoRoot()
+        }
     }
 
     override fun onDestroy() {
@@ -3438,7 +3614,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
+fun TacoRoot() {
     val context = LocalContext.current
     appContext = context.applicationContext
     val prefs = remember { context.getSharedPreferences("fm", Context.MODE_PRIVATE) }
@@ -3446,9 +3622,13 @@ fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val state = remember { TacoState(prefs, DefaultBootstrapper, DefaultAllowlist, scope, snackbar) }
 
+    // Register state on application so MainActivity's VPN permission launcher can call back into it
+    LaunchedEffect(Unit) {
+        (context.applicationContext as? TacoApplication)?.tacoState = state
+    }
     LaunchedEffect(Unit) { state.refreshLoop() }
 
-    TacoTheme(state.accentIdx, state.amoled, state.reduceMotion) {
+    TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx) {
         var currentRoute by rememberSaveable { mutableStateOf("home") }
         BackHandler(enabled = currentRoute != "home") { currentRoute = "home" }
         val cs = MaterialTheme.colorScheme
@@ -3456,31 +3636,30 @@ fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
         val customBgBitmap = rememberImageBitmapFromUri(state.bgImageUri)
 
         Box(Modifier.fillMaxSize().background(cs.background)) {
-            // Optional Custom Background Image
             if (customBgBitmap != null) {
                 Image(
                     bitmap = customBgBitmap,
                     contentDescription = "Custom Background",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
-                    alpha = 0.55f
+                    alpha = 0.5f
                 )
-                // Dark overlay to keep UI legible
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
             }
 
             Box(Modifier.fillMaxSize().tacoGrain()) {
                 Crossfade(
                     targetState = currentRoute,
-                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 84.dp),
+                    modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 86.dp),
                     animationSpec = tween(200),
                     label = "nav"
                 ) { r ->
                     when (r) {
                         "flags" -> FlagsScreen(state)
                         "profiles" -> ProfilesScreen(state)
+                        "fonts" -> FontsScreen(state)
                         "games" -> GamesScreen(state)
-                        "settings" -> SettingsScreen(state, vpnEnabled, onVpnToggle)
+                        "settings" -> SettingsScreen(state)
                         else -> HomeScreen(state) { target -> currentRoute = target }
                     }
                 }
@@ -3490,20 +3669,20 @@ fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
                     Row(
                         Modifier.fillMaxWidth()
                             .clip(CircleShape)
-                            .background(cs.surfaceVariant.copy(alpha = 0.92f))
-                            .border(1.dp, cs.outlineVariant, CircleShape)
-                            .padding(5.dp),
+                            .background(cs.surfaceVariant.copy(alpha = 0.94f))
+                            .border(1.dp, accent.neon.copy(0.35f), CircleShape)
+                            .padding(6.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
                         TAB_ROUTES.forEachIndexed { i, route ->
                             val selected = current == route
                             val (icon, label) = TAB_ICONS[i]
                             val w by animateFloatAsState(
-                                if (selected) 1.7f else 1f,
+                                if (selected) 1.75f else 1f,
                                 if (state.reduceMotion) tween(0) else spring(dampingRatio = 0.75f, stiffness = 420f),
                                 label = "tabw"
                             )
-                            val tint = if (selected) accent.primary else TacoPalette.Muted
+                            val tint = if (selected) accent.neon else TacoPalette.Muted
                             Row(
                                 Modifier.weight(w).height(46.dp).clip(CircleShape)
                                     .clickable(
@@ -3513,10 +3692,10 @@ fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
-                                TacoIcon(icon, tint, 21.dp)
+                                TacoIcon(icon, tint, 19.dp)
                                 if (selected) {
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
                         }
@@ -3525,13 +3704,13 @@ fun TacoRoot(vpnEnabled: Boolean, onVpnToggle: (Boolean) -> Unit) {
 
                 SnackbarHost(
                     hostState = snackbar,
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 84.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp)
                 ) { d ->
                     Snackbar(
-                        d, shape = RoundedCornerShape(16.dp),
+                        d, shape = RoundedCornerShape(18.dp),
                         containerColor = cs.surfaceVariant,
                         contentColor = cs.onSurface,
-                        actionColor = accent.primary
+                        actionColor = accent.neon
                     )
                 }
             }
