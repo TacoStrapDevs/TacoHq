@@ -168,6 +168,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import android.net.VpnService
+import android.net.VpnService.Builder
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -1494,7 +1496,14 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                 statuses = listOf(
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
-                    LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac)
+                    LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
+                    LedStatus("VPN", state.vpnStatus,
+                        when (state.vpnStatus) {
+                            "active" -> TacoPalette.Guac
+                            "starting" -> TacoPalette.Tortilla
+                            "error" -> TacoPalette.Salsa
+                            else -> TacoPalette.Faint
+                        }, optional = true)
                 ),
                 onClick = { showStatusSheet = true }
             )
@@ -2869,6 +2878,29 @@ fun SettingsScreen(state: TacoState) {
             SettingSwitch("Write file on apply", "Writes flags to the flag file during launch.", state.applyOnSave) { state.applyOnSave = it; state.persist() }
             SettingSwitch("Restart Roblox", "Force-stops Roblox before launching.", state.restart) { state.restart = it; state.persist() }
             SettingSwitch("Disable frame-rate cap", "Lifts Android's game frame cap above 60 FPS automatically.", state.fpsCap) { state.fpsCap = it; state.persist() }
+            SettingSwitch(
+                title = "VPN flag bypass",
+                sub = "Intercepts Roblox's CDN flag fetch and injects all flags — bypasses the binary allowlist. Requires VPN permission.",
+                checked = state.vpnBypass
+            ) { enabled ->
+                state.vpnBypass = enabled
+                state.persist()
+                if (enabled) state.startVpnBypass(context)
+                else state.stopVpnBypass(context)
+            }
+            if (state.vpnStatus != "off") {
+                SettingValue(
+                    title = "VPN bypass status",
+                    value = state.vpnStatus,
+                    onClick = {},
+                    sub = when (state.vpnStatus) {
+                        "active" -> "CDN interception live — all flags including blocked ones are injected"
+                        "starting" -> "Waiting for VPN permission grant…"
+                        "error" -> "Proxy error — check logcat for details"
+                        else -> ""
+                    }
+                )
+            }
             SettingValue("Clear Roblox cache", "frees space", { state.clearCache() })
         }
 
@@ -3030,6 +3062,10 @@ class TacoState(
 
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
     var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
+
+    // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
+    var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
+    var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
@@ -3248,6 +3284,7 @@ class TacoState(
         steps += LaunchStep("Check Shizuku")
         if (m != LaunchMode.VERIFY) steps += LaunchStep("Apply ${merged.size} flags")
         steps += LaunchStep("Verify")
+        if (vpnBypass) steps += LaunchStep("VPN bypass")
         if (m == LaunchMode.SAVE_LAUNCH) steps += LaunchStep("Launch Roblox")
         val vIdx = steps.indexOfFirst { it.title == "Verify" }
         launchState = LaunchState.Running(steps.toList(), 0)
@@ -3288,6 +3325,22 @@ class TacoState(
                     fail(vIdx, vmsg); return@job
                 }
                 push(vIdx, StepStatus.Done, vmsg)
+
+                // VPN bypass step — inject flags via CDN interception
+                if (vpnBypass) {
+                    val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
+                    if (vpnIdx >= 0) {
+                        push(vpnIdx, StepStatus.Running, "starting CDN interceptor…")
+                        // FlagVpnService handles the actual proxy; we just signal it to update flags
+                        val ctx = appContext
+                        if (ctx != null) {
+                            FlagVpnService.updateFlags(ctx, toJson(merged))
+                            push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
+                        } else {
+                            push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
+                        }
+                    }
+                }
 
                 val finalMsg: String
                 if (m == LaunchMode.SAVE_LAUNCH) {
@@ -3438,7 +3491,50 @@ class TacoState(
             .putString("selectedFontPreset", selectedFontPreset)
             .putFloat("glassOpacity", glassOpacity)
             .putInt("cardCornerRadius", cardCornerRadius)
+            .putBoolean("vpnBypass", vpnBypass)
             .apply()
+    }
+
+    fun startVpnBypass(context: Context) {
+        val flags = toJson(mergedFlags())
+        val intent = FlagVpnService.buildStartIntent(context, flags)
+        if (intent != null) {
+            vpnStatus = "starting"
+            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
+            // Store it so MainActivity can launch it. We signal via vpnStatus.
+            _pendingVpnIntent = intent
+            notify("Grant VPN permission to enable bypass.", "other")
+        } else {
+            // Already prepared — start directly.
+            context.startService(FlagVpnService.buildDirectIntent(context, flags))
+            vpnStatus = "active"
+            notify("VPN bypass active — CDN interception live.", "other")
+        }
+    }
+
+    fun stopVpnBypass(context: Context) {
+        context.stopService(android.content.Intent(context, FlagVpnService::class.java))
+        vpnStatus = "off"
+        notify("VPN bypass stopped.", "other")
+    }
+
+    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
+    var _pendingVpnIntent: android.content.Intent? = null
+
+    fun onVpnPermissionGranted(context: Context) {
+        val flags = toJson(mergedFlags())
+        context.startService(FlagVpnService.buildDirectIntent(context, flags))
+        vpnStatus = "active"
+        _pendingVpnIntent = null
+        notify("VPN bypass active — CDN interception live.", "other")
+    }
+
+    fun onVpnPermissionDenied() {
+        vpnBypass = false
+        vpnStatus = "off"
+        _pendingVpnIntent = null
+        persist()
+        notify("VPN permission denied — bypass disabled.", "other")
     }
 
     suspend fun refreshLoop() {
@@ -3465,18 +3561,50 @@ private val TAB_ICONS = listOf(
     TacoIcon.Type to "Fonts", TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
 
+// Application subclass so MainActivity can access TacoState for VPN permission callbacks.
+// Add android:name=".TacoApplication" to <application> in AndroidManifest.xml.
+class TacoApplication : android.app.Application() {
+    var tacoState: TacoState? = null
+}
+
 class MainActivity : ComponentActivity() {
 
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
+    // VPN permission result launcher — Android requires startActivityForResult for VpnService.prepare()
+    private lateinit var vpnPermLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(permListener) }
+
+        vpnPermLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val state = (application as? TacoApplication)?.tacoState
+            if (result.resultCode == RESULT_OK) {
+                state?.onVpnPermissionGranted(this)
+            } else {
+                state?.onVpnPermissionDenied()
+            }
+        }
+
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
-        setContent { TacoRoot() }
+        setContent {
+            // Observe pending VPN intent from state and launch it
+            LaunchedEffect(Unit) {
+                while (true) {
+                    delay(300)
+                    val state = (application as? TacoApplication)?.tacoState
+                    val intent = state?._pendingVpnIntent
+                    if (intent != null) {
+                        vpnPermLauncher.launch(intent)
+                    }
+                }
+            }
+            TacoRoot()
+        }
     }
 
     override fun onDestroy() {
@@ -3494,6 +3622,10 @@ fun TacoRoot() {
     val snackbar = remember { SnackbarHostState() }
     val state = remember { TacoState(prefs, DefaultBootstrapper, DefaultAllowlist, scope, snackbar) }
 
+    // Register state on application so MainActivity's VPN permission launcher can call back into it
+    LaunchedEffect(Unit) {
+        (context.applicationContext as? TacoApplication)?.tacoState = state
+    }
     LaunchedEffect(Unit) { state.refreshLoop() }
 
     TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx) {
