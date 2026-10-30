@@ -2,138 +2,149 @@ package com.example.flagmanager
 
 import android.util.Log
 import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * MitmProxy
- *
- * Local TCP diagnostic listener.
- * This is NOT a VPN tunnel and does not intercept Roblox HTTPS traffic.
+ * MitmProxy — plain TCP proxy on PROXY_PORT.
+ * Intercepts HTTP GET requests to Roblox CDN flag endpoints and returns flagsJson.
+ * Everything else is forwarded to the real server.
+ * No raw IP packet manipulation — no crashes.
  */
 object MitmProxy {
 
     private const val TAG = "MitmProxy"
 
-    @Volatile
-    private var running = false
+    private val CDN_HOSTS = setOf(
+        "clientsettingscdn.roblox.com",
+        "clientsettings.roblox.com"
+    )
 
-    @Volatile
+    private val FLAG_PATHS = listOf(
+        "/v2/settings/application",
+        "/v1/settings/application",
+        "/v2/client-settings"
+    )
+
+    @Volatile private var flagsJson: String = "{}"
+    @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
 
-    @Volatile
-    private var activePort: Int = -1
+    fun start(initialFlags: String, port: Int) {
+        if (running) { updateFlags(initialFlags); return }
+        flagsJson = initialFlags
+        running = true
 
-    @Synchronized
-    fun start(port: Int) {
-        if (running) {
-            Log.d(TAG, "Already running on port $activePort")
-            return
-        }
-
-        try {
-            val socket = ServerSocket(port)
-            serverSocket = socket
-            activePort = port
-            running = true
-
-            Log.d(TAG, "Diagnostic listener started on port $port")
-
-            thread(
-                name = "MitmProxy-Accept",
-                isDaemon = true
-            ) {
-                acceptConnections(socket)
+        thread(name = "MitmProxy-accept", isDaemon = true) {
+            try {
+                val ss = ServerSocket(port)
+                serverSocket = ss
+                Log.d(TAG, "proxy listening on :$port")
+                while (running) {
+                    val client = runCatching { ss.accept() }.getOrNull() ?: break
+                    thread(name = "MitmProxy-conn", isDaemon = true) {
+                        handleConnection(client)
+                    }
+                }
+            } catch (e: Exception) {
+                if (running) Log.e(TAG, "accept error: ${e.message}")
             }
-
-        } catch (e: Exception) {
-            running = false
-            serverSocket = null
-            activePort = -1
-
-            Log.e(TAG, "Failed to start listener", e)
         }
     }
 
-    private fun acceptConnections(server: ServerSocket) {
-        try {
-            while (running && !server.isClosed) {
-                val client = server.accept()
+    fun stop() {
+        running = false
+        runCatching { serverSocket?.close() }
+        serverSocket = null
+        Log.d(TAG, "proxy stopped")
+    }
 
-                thread(
-                    name = "MitmProxy-Client",
-                    isDaemon = true
-                ) {
-                    handleConnection(client)
-                }
-            }
-        } catch (e: Exception) {
-            if (running) {
-                Log.e(TAG, "Accept loop failed", e)
-            }
-        } finally {
-            synchronized(this) {
-                if (serverSocket === server) {
-                    running = false
-                    serverSocket = null
-                    activePort = -1
-                }
-            }
-        }
+    fun updateFlags(json: String) {
+        flagsJson = json
     }
 
     private fun handleConnection(client: Socket) {
-        client.use { socket ->
-            try {
-                socket.soTimeout = 5000
+        client.soTimeout = 8_000
+        try {
+            val input = client.getInputStream().bufferedReader()
+            val output = client.getOutputStream()
 
-                val reader = BufferedReader(
-                    InputStreamReader(socket.getInputStream())
-                )
+            val requestLine = input.readLine() ?: return
+            val headers = readHeaders(input)
 
-                val firstLine = reader.readLine() ?: return
+            val host = headers["host"]?.lowercase() ?: ""
+            val parts = requestLine.split(" ")
+            val method = parts.getOrElse(0) { "GET" }
+            val path = parts.getOrElse(1) { "/" }
 
-                Log.d(TAG, "Received connection: $firstLine")
+            val isCdn = CDN_HOSTS.any { host.contains(it) }
+            val isFlagPath = FLAG_PATHS.any { path.startsWith(it) }
 
-                val output: OutputStream = socket.getOutputStream()
+            if (isCdn && isFlagPath && method == "GET") {
+                injectFlags(output)
+                Log.d(TAG, "intercepted $host$path → injected flags")
+            } else {
+                passThrough(method, path, host, headers, output)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "conn error: ${e.message}")
+        } finally {
+            runCatching { client.close() }
+        }
+    }
 
-                val response = """
-                    HTTP/1.1 501 Not Implemented
-                    Content-Type: text/plain; charset=utf-8
-                    Connection: close
+    private fun readHeaders(reader: BufferedReader): Map<String, String> {
+        val headers = mutableMapOf<String, String>()
+        while (true) {
+            val line = reader.readLine() ?: break
+            if (line.isEmpty()) break
+            val idx = line.indexOf(':')
+            if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+        }
+        return headers
+    }
 
-                    This diagnostic listener does not proxy or intercept traffic.
-                """.trimIndent().replace("\n", "\r\n")
+    private fun injectFlags(output: OutputStream) {
+        val body = flagsJson.toByteArray(Charsets.UTF_8)
+        val response = "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: application/json; charset=utf-8\r\n" +
+            "Content-Length: ${body.size}\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Connection: close\r\n\r\n"
+        output.write(response.toByteArray())
+        output.write(body)
+        output.flush()
+    }
 
-                output.write(response.toByteArray(Charsets.UTF_8))
-                output.flush()
+    private fun passThrough(
+        method: String, path: String, host: String,
+        reqHeaders: Map<String, String>,
+        clientOut: OutputStream
+    ) {
+        try {
+            val upstream = Socket(host, 80)
+            upstream.soTimeout = 8_000
+            val upOut = upstream.getOutputStream()
 
-            } catch (e: Exception) {
-                Log.e(TAG, "Connection error", e)
+            val sb = StringBuilder()
+            sb.append("$method $path HTTP/1.1\r\n")
+            reqHeaders.forEach { (k, v) ->
+                if (!AntiBan.isBlockedHeader(k)) sb.append("$k: $v\r\n")
+            }
+            sb.append("Connection: close\r\n\r\n")
+            upOut.write(sb.toString().toByteArray())
+            upOut.flush()
+
+            upstream.getInputStream().copyTo(clientOut)
+            clientOut.flush()
+            upstream.close()
+        } catch (e: Exception) {
+            runCatching {
+                clientOut.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                clientOut.flush()
             }
         }
     }
-
-    @Synchronized
-    fun stop() {
-        running = false
-
-        try {
-            serverSocket?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error closing listener", e)
-        }
-
-        serverSocket = null
-        activePort = -1
-
-        Log.d(TAG, "Diagnostic listener stopped")
-    }
-
-    fun isRunning(): Boolean = running
-
-    fun getActivePort(): Int = activePort
 }
