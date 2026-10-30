@@ -2,149 +2,71 @@ package com.example.flagmanager
 
 import android.util.Log
 import java.io.BufferedReader
-import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * MitmProxy — plain TCP proxy on PROXY_PORT.
- * Intercepts HTTP GET requests to Roblox CDN flag endpoints and returns flagsJson.
- * Everything else is forwarded to the real server.
- * No raw IP packet manipulation — no crashes.
+ * Local HTTP diagnostic listener. It deliberately does not rewrite Roblox responses,
+ * inject FastFlags, intercept HTTPS, or bypass application allowlists.
  */
 object MitmProxy {
-
     private const val TAG = "MitmProxy"
-
-    private val CDN_HOSTS = setOf(
-        "clientsettingscdn.roblox.com",
-        "clientsettings.roblox.com"
-    )
-
-    private val FLAG_PATHS = listOf(
-        "/v2/settings/application",
-        "/v1/settings/application",
-        "/v2/client-settings"
-    )
-
-    @Volatile private var flagsJson: String = "{}"
     @Volatile private var running = false
-    private var serverSocket: ServerSocket? = null
+    @Volatile private var serverSocket: ServerSocket? = null
 
-    fun start(initialFlags: String, port: Int) {
-        if (running) { updateFlags(initialFlags); return }
-        flagsJson = initialFlags
+    @Synchronized
+    @Throws(Exception::class)
+    fun start(port: Int) {
+        if (running) return
+        val socket = ServerSocket(port) // Bind synchronously so startup errors are reported accurately.
+        serverSocket = socket
         running = true
-
-        thread(name = "MitmProxy-accept", isDaemon = true) {
+        thread(name = "TacoStrap-HTTP-listener", isDaemon = true) {
             try {
-                val ss = ServerSocket(port)
-                serverSocket = ss
-                Log.d(TAG, "proxy listening on :$port")
                 while (running) {
-                    val client = runCatching { ss.accept() }.getOrNull() ?: break
-                    thread(name = "MitmProxy-conn", isDaemon = true) {
-                        handleConnection(client)
+                    val client = try { socket.accept() } catch (e: Exception) {
+                        if (running) Log.e(TAG, "Accept failed", e)
+                        break
                     }
+                    thread(name = "TacoStrap-HTTP-client", isDaemon = true) { handle(client) }
                 }
-            } catch (e: Exception) {
-                if (running) Log.e(TAG, "accept error: ${e.message}")
+            } finally {
+                running = false
+                runCatching { socket.close() }
+                if (serverSocket === socket) serverSocket = null
             }
         }
+        Log.i(TAG, "Diagnostic listener bound on :$port")
     }
 
+    @Synchronized
     fun stop() {
         running = false
         runCatching { serverSocket?.close() }
         serverSocket = null
-        Log.d(TAG, "proxy stopped")
     }
 
-    fun updateFlags(json: String) {
-        flagsJson = json
-    }
+    fun isRunning(): Boolean = running && serverSocket?.isBound == true && !serverSocket!!.isClosed
 
-    private fun handleConnection(client: Socket) {
-        client.soTimeout = 8_000
-        try {
-            val input = client.getInputStream().bufferedReader()
-            val output = client.getOutputStream()
-
-            val requestLine = input.readLine() ?: return
-            val headers = readHeaders(input)
-
-            val host = headers["host"]?.lowercase() ?: ""
-            val parts = requestLine.split(" ")
-            val method = parts.getOrElse(0) { "GET" }
-            val path = parts.getOrElse(1) { "/" }
-
-            val isCdn = CDN_HOSTS.any { host.contains(it) }
-            val isFlagPath = FLAG_PATHS.any { path.startsWith(it) }
-
-            if (isCdn && isFlagPath && method == "GET") {
-                injectFlags(output)
-                Log.d(TAG, "intercepted $host$path → injected flags")
-            } else {
-                passThrough(method, path, host, headers, output)
+    private fun handle(client: Socket) {
+        client.use { socket ->
+            socket.soTimeout = 5_000
+            val reader: BufferedReader = socket.getInputStream().bufferedReader()
+            val requestLine = reader.readLine() ?: return
+            // Drain headers; this listener is diagnostic and does not forward or modify traffic.
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isEmpty()) break
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "conn error: ${e.message}")
-        } finally {
-            runCatching { client.close() }
-        }
-    }
-
-    private fun readHeaders(reader: BufferedReader): Map<String, String> {
-        val headers = mutableMapOf<String, String>()
-        while (true) {
-            val line = reader.readLine() ?: break
-            if (line.isEmpty()) break
-            val idx = line.indexOf(':')
-            if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
-        }
-        return headers
-    }
-
-    private fun injectFlags(output: OutputStream) {
-        val body = flagsJson.toByteArray(Charsets.UTF_8)
-        val response = "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: application/json; charset=utf-8\r\n" +
-            "Content-Length: ${body.size}\r\n" +
-            "Cache-Control: no-cache\r\n" +
-            "Connection: close\r\n\r\n"
-        output.write(response.toByteArray())
-        output.write(body)
-        output.flush()
-    }
-
-    private fun passThrough(
-        method: String, path: String, host: String,
-        reqHeaders: Map<String, String>,
-        clientOut: OutputStream
-    ) {
-        try {
-            val upstream = Socket(host, 80)
-            upstream.soTimeout = 8_000
-            val upOut = upstream.getOutputStream()
-
-            val sb = StringBuilder()
-            sb.append("$method $path HTTP/1.1\r\n")
-            reqHeaders.forEach { (k, v) ->
-                if (!AntiBan.isBlockedHeader(k)) sb.append("$k: $v\r\n")
-            }
-            sb.append("Connection: close\r\n\r\n")
-            upOut.write(sb.toString().toByteArray())
-            upOut.flush()
-
-            upstream.getInputStream().copyTo(clientOut)
-            clientOut.flush()
-            upstream.close()
-        } catch (e: Exception) {
-            runCatching {
-                clientOut.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
-                clientOut.flush()
-            }
+            val body = "TacoStrap local diagnostic listener is running. No Roblox traffic was intercepted.\n"
+                .toByteArray(Charsets.UTF_8)
+            val output = socket.getOutputStream()
+            output.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n" +
+                "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+            output.write(body)
+            output.flush()
+            Log.d(TAG, "Diagnostic request received: $requestLine")
         }
     }
 }
