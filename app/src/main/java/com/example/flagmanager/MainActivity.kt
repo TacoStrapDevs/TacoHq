@@ -3596,9 +3596,12 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 while (true) {
                     delay(300)
-                    val state = (application as? TacoApplication)?.tacoState
-                    val intent = state?._pendingVpnIntent
+                    val state = (application as? TacoApplication)?.tacoState ?: continue
+                    // Consume the pending intent before launching the permission screen.
+                    // Otherwise this polling loop can launch the same request every 300 ms.
+                    val intent = state._pendingVpnIntent
                     if (intent != null) {
+                        state._pendingVpnIntent = null
                         vpnPermLauncher.launch(intent)
                     }
                 }
