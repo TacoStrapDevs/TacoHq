@@ -1,3 +1,4 @@
+
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class
@@ -100,6 +101,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -370,28 +372,61 @@ sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, 
  * ====================================================================== */
 
 object TacoPalette {
-    val Charcoal = Color(0xFF0F0B09)
-    val CharcoalDeep = Color(0xFF070504)
-    val Surface = Color(0xFF18120E)
-    val SurfaceHigh = Color(0xFF221913)
-    val Tortilla = Color(0xFFFFB84D)
-    val TortillaDeep = Color(0xFFD4932A)
-    val Salsa = Color(0xFFF75931)
-    val Guac = Color(0xFF5CD674)
-    val Cream = Color(0xFFFFF7ED)
-    val Muted = Color(0xFFB8A48B)
-    val Faint = Color(0xFF6E5E4E)
-    val Outline = Color(0xFF382A1D)
+    // Snapshot-backed colors let every existing component react to a theme change,
+    // including components that use TacoPalette directly instead of MaterialTheme.
+    var Charcoal by mutableStateOf(Color(0xFF0F0B09))
+    var CharcoalDeep by mutableStateOf(Color(0xFF070504))
+    var Surface by mutableStateOf(Color(0xFF18120E))
+    var SurfaceHigh by mutableStateOf(Color(0xFF221913))
+    var Tortilla by mutableStateOf(Color(0xFFFFB84D))
+    var TortillaDeep by mutableStateOf(Color(0xFFD4932A))
+    var Salsa by mutableStateOf(Color(0xFFF75931))
+    var Guac by mutableStateOf(Color(0xFF5CD674))
+    var Cream by mutableStateOf(Color(0xFFFFF7ED))
+    var Muted by mutableStateOf(Color(0xFFB8A48B))
+    var Faint by mutableStateOf(Color(0xFF6E5E4E))
+    var Outline by mutableStateOf(Color(0xFF382A1D))
+
+    fun applyTheme(accent: TacoAccent, amoled: Boolean) {
+        Charcoal = if (amoled) Color(0xFF000000) else accent.background
+        CharcoalDeep = if (amoled) Color(0xFF000000) else accent.backgroundDeep
+        Surface = if (amoled) Color(0xFF080808) else accent.surface
+        SurfaceHigh = if (amoled) Color(0xFF111111) else accent.surfaceHigh
+        Tortilla = accent.primary
+        TortillaDeep = accent.deep
+        Salsa = accent.danger
+        Guac = accent.success
+        Cream = accent.text
+        Muted = accent.muted
+        Faint = accent.faint
+        Outline = accent.outline
+    }
 }
 
-data class TacoAccent(val name: String, val primary: Color, val onPrimary: Color, val deep: Color, val neon: Color)
+data class TacoAccent(
+    val name: String,
+    val primary: Color,
+    val onPrimary: Color,
+    val deep: Color,
+    val neon: Color,
+    val background: Color,
+    val backgroundDeep: Color,
+    val surface: Color,
+    val surfaceHigh: Color,
+    val text: Color,
+    val muted: Color,
+    val faint: Color,
+    val outline: Color,
+    val danger: Color,
+    val success: Color
+)
 
 val TACO_ACCENTS = listOf(
-    TacoAccent("Amber Gold", TacoPalette.Tortilla, TacoPalette.CharcoalDeep, TacoPalette.TortillaDeep, Color(0xFFFFD166)),
-    TacoAccent("Cyber Crimson", TacoPalette.Salsa, Color(0xFF2A0A04), Color(0xFFC73D17), Color(0xFFFF6B6B)),
-    TacoAccent("Neon Emerald", TacoPalette.Guac, Color(0xFF061A0C), Color(0xFF3B9E50), Color(0xFF4EED77)),
-    TacoAccent("Solar Flare", Color(0xFFFF8E3C), Color(0xFF241002), Color(0xFFCC5E13), Color(0xFFFFB35C)),
-    TacoAccent("Electric Orchid", Color(0xFFB062FF), Color(0xFF140424), Color(0xFF7F35D4), Color(0xFFD18FFF))
+    TacoAccent("Amber Gold", Color(0xFFFFB84D), Color(0xFF160D04), Color(0xFFD4932A), Color(0xFFFFD166), Color(0xFF0F0B09), Color(0xFF070504), Color(0xFF18120E), Color(0xFF221913), Color(0xFFFFF7ED), Color(0xFFB8A48B), Color(0xFF6E5E4E), Color(0xFF382A1D), Color(0xFFF75931), Color(0xFF5CD674)),
+    TacoAccent("Cyber Crimson", Color(0xFFFF5268), Color(0xFF26070D), Color(0xFFC52D48), Color(0xFFFF8292), Color(0xFF13080D), Color(0xFF090407), Color(0xFF211018), Color(0xFF2D1520), Color(0xFFFFF0F3), Color(0xFFC7A2AC), Color(0xFF80616B), Color(0xFF4A2632), Color(0xFFFF765E), Color(0xFF67D99A)),
+    TacoAccent("Neon Emerald", Color(0xFF55E58A), Color(0xFF061A0C), Color(0xFF268A57), Color(0xFF78FFAA), Color(0xFF07120D), Color(0xFF030906), Color(0xFF102219), Color(0xFF173126), Color(0xFFEFFFF4), Color(0xFFA4CBB3), Color(0xFF628A72), Color(0xFF254A36), Color(0xFFFF735F), Color(0xFF55E58A)),
+    TacoAccent("Solar Flare", Color(0xFFFF963F), Color(0xFF241002), Color(0xFFCC5E13), Color(0xFFFFB35C), Color(0xFF160D07), Color(0xFF0A0603), Color(0xFF25160C), Color(0xFF352010), Color(0xFFFFF3E7), Color(0xFFD0AE8F), Color(0xFF8C6B4D), Color(0xFF51351F), Color(0xFFFF6655), Color(0xFF8AD66B)),
+    TacoAccent("Electric Orchid", Color(0xFFB978FF), Color(0xFF180A28), Color(0xFF7836BD), Color(0xFFD6A1FF), Color(0xFF100A19), Color(0xFF07040E), Color(0xFF1B1229), Color(0xFF291A3D), Color(0xFFF7F0FF), Color(0xFFBBA8D2), Color(0xFF79658F), Color(0xFF403052), Color(0xFFFF6D82), Color(0xFF69DCA6))
 )
 
 val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
@@ -451,31 +486,33 @@ object TacoMotion {
 @Composable
 fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: Int, content: @Composable () -> Unit) {
     val accent = TACO_ACCENTS[accentIdx.coerceIn(0, TACO_ACCENTS.lastIndex)]
-    val base = if (amoled) TacoPalette.CharcoalDeep else TacoPalette.Charcoal
-    val surface = if (amoled) Color(0xFF100B08) else TacoPalette.Surface
+    SideEffect { TacoPalette.applyTheme(accent, amoled) }
     val fontFamily: FontFamily = when (fontIdx) {
         1 -> FontFamily.Monospace
         2 -> FontFamily.Serif
         3 -> FontFamily.Cursive
-        4 -> FontFamily(android.graphics.Typeface.MONOSPACE) // Minecraft fallback
+        4 -> FontFamily(android.graphics.Typeface.MONOSPACE)
         else -> FontFamily.SansSerif
     }
     val scheme = darkColorScheme(
         primary = accent.primary, onPrimary = accent.onPrimary,
-        primaryContainer = accent.deep, onPrimaryContainer = TacoPalette.Cream,
-        secondary = accent.deep, onSecondary = TacoPalette.Cream,
-        tertiary = TacoPalette.Guac, onTertiary = Color(0xFF0E220A),
-        background = base, onBackground = TacoPalette.Cream,
-        surface = base, onSurface = TacoPalette.Cream,
-        surfaceVariant = surface, onSurfaceVariant = TacoPalette.Muted,
-        error = TacoPalette.Salsa, onError = Color(0xFF2A0E06),
-        outline = TacoPalette.Outline, outlineVariant = Color(0xFF2E2016)
+        primaryContainer = accent.deep, onPrimaryContainer = accent.text,
+        secondary = accent.neon, onSecondary = accent.backgroundDeep,
+        tertiary = accent.success, onTertiary = accent.backgroundDeep,
+        background = if (amoled) Color.Black else accent.background,
+        onBackground = accent.text,
+        surface = if (amoled) Color.Black else accent.background,
+        onSurface = accent.text,
+        surfaceVariant = if (amoled) Color(0xFF080808) else accent.surface,
+        onSurfaceVariant = accent.muted,
+        error = accent.danger, onError = accent.backgroundDeep,
+        outline = accent.outline, outlineVariant = accent.outline
     )
     CompositionLocalProvider(
         LocalTacoAccent provides accent,
         LocalReduceMotion provides reduceMotion,
         LocalCustomFont provides fontFamily,
-        LocalContentColor provides TacoPalette.Cream
+        LocalContentColor provides accent.text
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
@@ -2777,27 +2814,53 @@ fun SettingsScreen(state: TacoState) {
         SectionLabel("Million-Dollar Appearance & Theme")
         SettingsGroup {
             Text("Accent & Neon Theme", style = TacoType.body, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Text(
+                "Choose a complete visual identity. Colors update across every screen, card, control and navigation element.",
+                fontSize = 12.sp, color = TacoPalette.Muted,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp), lineHeight = 17.sp
+            )
             Row(
-                Modifier.hScroll().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                Modifier.hScroll().padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 TACO_ACCENTS.forEachIndexed { i, a ->
                     val sel = state.accentIdx == i
-                    val s by animateFloatAsState(if (sel) 1.12f else 1f, TacoMotion.softSpring, label = "ac")
+                    val scale by animateFloatAsState(
+                        if (sel) 1.015f else 1f,
+                        if (state.reduceMotion) tween(0) else spring(dampingRatio = 0.78f, stiffness = 420f),
+                        label = "theme-card-scale"
+                    )
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable { state.accentIdx = i; state.persist() }
+                        Modifier.width(142.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(a.background)
+                            .border(if (sel) 2.dp else 1.dp, if (sel) a.neon else a.outline, RoundedCornerShape(18.dp))
+                            .clickable { state.accentIdx = i; state.persist(); state.notify("${a.name} theme applied.") }
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(
-                            Modifier.size(44.dp).graphicsLayer { scaleX = s; scaleY = s }.clip(CircleShape)
-                                .background(Brush.horizontalGradient(listOf(a.neon, a.primary, a.deep)))
-                                .then(if (sel) Modifier.border(2.dp, TacoPalette.Cream, CircleShape) else Modifier),
-                            contentAlignment = Alignment.Center
-                        ) { if (sel) TacoIcon(TacoIcon.Check, a.onPrimary, 18.dp, 2.6f) }
-                        Spacer(Modifier.height(6.dp))
-                        Text(a.name, fontSize = 11.sp,
-                            color = if (sel) TacoPalette.Cream else TacoPalette.Muted,
-                            fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f).height(9.dp).clip(CircleShape).background(a.primary))
+                            Spacer(Modifier.width(5.dp))
+                            Box(Modifier.size(9.dp).clip(CircleShape).background(a.neon))
+                            Spacer(Modifier.width(4.dp))
+                            Box(Modifier.size(9.dp).clip(CircleShape).background(a.success))
+                        }
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(11.dp))
+                                .background(a.surface).padding(9.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Box(Modifier.fillMaxWidth(0.68f).height(5.dp).clip(CircleShape).background(a.text.copy(alpha = 0.9f)))
+                            Box(Modifier.fillMaxWidth(0.92f).height(4.dp).clip(CircleShape).background(a.muted.copy(alpha = 0.65f)))
+                            Box(Modifier.fillMaxWidth(0.48f).height(17.dp).clip(RoundedCornerShape(6.dp)).background(a.primary))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(a.name, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = a.text, modifier = Modifier.weight(1f), maxLines = 1)
+                            if (sel) TacoIcon(TacoIcon.Check, a.neon, 15.dp, 2.5f)
+                        }
+                        Text(if (sel) "CURRENT THEME" else "TAP TO APPLY", fontSize = 8.sp,
+                            letterSpacing = 1.sp, color = a.muted, fontWeight = FontWeight.Bold)
                     }
                 }
             }
