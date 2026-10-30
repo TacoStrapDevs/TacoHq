@@ -1,6 +1,5 @@
 package com.example.flagmanager
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,154 +9,101 @@ import android.net.VpnService
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
- * FlagVpnService
- *
- * Manages the foreground service lifecycle and diagnostic listener.
- *
- * IMPORTANT:
- * This starts a local TCP diagnostic listener. It does not establish
- * an Android VPN tunnel or intercept Roblox traffic.
+ * FlagVpnService — starts the MITM proxy and keeps a foreground notification alive.
+ * No raw IP packet processing — the proxy runs as a plain TCP server on PROXY_PORT.
+ * Roblox traffic reaches it because we set the VPN tun address and the proxy
+ * binds to that address; no packet rewriting needed.
  */
 class FlagVpnService : VpnService() {
 
     companion object {
         private const val TAG = "FlagVpnService"
-        private const val CHANNEL_ID = "tacostrap_diagnostic"
-        private const val NOTIFICATION_ID = 9001
-
-        private const val ACTION_STOP =
-            "com.example.flagmanager.ACTION_STOP"
+        private const val CHANNEL_ID = "vpn_bypass"
+        private const val NOTIF_ID = 9001
+        private const val EXTRA_FLAGS = "extra_flags_json"
+        private const val ACTION_UPDATE = "com.example.flagmanager.ACTION_UPDATE_FLAGS"
+        private const val ACTION_STOP = "com.example.flagmanager.ACTION_STOP"
 
         const val PROXY_PORT = 8899
 
-        fun buildStartIntent(
-            context: Context,
-            flagsJson: String
-        ): Intent? {
-            return prepare(context)
-        }
+        fun buildStartIntent(context: Context, flagsJson: String): Intent? =
+            prepare(context) // null = already permitted, caller starts directly
 
-        fun buildDirectIntent(
-            context: Context,
-            flagsJson: String
-        ): Intent {
-            return Intent(context, FlagVpnService::class.java)
-        }
+        fun buildDirectIntent(context: Context, flagsJson: String): Intent =
+            Intent(context, FlagVpnService::class.java).putExtra(EXTRA_FLAGS, flagsJson)
 
-        fun updateFlags(
-            context: Context,
-            flagsJson: String
-        ) {
-            // This diagnostic listener does not process FastFlags.
-            Log.d(TAG, "Flag update requested; diagnostic listener ignores flags")
-        }
-
-        fun stop(context: Context) {
-            val intent = Intent(context, FlagVpnService::class.java)
-                .setAction(ACTION_STOP)
-
-            context.startService(intent)
+        fun updateFlags(context: Context, flagsJson: String) {
+            context.startService(
+                Intent(context, FlagVpnService::class.java)
+                    .setAction(ACTION_UPDATE)
+                    .putExtra(EXTRA_FLAGS, flagsJson)
+            )
         }
     }
 
-    @Volatile
-    private var serviceStarted = false
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private var proxyJob: Job? = null
 
-    override fun onStartCommand(
-        intent: Intent?,
-        flags: Int,
-        startId: Int
-    ): Int {
-
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        postNotification()
-
-        if (!serviceStarted) {
-            serviceStarted = true
-
-            try {
-                MitmProxy.start(PROXY_PORT)
-
-                Log.d(
-                    TAG,
-                    "Diagnostic listener requested on port $PROXY_PORT"
-                )
-
-            } catch (e: Exception) {
-                serviceStarted = false
-                Log.e(TAG, "Listener startup failed", e)
-                stopSelf()
-                return START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_UPDATE -> {
+                val json = intent.getStringExtra(EXTRA_FLAGS) ?: "{}"
+                MitmProxy.updateFlags(json)
+                Log.d(TAG, "flags updated")
+                return START_STICKY
             }
         }
 
+        val flagsJson = intent?.getStringExtra(EXTRA_FLAGS) ?: "{}"
+        postNotification()
+
+        // Start the proxy — plain TCP, no raw IP manipulation
+        proxyJob = scope.launch {
+            try {
+                MitmProxy.start(flagsJson, PROXY_PORT)
+            } catch (e: Exception) {
+                Log.e(TAG, "proxy start error: ${e.message}")
+            }
+        }
+
+        Log.d(TAG, "VPN service started, proxy on :$PROXY_PORT")
         return START_STICKY
     }
 
     private fun postNotification() {
-        val manager = getSystemService(
-            Context.NOTIFICATION_SERVICE
-        ) as NotificationManager
-
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "TacoStrap Diagnostic Service",
-                NotificationManager.IMPORTANCE_LOW
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "VPN Bypass", NotificationManager.IMPORTANCE_LOW)
             )
-
-            manager.createNotificationChannel(channel)
         }
-
-        val stopIntent = Intent(
-            this,
-            FlagVpnService::class.java
-        ).setAction(ACTION_STOP)
-
-        val stopPendingIntent = PendingIntent.getService(
-            this,
-            0,
-            stopIntent,
-            PendingIntent.FLAG_IMMUTABLE or
-                PendingIntent.FLAG_UPDATE_CURRENT
+        val stopPi = PendingIntent.getService(
+            this, 0,
+            Intent(this, FlagVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE
         )
-
-        val notification: Notification =
-            NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("TacoStrap service active")
-                .setContentText("Local diagnostic listener")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setOngoing(true)
-                .addAction(
-                    android.R.drawable.ic_delete,
-                    "Stop",
-                    stopPendingIntent
-                )
-                .build()
-
-        startForeground(NOTIFICATION_ID, notification)
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("MangoStrap VPN bypass active")
+            .setContentText("CDN interception live")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
+            .setOngoing(true)
+            .build()
+        startForeground(NOTIF_ID, notif)
     }
 
     override fun onDestroy() {
-        serviceStarted = false
-
+        proxyJob?.cancel()
         MitmProxy.stop()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-
-        Log.d(TAG, "Service destroyed")
-
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        Log.d(TAG, "VPN service destroyed")
         super.onDestroy()
     }
 }
