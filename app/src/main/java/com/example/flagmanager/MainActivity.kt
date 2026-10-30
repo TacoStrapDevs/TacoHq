@@ -1,3 +1,4 @@
+
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class
@@ -1533,7 +1534,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
                     LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
-                    LedStatus("Service", state.vpnStatus,
+                    LedStatus("VPN", state.vpnStatus,
                         when (state.vpnStatus) {
                             "active" -> TacoPalette.Guac
                             "starting" -> TacoPalette.Tortilla
@@ -2941,8 +2942,8 @@ fun SettingsScreen(state: TacoState) {
             SettingSwitch("Restart Roblox", "Force-stops Roblox before launching.", state.restart) { state.restart = it; state.persist() }
             SettingSwitch("Disable frame-rate cap", "Lifts Android's game frame cap above 60 FPS automatically.", state.fpsCap) { state.fpsCap = it; state.persist() }
             SettingSwitch(
-                title = "Local diagnostic service",
-                sub = "Runs a local HTTP diagnostic listener. It does not route Roblox traffic or bypass Roblox protections.",
+                title = "VPN flag bypass",
+                sub = "Intercepts Roblox's CDN flag fetch and injects all flags — bypasses the binary allowlist. Requires VPN permission.",
                 checked = state.vpnBypass
             ) { enabled ->
                 state.vpnBypass = enabled
@@ -2952,13 +2953,13 @@ fun SettingsScreen(state: TacoState) {
             }
             if (state.vpnStatus != "off") {
                 SettingValue(
-                    title = "Local service status",
+                    title = "VPN bypass status",
                     value = state.vpnStatus,
                     onClick = {},
                     sub = when (state.vpnStatus) {
-                        "active" -> "Local listener is running; no VPN tunnel is established."
-                        "starting" -> "Starting local listener…"
-                        "error" -> "Listener failed to start. Check Logcat for details."
+                        "active" -> "CDN interception live — all flags including blocked ones are injected"
+                        "starting" -> "Waiting for VPN permission grant…"
+                        "error" -> "Proxy error — check logcat for details"
                         else -> ""
                     }
                 )
@@ -3125,7 +3126,7 @@ class TacoState(
     var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
     var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
 
-    // Local diagnostic service preference (not a Roblox traffic bypass)
+    // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
     var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
     var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
 
@@ -3558,35 +3559,37 @@ class TacoState(
     }
 
     fun startVpnBypass(context: Context) {
-        vpnBypass = true
-        vpnStatus = "starting"
-        persist()
-        try {
-            FlagVpnService.start(context.applicationContext)
-            notify("Starting local diagnostic service.", "other")
-        } catch (e: Exception) {
-            vpnStatus = "error"
-            vpnBypass = false
-            persist()
-            notify("Failed to start local service: ${e.message ?: "unknown error"}", "other")
+        val flags = toJson(mergedFlags())
+        val intent = FlagVpnService.buildStartIntent(context, flags)
+        if (intent != null) {
+            vpnStatus = "starting"
+            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
+            // Store it so MainActivity can launch it. We signal via vpnStatus.
+            _pendingVpnIntent = intent
+            notify("Grant VPN permission to enable bypass.", "other")
+        } else {
+            // Already prepared — start directly.
+            context.startService(FlagVpnService.buildDirectIntent(context, flags))
+            vpnStatus = "active"
+            notify("VPN bypass active — CDN interception live.", "other")
         }
     }
 
     fun stopVpnBypass(context: Context) {
-        runCatching { FlagVpnService.stop(context.applicationContext) }
-        vpnBypass = false
+        context.stopService(android.content.Intent(context, FlagVpnService::class.java))
         vpnStatus = "off"
-        persist()
-        notify("Local diagnostic service stopped.", "other")
+        notify("VPN bypass stopped.", "other")
     }
 
-    // Kept for compatibility with the existing Activity Result callback.
-    // This diagnostic listener does not request Android VPN permission.
+    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
     var _pendingVpnIntent: android.content.Intent? = null
 
     fun onVpnPermissionGranted(context: Context) {
-        startVpnBypass(context)
+        val flags = toJson(mergedFlags())
+        context.startService(FlagVpnService.buildDirectIntent(context, flags))
+        vpnStatus = "active"
         _pendingVpnIntent = null
+        notify("VPN bypass active — CDN interception live.", "other")
     }
 
     fun onVpnPermissionDenied() {
@@ -3594,7 +3597,7 @@ class TacoState(
         vpnStatus = "off"
         _pendingVpnIntent = null
         persist()
-        notify("Permission was not granted.", "other")
+        notify("VPN permission denied — bypass disabled.", "other")
     }
 
     suspend fun refreshLoop() {
@@ -3606,19 +3609,6 @@ class TacoState(
                 robloxVersion = engine.robloxVersion(pkg, useRoot)
             }
             tick++
-            appContext?.let { ctx ->
-                val actual = FlagVpnService.getState(ctx)
-                vpnStatus = actual
-                if (actual == "off" || actual == "error") {
-                    if (vpnBypass) {
-                        vpnBypass = false
-                        persist()
-                    }
-                } else if (!vpnBypass) {
-                    vpnBypass = true
-                    persist()
-                }
-            }
             delay(1500)
         }
     }
