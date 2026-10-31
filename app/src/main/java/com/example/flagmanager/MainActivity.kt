@@ -118,7 +118,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -431,7 +430,6 @@ val TACO_ACCENTS = listOf(
 
 val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
 val LocalReduceMotion = compositionLocalOf { false }
-val LocalAppearanceStyle = compositionLocalOf { 0 }
 val LocalCustomFont = compositionLocalOf<FontFamily> { FontFamily.SansSerif }
 
 object TacoType {
@@ -485,7 +483,7 @@ object TacoMotion {
 }
 
 @Composable
-fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: Int, appearanceStyle: Int = 0, content: @Composable () -> Unit) {
+fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: Int, content: @Composable () -> Unit) {
     val accent = TACO_ACCENTS[accentIdx.coerceIn(0, TACO_ACCENTS.lastIndex)]
     SideEffect { TacoPalette.applyTheme(accent, amoled) }
     val fontFamily: FontFamily = when (fontIdx) {
@@ -512,7 +510,6 @@ fun TacoTheme(accentIdx: Int, amoled: Boolean, reduceMotion: Boolean, fontIdx: I
     CompositionLocalProvider(
         LocalTacoAccent provides accent,
         LocalReduceMotion provides reduceMotion,
-        LocalAppearanceStyle provides appearanceStyle.coerceIn(0, 4),
         LocalCustomFont provides fontFamily,
         LocalContentColor provides accent.text
     ) {
@@ -1135,30 +1132,12 @@ private fun StepRow(step: LaunchStep, isCurrent: Boolean, isLast: Boolean) {
 @Composable
 fun OrderTicket(modifier: Modifier = Modifier, cardCorner: Int = 20, glassOpacity: Float = 0.88f, content: @Composable ColumnScope.() -> Unit) {
     val cs = MaterialTheme.colorScheme
-    val accent = LocalTacoAccent.current
-    val style = LocalAppearanceStyle.current
     val shape = RoundedCornerShape(cardCorner.dp)
-    val edge = when (style) {
-        1 -> accent.neon.copy(alpha = 0.48f)
-        2 -> accent.neon.copy(alpha = 0.72f)
-        3 -> cs.outlineVariant.copy(alpha = 0.42f)
-        4 -> accent.primary.copy(alpha = 0.32f)
-        else -> cs.outlineVariant.copy(alpha = 0.8f)
-    }
-    val cardBackground: Brush = when (style) {
-        1 -> Brush.linearGradient(listOf(cs.surfaceVariant.copy(alpha = glassOpacity), accent.primary.copy(alpha = 0.09f), cs.surfaceVariant.copy(alpha = glassOpacity)))
-        2 -> Brush.verticalGradient(listOf(Color.Black, cs.surfaceVariant.copy(alpha = glassOpacity)))
-        3 -> Brush.verticalGradient(listOf(cs.surfaceVariant.copy(alpha = glassOpacity), cs.surfaceVariant.copy(alpha = glassOpacity)))
-        4 -> Brush.linearGradient(listOf(accent.primary.copy(alpha = 0.10f), cs.surfaceVariant.copy(alpha = glassOpacity), accent.neon.copy(alpha = 0.035f)))
-        else -> Brush.verticalGradient(listOf(cs.surfaceVariant.copy(alpha = glassOpacity), cs.surfaceVariant.copy(alpha = glassOpacity)))
-    }
     Box(modifier) {
         Column(
-            Modifier.fillMaxWidth()
-                .then(if (style == 1 || style == 2) Modifier.shadow(if (style == 2) 12.dp else 7.dp, shape) else Modifier)
-                .clip(shape)
-                .background(cardBackground)
-                .border(if (style == 2) 1.5.dp else 1.dp, edge, shape)
+            Modifier.fillMaxWidth().clip(shape)
+                .background(cs.surfaceVariant.copy(alpha = glassOpacity))
+                .border(1.dp, cs.outlineVariant.copy(alpha = 0.8f), shape)
                 .padding(horizontal = 22.dp, vertical = 20.dp),
             content = content
         )
@@ -1554,12 +1533,13 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
                     LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
-                    LedStatus(
-                        "VPN",
-                        if (state.vpnBypass) "active" else "off",
-                        if (state.vpnBypass) TacoPalette.Guac else TacoPalette.Faint,
-                        optional = true
-                    )
+                    LedStatus("VPN", state.vpnStatus,
+                        when (state.vpnStatus) {
+                            "active" -> TacoPalette.Guac
+                            "starting" -> TacoPalette.Tortilla
+                            "error" -> TacoPalette.Salsa
+                            else -> TacoPalette.Faint
+                        }, optional = true)
                 ),
                 onClick = { showStatusSheet = true }
             )
@@ -2884,46 +2864,6 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Full visual presets: these change several appearance settings together.
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Complete appearance presets", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text(if (state.appearancePreset in 0..4) "PRESET ${state.appearancePreset + 1}" else "CUSTOM",
-                        fontSize = 9.sp, color = accent.neon, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
-                }
-                Text("Each preset changes card shape, glass strength and background treatment together.",
-                    fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 17.sp, modifier = Modifier.padding(top = 3.dp, bottom = 9.dp))
-                Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    val looks = listOf(
-                        Triple("Studio", Color(0xFFFFB84D), "Layered cards · subtle texture"),
-                        Triple("Crystal", Color(0xFF70DDF2), "Glass surfaces · luminous edges"),
-                        Triple("OLED", Color(0xFFB978FF), "Deep black · neon outlines"),
-                        Triple("Minimal", Color(0xFFB8C5D1), "Flat surfaces · crisp borders"),
-                        Triple("Soft", Color(0xFF69DCA6), "Soft gradients · rounded cards")
-                    )
-                    looks.forEachIndexed { index, look ->
-                        val selected = state.appearancePreset == index
-                        Column(
-                            Modifier.width(112.dp).clip(RoundedCornerShape(16.dp))
-                                .background(if (selected) look.second.copy(alpha = 0.13f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
-                                .border(if (selected) 2.dp else 1.dp, if (selected) look.second else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                                .clickable { state.applyAppearancePreset(index); state.notify("${look.first} appearance applied.") }
-                                .padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)
-                        ) {
-                            Box(Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(if (index == 3) 7.dp else 13.dp))
-                                .background(Brush.linearGradient(listOf(look.second.copy(alpha = 0.85f), look.second.copy(alpha = 0.12f))))) {
-                                Box(Modifier.align(Alignment.BottomStart).padding(6.dp).fillMaxWidth(0.58f).height(5.dp)
-                                    .clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
-                            }
-                            Text(look.first, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                            Text(look.third, fontSize = 10.sp, color = TacoPalette.Muted)
-                            Text(if (selected) "APPLIED ✓" else "TAP TO APPLY", fontSize = 8.sp,
-                                letterSpacing = 0.8.sp, fontWeight = FontWeight.Bold, color = look.second)
-                        }
-                    }
-                }
-            }
-
             // App Font Style Options
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -2944,7 +2884,7 @@ fun SettingsScreen(state: TacoState) {
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.70f to "Glassy", 0.85f to "Balanced", 0.95f to "Solid").forEach { (op, label) ->
-                        CategoryChip(label, state.glassOpacity == op) { state.glassOpacity = op; state.appearancePreset = -1; state.persist() }
+                        CategoryChip(label, state.glassOpacity == op) { state.glassOpacity = op; state.persist() }
                     }
                 }
             }
@@ -2958,7 +2898,7 @@ fun SettingsScreen(state: TacoState) {
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth().hScroll(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(12 to "Sharp", 20 to "Smooth", 28 to "Pill").forEach { (rad, label) ->
-                        CategoryChip(label, state.cardCornerRadius == rad) { state.cardCornerRadius = rad; state.appearancePreset = -1; state.persist() }
+                        CategoryChip(label, state.cardCornerRadius == rad) { state.cardCornerRadius = rad; state.persist() }
                     }
                 }
             }
@@ -2982,24 +2922,7 @@ fun SettingsScreen(state: TacoState) {
                     sub = "Revert to ambient dark gradient"
                 )
             }
-            if (state.bgImageUri.isNotEmpty()) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Wallpaper dimming", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Text("${(state.wallpaperDim * 100).toInt()}%", style = TacoType.tnum, color = accent.neon)
-                    }
-                    Text("Control how strongly the dark overlay tones down your wallpaper.", fontSize = 12.sp, color = TacoPalette.Muted)
-                    Row(Modifier.fillMaxWidth().hScroll().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(0.20f to "Bright", 0.45f to "Balanced", 0.65f to "Dim", 0.78f to "Dark").forEach { (value, label) ->
-                            CategoryChip(label, state.wallpaperDim == value) { state.wallpaperDim = value; state.persist() }
-                        }
-                    }
-                }
-            }
-            SettingSwitch("Background texture", "Toggle the subtle grain texture across the app.", state.textureEnabled) {
-                state.textureEnabled = it; state.persist()
-            }
-            SettingSwitch("AMOLED true black", "Pure black background for OLED screens.", state.amoled) { state.amoled = it; state.appearancePreset = -1; state.persist() }
+            SettingSwitch("AMOLED true black", "Pure black background for OLED screens.", state.amoled) { state.amoled = it; state.persist() }
             SettingSwitch("Haptics", "Crunch on launch and ticks on picks.", state.hapticsOn) { state.hapticsOn = it; state.persist() }
             SettingSwitch("Reduce motion", "Disables springs, particles and shimmer.", state.reduceMotion) { state.reduceMotion = it; state.persist() }
         }
@@ -3199,23 +3122,8 @@ class TacoState(
     var customFontUri by mutableStateOf(prefs.getString("customFontUri", "") ?: "")
     var selectedFontPreset by mutableStateOf(prefs.getString("selectedFontPreset", "Default Roblox Font") ?: "Default Roblox Font")
 
-    var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f).coerceIn(0.55f, 1f))
-    var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20).coerceIn(8, 32))
-    var appearancePreset by mutableStateOf(prefs.getInt("appearancePreset", -1).coerceIn(-1, 4))
-    var wallpaperDim by mutableStateOf(prefs.getFloat("wallpaperDim", 0.45f).coerceIn(0f, 0.8f))
-    var textureEnabled by mutableStateOf(prefs.getBoolean("textureEnabled", true))
-
-    fun applyAppearancePreset(index: Int) {
-        appearancePreset = index
-        when (index) {
-            0 -> { glassOpacity = 0.88f; cardCornerRadius = 20; amoled = false; textureEnabled = true }
-            1 -> { glassOpacity = 0.70f; cardCornerRadius = 28; amoled = false; textureEnabled = true }
-            2 -> { glassOpacity = 0.96f; cardCornerRadius = 18; amoled = true; textureEnabled = false }
-            3 -> { glassOpacity = 0.96f; cardCornerRadius = 12; amoled = false; textureEnabled = false }
-            4 -> { glassOpacity = 0.82f; cardCornerRadius = 30; amoled = false; textureEnabled = true }
-        }
-        persist()
-    }
+    var glassOpacity by mutableStateOf(prefs.getFloat("glassOpacity", 0.88f))
+    var cardCornerRadius by mutableStateOf(prefs.getInt("cardCornerRadius", 20))
 
     // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
     var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
@@ -3645,9 +3553,6 @@ class TacoState(
             .putString("selectedFontPreset", selectedFontPreset)
             .putFloat("glassOpacity", glassOpacity)
             .putInt("cardCornerRadius", cardCornerRadius)
-            .putInt("appearancePreset", appearancePreset)
-            .putFloat("wallpaperDim", wallpaperDim)
-            .putBoolean("textureEnabled", textureEnabled)
             .putBoolean("vpnBypass", vpnBypass)
             .apply()
     }
@@ -3785,10 +3690,14 @@ fun TacoRoot() {
     // Register state on application so MainActivity's VPN permission launcher can call back into it
     LaunchedEffect(Unit) {
         (context.applicationContext as? TacoApplication)?.tacoState = state
+        // Auto-restart VPN bypass if it was active when the app was last closed
+        if (state.vpnBypass) {
+            state.startVpnBypass(context)
+        }
     }
     LaunchedEffect(Unit) { state.refreshLoop() }
 
-    TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx, state.appearancePreset.coerceIn(0, 4)) {
+    TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx) {
         var currentRoute by rememberSaveable { mutableStateOf("home") }
         BackHandler(enabled = currentRoute != "home") { currentRoute = "home" }
         val cs = MaterialTheme.colorScheme
@@ -3804,10 +3713,10 @@ fun TacoRoot() {
                     contentScale = ContentScale.Crop,
                     alpha = 0.5f
                 )
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = state.wallpaperDim)))
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
             }
 
-            Box(Modifier.fillMaxSize().then(if (state.textureEnabled) Modifier.tacoGrain() else Modifier)) {
+            Box(Modifier.fillMaxSize().tacoGrain()) {
                 Crossfade(
                     targetState = currentRoute,
                     modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 86.dp),
