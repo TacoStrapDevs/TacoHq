@@ -1768,13 +1768,14 @@ private val FS_LOD = FS.Choice("Detail distance", "How far high detail models re
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
+
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
     sub = "Adjusts physics sender rate and replication delay for desync effects",
     sets = mapOf(
-        "DFIntPhysicsSenderMaxBandwidthBps" to "100000",
-        "DFIntPhysicsSenderRate" to "1",
-        "DFIntDataSenderMaxBandwidthBps" to "100000",
+        "DFIntPhysicsSenderMaxBandwidthBps"    to "100000",
+        "DFIntPhysicsSenderRate"               to "1",
+        "DFIntDataSenderMaxBandwidthBps"       to "100000",
         "DFIntMinimalIntervalBetweenPhysicsSendMS" to "1"
     )
 )
@@ -1783,18 +1784,53 @@ private val FS_DESYNC_LATENCY = FS.Toggle(
     title = "Simulated Lag / Interpolation Desync",
     sub = "Forces high network interpolation delay to desync client position",
     sets = mapOf(
-        "DFIntClientPhysicsPostStepMode" to "1",
+        "DFIntClientPhysicsPostStepMode"          to "1",
         "DFIntMinimalIntervalBetweenPhysicsSendMS" to "50"
     )
 )
 
-private val FS_FPS = FS.Choice("Frame rate limit", "Above 60 also lifts the Android frame rate cap",
-    listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 165, 240).map { Opt("$it FPS", mapOf(FPS_FLAG to "$it")) })
-private val FS_FPSCOUNT = FS.Toggle("FPS counter", "Shows frame rate in the corner", mapOf("FFlagDebugDisplayFPS" to "True"))
-private val FS_PRELOAD = FS.Toggle("Faster loading", "Preloads more assets. Can use a lot of memory",
-    mapOf("DFIntNumAssetsMaxToPreload" to "2147483647", "DFIntAssetPreloading" to "2147483647"))
-private val FS_QUALITY = FS.Choice("Graphics quality override", "Locks the Roblox graphics level",
-    listOf(Opt("Default", emptyMap())) + listOf(1, 3, 5, 7, 10).map { Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it")) })
+private val FS_DESYNC_ANIM = FS.Toggle(
+    title = "Self Animation Delay (Desync)",
+    sub = "Delays YOUR animation replication so others see your anim lag behind your real hitbox",
+    sets = mapOf(
+        "DFIntAnimationLodFacsDistanceMin"            to "0",
+        "DFIntAnimationLodFacsDistanceMax"            to "0",
+        "DFIntAnimationLodFacsVisibilityDenominator"  to "1",
+        "DFIntReplicatorAnimationTrackThrottleMs"     to "200",
+        "DFIntHumanoidAnimationUpdateRateHz"          to "5",
+        "DFIntNetworkOwnershipReplicationDelay"       to "150",
+        "DFIntRemoteEventQueueSize"                   to "1"
+    )
+)
+
+private val FS_DESYNC_ANIM_STRENGTH = FS.Choice(
+    title = "Animation Delay Strength",
+    sub = "Controls how late your animation appears to others — only your own anim, nobody else's",
+    opts = listOf(
+        Opt("Off", emptyMap()),
+        Opt("Subtle 100ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs" to "100",
+            "DFIntHumanoidAnimationUpdateRateHz"      to "15",
+            "DFIntNetworkOwnershipReplicationDelay"   to "100"
+        )),
+        Opt("Medium 200ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs" to "200",
+            "DFIntHumanoidAnimationUpdateRateHz"      to "5",
+            "DFIntNetworkOwnershipReplicationDelay"   to "200"
+        )),
+        Opt("Heavy 350ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs" to "350",
+            "DFIntHumanoidAnimationUpdateRateHz"      to "2",
+            "DFIntNetworkOwnershipReplicationDelay"   to "350"
+        )),
+        Opt("Max 500ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs" to "500",
+            "DFIntHumanoidAnimationUpdateRateHz"      to "1",
+            "DFIntNetworkOwnershipReplicationDelay"   to "500"
+        ))
+    )
+)
+
 private val FS_GRASSMOVE = FS.Choice("Grass movement", "How much grass sways",
     listOf(Opt("Default", emptyMap()), Opt("None", mapOf("FIntGrassMovementReducedMotionFactor" to "0"))))
 private val FS_NOGRASS = FS.Toggle("Remove grass", "Hides built-in terrain grass",
@@ -1804,16 +1840,15 @@ private val FS_GRASSDIST = FS.Range("Grass distance", "Set both to 0 to hide gra
 private val FS_BLUR = FS.Toggle("Remove blur", "No blur behind Roblox menus", mapOf("FIntRobloxGuiBlurIntensity" to "0"))
 private val FS_MTU = FS.Num("MTU size", "Bytes per network packet", "DFIntConnectionMTUSize")
 
+
 val SECTIONS: List<Pair<String, List<FS>>> = listOf(
-    "Graphics" to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SKY, FS_SHADOWS, FS_POSTFX, FS_LOD),
-    "Performance" to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
-    "Desync & Network" to listOf(FS_DESYNC, FS_DESYNC_LATENCY, FS_MTU),
-    "World detail" to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
-    "Interface" to listOf(FS_BLUR)
+    "Graphics"         to listOf(FS_TEXTURE, FS_AA, FS_RENDER, FS_SKY, FS_SHADOWS, FS_POSTFX, FS_LOD),
+    "Performance"      to listOf(FS_FPS, FS_FPSCOUNT, FS_PRELOAD),
+    "Desync & Network" to listOf(FS_DESYNC, FS_DESYNC_LATENCY, FS_DESYNC_ANIM, FS_DESYNC_ANIM_STRENGTH, FS_MTU),
+    "World detail"     to listOf(FS_QUALITY, FS_GRASSMOVE, FS_NOGRASS, FS_GRASSDIST),
+    "Interface"        to listOf(FS_BLUR)
 )
 
-internal fun fsKeys(fs: FS): Set<String> = when (fs) {
-    is FS.Toggle -> fs.sets.keys
     is FS.Choice -> fs.opts.flatMap { it.sets.keys }.toSet()
     is FS.Num -> setOf(fs.key)
     is FS.Range -> setOf(fs.a, fs.b)
