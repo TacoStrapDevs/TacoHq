@@ -3,10 +3,11 @@ package com.example.flagmanager
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.math.BigInteger
 import java.security.KeyPairGenerator
-import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Date
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
@@ -96,22 +97,58 @@ object CertManager {
             keyGen.initialize(KEY_SIZE, SecureRandom())
             val keyPair = keyGen.generateKeyPair()
 
-            // Android doesn't expose sun.security.x509 on all builds.
-            // For a full self-signed cert, add BouncyCastle and call:
-            //   org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
-            // This stub returns the public key in PEM form as a placeholder.
-            val pubPem = buildString {
-                append("-----BEGIN PUBLIC KEY-----\n")
-                append(android.util.Base64.encodeToString(keyPair.public.encoded, android.util.Base64.DEFAULT))
-                append("-----END PUBLIC KEY-----\n")
+            // Build a real self-signed X509v3 CA cert via BouncyCastle.
+            // build.gradle dep: implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+            val now = java.util.Date()
+            val expiry = java.util.Date(now.time + 10L * 365 * 24 * 60 * 60 * 1000) // 10 years
+            val subject = org.bouncycastle.asn1.x500.X500Name("CN=TacoStrap CA, O=TacoStrap, C=US")
+
+            val certBuilder = org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                subject,                                          // issuer = subject (self-signed)
+                java.math.BigInteger.valueOf(SecureRandom().nextLong().and(Long.MAX_VALUE)),
+                now,
+                expiry,
+                subject,
+                keyPair.public
+            )
+
+            // Mark as CA so the device trusts certs issued from it
+            certBuilder.addExtension(
+                org.bouncycastle.asn1.x509.Extension.basicConstraints,
+                true,
+                org.bouncycastle.asn1.x509.BasicConstraints(true)
+            )
+            certBuilder.addExtension(
+                org.bouncycastle.asn1.x509.Extension.keyUsage,
+                true,
+                org.bouncycastle.asn1.x509.KeyUsage(
+                    org.bouncycastle.asn1.x509.KeyUsage.keyCertSign or
+                        org.bouncycastle.asn1.x509.KeyUsage.cRLSign
+                )
+            )
+
+            val signer = org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256WithRSAEncryption")
+                .build(keyPair.private)
+            val cert = org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
+                .getCertificate(certBuilder.build(signer))
+
+            // PEM-encode the cert
+            val certPem = buildString {
+                append("-----BEGIN CERTIFICATE-----\n")
+                append(android.util.Base64.encodeToString(cert.encoded, android.util.Base64.DEFAULT))
+                append("-----END CERTIFICATE-----\n")
             }
 
-            // // FILL: replace stub above with BouncyCastle self-signed X509 cert generation
-            // // Add to build.gradle: implementation("org.bouncycastle:bcprov-jdk15on:1.70")
-            // // Then use JcaX509v3CertificateBuilder to produce a real CA cert PEM.
+            // PEM-encode the private key alongside (used for upstream TLS presentation)
+            val keyPem = buildString {
+                append("-----BEGIN RSA PRIVATE KEY-----\n")
+                append(android.util.Base64.encodeToString(keyPair.private.encoded, android.util.Base64.DEFAULT))
+                append("-----END RSA PRIVATE KEY-----\n")
+            }
 
-            certFile.writeText(pubPem)
-            pubPem.also { cachedPem = it }
+            certFile.writeText(certPem)
+            File(context.filesDir, KEY_FILE).writeText(keyPem)
+            certPem.also { cachedPem = it }
         } catch (e: Exception) {
             Log.e(TAG, "cert generation failed: ${e.message}")
             null
