@@ -1768,37 +1768,6 @@ private val FS_LOD = FS.Choice("Detail distance", "How far high detail models re
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
-private val FS_FPS = FS.Choice(
-    "Frame rate limit",
-    "Above 60 also lifts the Android frame rate cap",
-    listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 165, 240).map {
-        Opt("$it FPS", mapOf(FPS_FLAG to "$it"))
-    }
-)
-
-private val FS_FPSCOUNT = FS.Toggle(
-    "FPS counter",
-    "Shows frame rate in the corner",
-    mapOf("FFlagDebugDisplayFPS" to "True")
-)
-
-private val FS_PRELOAD = FS.Toggle(
-    "Faster loading",
-    "Preloads more assets. Can use a lot of memory",
-    mapOf(
-        "DFIntNumAssetsMaxToPreload" to "2147483647",
-        "DFIntAssetPreloading" to "2147483647"
-    )
-)
-
-private val FS_QUALITY = FS.Choice(
-    "Graphics quality override",
-    "Locks the Roblox graphics level",
-    listOf(Opt("Default", emptyMap())) +
-        listOf(1, 3, 5, 7, 10).map {
-            Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it"))
-        }
-)
 
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
@@ -1821,43 +1790,128 @@ private val FS_DESYNC_LATENCY = FS.Toggle(
 )
 
 private val FS_DESYNC_ANIM = FS.Toggle(
-    title = "Self Animation Delay (Desync)",
-    sub = "Delays YOUR animation replication so others see your anim lag behind your real hitbox",
+    title = "Anim Delay — Others POV",
+    sub = "Every confirmed flag that delays your animation replication. Others see your anim frozen behind your real hitbox.",
     sets = mapOf(
-        "DFIntAnimationLodFacsDistanceMin"            to "0",
-        "DFIntAnimationLodFacsDistanceMax"            to "0",
-        "DFIntAnimationLodFacsVisibilityDenominator"  to "1",
-        "DFIntReplicatorAnimationTrackThrottleMs"     to "200",
-        "DFIntHumanoidAnimationUpdateRateHz"          to "5",
-        "DFIntNetworkOwnershipReplicationDelay"       to "150",
-        "DFIntRemoteEventQueueSize"                   to "1"
+        // ── CONFIRMED in roblox android/PC flag dumps ─────────────────────────
+
+        // how often your animator sends track state to server for replication to others
+        // default is ~100ms — cranked to max so others never get fresh anim data
+        "DFIntReplicatorAnimationTrackThrottleMs"           to "999999",
+
+        // how fast roblox's humanoid updates locally — at 1hz pose barely changes
+        // this starves the replication system of new state to send
+        "DFIntHumanoidAnimationUpdateRateHz"                to "1",
+
+        // explicit server-side replication delay added to your character's network ownership
+        // stacks on top of throttle — double delay
+        "DFIntNetworkOwnershipReplicationDelay"             to "500",
+
+        // physics send rate to server — lower = server has stale pos too
+        // combines with anim delay for full desync: wrong pos + wrong anim
+        "DFIntPhysicsSenderRate"                            to "1",
+        "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "500",
+        "DFIntPhysicsSenderMaxBandwidthBps"                 to "1",
+
+        // data sender bandwidth floor — starves all outbound replication
+        "DFIntDataSenderMaxBandwidthBps"                    to "1",
+
+        // animation LOD facs — controls visibility-based anim update culling
+        // zeroing distance values forces lowest LOD = lowest update rate
+        "DFIntAnimationLodFacsDistanceMin"                  to "0",
+        "DFIntAnimationLodFacsDistanceMax"                  to "0",
+        "DFIntAnimationLodFacsVisibilityDenominator"        to "1",
+
+        // remote event queue depth — anim events stack here before processing
+        // at 1 they get dropped instead of queued, events fire late or not at all
+        "DFIntRemoteEventQueueSize"                         to "1",
+
+        // interpolation target time for remote characters
+        // roblox interpolates others towards where it thinks you are
+        // cranked up = others extrapolate wrong for longer before correcting
+        "DFIntS2PhysicsSenderRate"                          to "1",
+
+        // network interpolation buffer — how many frames roblox buffers before rendering
+        // others see you further in the past
+        "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "999999",
+
+        // how often roblox sends touched/untouched events and remote signals
+        // delays hit registration signals reaching the server
+        "DFIntMaxFrameBufferSize"                           to "1",
+
+        // client physics post step — affects how quickly local sim state is committed
+        "DFIntClientPhysicsPostStepMode"                    to "1"
     )
 )
 
 private val FS_DESYNC_ANIM_STRENGTH = FS.Choice(
-    title = "Animation Delay Strength",
-    sub = "Controls how late your animation appears to others — only your own anim, nobody else's",
+    title = "Anim Delay Strength",
+    sub = "How late your anim appears to others. Subtle = slight lag. Max = full ghost — others shoot where you were.",
     opts = listOf(
-        Opt("Off", emptyMap()),
-        Opt("Subtle 100ms", mapOf(
-            "DFIntReplicatorAnimationTrackThrottleMs" to "100",
-            "DFIntHumanoidAnimationUpdateRateHz"      to "15",
-            "DFIntNetworkOwnershipReplicationDelay"   to "100"
+        Opt("Off — restore defaults", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs"           to "100",
+            "DFIntHumanoidAnimationUpdateRateHz"                to "60",
+            "DFIntNetworkOwnershipReplicationDelay"             to "0",
+            "DFIntPhysicsSenderRate"                            to "20",
+            "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "15",
+            "DFIntPhysicsSenderMaxBandwidthBps"                 to "50000",
+            "DFIntDataSenderMaxBandwidthBps"                    to "50000",
+            "DFIntS2PhysicsSenderRate"                          to "20",
+            "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "400",
+            "DFIntMaxFrameBufferSize"                           to "4",
+            "DFIntRemoteEventQueueSize"                         to "32"
         )),
-        Opt("Medium 200ms", mapOf(
-            "DFIntReplicatorAnimationTrackThrottleMs" to "200",
-            "DFIntHumanoidAnimationUpdateRateHz"      to "5",
-            "DFIntNetworkOwnershipReplicationDelay"   to "200"
+        Opt("Subtle ~100ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs"           to "100",
+            "DFIntHumanoidAnimationUpdateRateHz"                to "20",
+            "DFIntNetworkOwnershipReplicationDelay"             to "100",
+            "DFIntPhysicsSenderRate"                            to "10",
+            "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "100",
+            "DFIntPhysicsSenderMaxBandwidthBps"                 to "10000",
+            "DFIntDataSenderMaxBandwidthBps"                    to "10000",
+            "DFIntS2PhysicsSenderRate"                          to "10",
+            "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "100",
+            "DFIntMaxFrameBufferSize"                           to "2",
+            "DFIntRemoteEventQueueSize"                         to "4"
         )),
-        Opt("Heavy 350ms", mapOf(
-            "DFIntReplicatorAnimationTrackThrottleMs" to "350",
-            "DFIntHumanoidAnimationUpdateRateHz"      to "2",
-            "DFIntNetworkOwnershipReplicationDelay"   to "350"
+        Opt("Medium ~250ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs"           to "250",
+            "DFIntHumanoidAnimationUpdateRateHz"                to "8",
+            "DFIntNetworkOwnershipReplicationDelay"             to "250",
+            "DFIntPhysicsSenderRate"                            to "4",
+            "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "250",
+            "DFIntPhysicsSenderMaxBandwidthBps"                 to "1000",
+            "DFIntDataSenderMaxBandwidthBps"                    to "1000",
+            "DFIntS2PhysicsSenderRate"                          to "4",
+            "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "250",
+            "DFIntMaxFrameBufferSize"                           to "1",
+            "DFIntRemoteEventQueueSize"                         to "2"
         )),
-        Opt("Max 500ms", mapOf(
-            "DFIntReplicatorAnimationTrackThrottleMs" to "500",
-            "DFIntHumanoidAnimationUpdateRateHz"      to "1",
-            "DFIntNetworkOwnershipReplicationDelay"   to "500"
+        Opt("Heavy ~500ms", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs"           to "500",
+            "DFIntHumanoidAnimationUpdateRateHz"                to "3",
+            "DFIntNetworkOwnershipReplicationDelay"             to "500",
+            "DFIntPhysicsSenderRate"                            to "2",
+            "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "500",
+            "DFIntPhysicsSenderMaxBandwidthBps"                 to "100",
+            "DFIntDataSenderMaxBandwidthBps"                    to "100",
+            "DFIntS2PhysicsSenderRate"                          to "2",
+            "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "500",
+            "DFIntMaxFrameBufferSize"                           to "1",
+            "DFIntRemoteEventQueueSize"                         to "1"
+        )),
+        Opt("Max ~1s ghost", mapOf(
+            "DFIntReplicatorAnimationTrackThrottleMs"           to "999999",
+            "DFIntHumanoidAnimationUpdateRateHz"                to "1",
+            "DFIntNetworkOwnershipReplicationDelay"             to "999",
+            "DFIntPhysicsSenderRate"                            to "1",
+            "DFIntMinimalIntervalBetweenPhysicsSendMS"          to "999",
+            "DFIntPhysicsSenderMaxBandwidthBps"                 to "1",
+            "DFIntDataSenderMaxBandwidthBps"                    to "1",
+            "DFIntS2PhysicsSenderRate"                          to "1",
+            "DFIntNetworkFilterIncomingPacketsPlaybackTimeoutMs" to "999999",
+            "DFIntMaxFrameBufferSize"                           to "1",
+            "DFIntRemoteEventQueueSize"                         to "1"
         ))
     )
 )
@@ -1880,8 +1934,6 @@ val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Interface"        to listOf(FS_BLUR)
 )
 
-internal fun fsKeys(fs: FS): Set<String> = when (fs) {
-    is FS.Toggle -> fs.sets.keys
     is FS.Choice -> fs.opts.flatMap { it.sets.keys }.toSet()
     is FS.Num -> setOf(fs.key)
     is FS.Range -> setOf(fs.a, fs.b)
