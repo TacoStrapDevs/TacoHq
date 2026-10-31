@@ -26,16 +26,16 @@ object MitmProxy {
         "/client-settings"
     )
 
-    @Volatile private var flagsJson: String = "{}"
+    @Volatile private var flagsMap: Map<String, String> = emptyMap()
     @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
 
-    fun start(initialFlags: String, port: Int) {
+    fun start(initialFlagsJson: String, port: Int) {
         if (running) {
-            updateFlags(initialFlags)
+            updateFlags(initialFlagsJson)
             return
         }
-        flagsJson = initialFlags
+        updateFlags(initialFlagsJson)
         running = true
 
         thread(name = "MitmProxy-accept", isDaemon = true) {
@@ -63,13 +63,15 @@ object MitmProxy {
     }
 
     fun updateFlags(json: String) {
-        flagsJson = try {
+        flagsMap = try {
             val root = JSONObject(json)
-            root.put("FFlagAllowList", JSONObject())
-            root.put("FFlagAllowListEnabled", false)
-            root.toString()
+            val map = mutableMapOf<String, String>()
+            root.keys().forEach { key ->
+                map[key] = root.get(key).toString()
+            }
+            map
         } catch (_: Throwable) {
-            json
+            emptyMap()
         }
     }
 
@@ -94,7 +96,7 @@ object MitmProxy {
 
             if (isCdn && isFlagPath && method == "GET") {
                 injectFlags(output)
-                Log.d(TAG, "intercepted $host$path → unrestricted flags injected")
+                Log.d(TAG, "intercepted $host$path → flags injected")
             } else if (AntiBan.isTelemetryPath(path)) {
                 output.write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                 output.flush()
@@ -122,7 +124,10 @@ object MitmProxy {
     }
 
     private fun injectFlags(output: OutputStream) {
-        val body = flagsJson.toByteArray(Charsets.UTF_8)
+        val root = JSONObject()
+        root.put("applicationSettings", JSONObject(flagsMap as Map<*, *>))
+        
+        val body = root.toString().toByteArray(Charsets.UTF_8)
         val response = "HTTP/1.1 200 OK\r\n" +
                 "Content-Type: application/json; charset=utf-8\r\n" +
                 "Content-Length: ${body.size}\r\n" +
