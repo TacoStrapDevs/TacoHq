@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -15,10 +16,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * FlagVpnService — starts the MITM proxy and keeps a foreground notification alive.
- * No raw IP packet processing — the proxy runs as a plain TCP server on PROXY_PORT.
- * Roblox traffic reaches it because we set the VPN tun address and the proxy
- * binds to that address; no packet rewriting needed.
+ * FlagVpnService — establishes a tun interface that routes all IPv4 traffic
+ * through the device, then starts MitmProxy on PROXY_PORT to intercept Roblox
+ * CDN flag fetches and inject the user's flag JSON.
+ *
+ * Traffic routing: tun address 10.13.37.1/32 + default route 0.0.0.0/0.
+ * MitmProxy binds on all interfaces at PROXY_PORT; the OS redirects outbound
+ * TCP through the tun fd, and iptables/VPN framework delivers it to the proxy.
+ *
+ * // run in a VM or test device — this hooks ALL outbound IPv4 traffic globally
  */
 class FlagVpnService : VpnService() {
 
@@ -32,8 +38,13 @@ class FlagVpnService : VpnService() {
 
         const val PROXY_PORT = 8899
 
+        /**
+         * Returns a non-null Intent if VPN permission must first be granted via
+         * startActivityForResult. Null means permission is already held; caller
+         * can start the service directly with buildDirectIntent.
+         */
         fun buildStartIntent(context: Context, flagsJson: String): Intent? =
-            prepare(context) // null = already permitted, caller starts directly
+            prepare(context)
 
         fun buildDirectIntent(context: Context, flagsJson: String): Intent =
             Intent(context, FlagVpnService::class.java).putExtra(EXTRA_FLAGS, flagsJson)
@@ -49,22 +60,32 @@ class FlagVpnService : VpnService() {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private var proxyJob: Job? = null
+    private var tunFd: ParcelFileDescriptor? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
             ACTION_UPDATE -> {
                 val json = intent.getStringExtra(EXTRA_FLAGS) ?: "{}"
                 MitmProxy.updateFlags(json)
-                Log.d(TAG, "flags updated")
+                Log.d(TAG, "flags updated live")
                 return START_STICKY
             }
         }
 
         val flagsJson = intent?.getStringExtra(EXTRA_FLAGS) ?: "{}"
+
         postNotification()
 
-        // Start the proxy — plain TCP, no raw IP manipulation
+        if (!establishTun()) {
+            Log.e(TAG, "tun establish failed — stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         proxyJob = scope.launch {
             try {
                 MitmProxy.start(flagsJson, PROXY_PORT)
@@ -73,8 +94,32 @@ class FlagVpnService : VpnService() {
             }
         }
 
-        Log.d(TAG, "VPN service started, proxy on :$PROXY_PORT")
+        Log.d(TAG, "VPN service started, tun up, proxy on :$PROXY_PORT")
         return START_STICKY
+    }
+
+    /**
+     * Builds and establishes the tun interface.
+     * Routes all IPv4 traffic (0.0.0.0/0) through the tun fd so MitmProxy
+     * receives every outbound connection including Roblox CDN HTTPS.
+     * Returns false if the VPN builder throws (e.g. permission revoked mid-session).
+     */
+    private fun establishTun(): Boolean {
+        tunFd?.runCatching { close() }
+        tunFd = null
+        return try {
+            tunFd = Builder()
+                .setSession("TacoStrap")
+                .addAddress("10.13.37.1", 32)
+                .addDnsServer("8.8.8.8")
+                .addRoute("0.0.0.0", 0)        // all IPv4 through tun
+                .setMtu(1500)
+                .establish()
+            tunFd != null
+        } catch (e: Exception) {
+            Log.e(TAG, "tun establish error: ${e.message}")
+            false
+        }
     }
 
     private fun postNotification() {
@@ -90,7 +135,7 @@ class FlagVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MangoStrap VPN bypass active")
+            .setContentTitle("TacoStrap VPN bypass active")
             .setContentText("CDN interception live")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
@@ -100,8 +145,11 @@ class FlagVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        // Ordered teardown: stop proxy producer first, then release tun fd.
         proxyJob?.cancel()
         MitmProxy.stop()
+        runCatching { tunFd?.close() }
+        tunFd = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         Log.d(TAG, "VPN service destroyed")
         super.onDestroy()
