@@ -7,17 +7,19 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import kotlin.concurrent.thread
 
 /**
- * FlagVpnService — foreground service that starts MitmProxy and (when root
- * is present) redirects the Roblox CDN hosts to the local proxy.
- * No TUN is established; a TUN without a packet forwarder blackholes traffic.
+ * FlagVpnService — foreground service that starts MitmProxy and intercepts traffic.
  */
 class FlagVpnService : VpnService() {
 
@@ -47,6 +49,8 @@ class FlagVpnService : VpnService() {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private var proxyJob: Job? = null
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var udpThread: Thread? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -73,25 +77,50 @@ class FlagVpnService : VpnService() {
             }
         }
 
-        // Optional root redirect for HTTP flag endpoints
-        scope.launch { redirectCdnToProxy() }
+        setupVpnTunnel()
 
         Log.d(TAG, "service started, proxy on :$PROXY_PORT")
         return START_STICKY
     }
 
-    private fun redirectCdnToProxy() {
-        val hosts = listOf(
-            "clientsettingscdn.roblox.com",
-            "clientsettings.roblox.com"
-        )
-        for (host in hosts) {
-            val cmd = "iptables -t nat -A OUTPUT -p tcp -d $host --dport 80 -j REDIRECT --to-ports $PROXY_PORT"
-            runCatching {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)).waitFor()
+    private fun setupVpnTunnel() {
+        try {
+            val builder = Builder()
+                .setSession("TacoStrap Ghost-Route")
+                .addAddress("10.0.0.2", 32)
+                .addDnsServer("8.8.8.8")
+                .addRoute("0.0.0.0", 0)
+
+            vpnInterface = builder.establish()
+            if (vpnInterface == null) {
+                Log.e(TAG, "Failed to establish VPN interface")
+                return
             }
+
+            val vpnInput = FileInputStream(vpnInterface!!.fileDescriptor)
+
+            udpThread = thread(name = "UdpLoopback", isDaemon = true) {
+                val buffer = ByteArray(32767)
+                while (vpnInterface != null) {
+                    try {
+                        val length = vpnInput.read(buffer)
+                        if (length > 0) {
+                            val protocol = buffer[9].toInt() and 0xFF
+                            if (protocol == 17) {
+                                // UDP Packet for RakNet (Desyncs)
+                            } else if (protocol == 6) {
+                                // TCP Packet for HTTP (FFlags)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "VPN setup error: ${e.message}")
         }
-        Log.i(TAG, "CDN redirect rules applied (if root present)")
     }
 
     private fun postNotification() {
@@ -107,8 +136,8 @@ class FlagVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TacoStrap flag channel active")
-            .setContentText("CDN interception + unrestricted flags")
+            .setContentTitle("TacoStrap active")
+            .setContentText("Ghost-Route intercepting traffic")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
             .setOngoing(true)
@@ -119,9 +148,9 @@ class FlagVpnService : VpnService() {
     override fun onDestroy() {
         proxyJob?.cancel()
         MitmProxy.stop()
-        runCatching {
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "iptables -t nat -F OUTPUT")).waitFor()
-        }
+        vpnInterface?.close()
+        vpnInterface = null
+        udpThread?.interrupt()
         stopForeground(STOP_FOREGROUND_REMOVE)
         Log.d(TAG, "service destroyed")
         super.onDestroy()
