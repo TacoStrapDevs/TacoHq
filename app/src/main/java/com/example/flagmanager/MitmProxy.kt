@@ -1,18 +1,13 @@
 package com.example.flagmanager
 
 import android.util.Log
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import kotlin.concurrent.thread
 
-/**
- * MitmProxy — plain TCP proxy on PROXY_PORT.
- * Intercepts HTTP GET requests to Roblox CDN flag endpoints and returns flagsJson.
- * Everything else is forwarded to the real server.
- * No raw IP packet manipulation — no crashes.
- */
 object MitmProxy {
 
     private const val TAG = "MitmProxy"
@@ -25,7 +20,10 @@ object MitmProxy {
     private val FLAG_PATHS = listOf(
         "/v2/settings/application",
         "/v1/settings/application",
-        "/v2/client-settings"
+        "/v2/client-settings",
+        "/v1/client-settings",
+        "/settings/application",
+        "/client-settings"
     )
 
     @Volatile private var flagsJson: String = "{}"
@@ -33,7 +31,10 @@ object MitmProxy {
     private var serverSocket: ServerSocket? = null
 
     fun start(initialFlags: String, port: Int) {
-        if (running) { updateFlags(initialFlags); return }
+        if (running) {
+            updateFlags(initialFlags)
+            return
+        }
         flagsJson = initialFlags
         running = true
 
@@ -62,7 +63,14 @@ object MitmProxy {
     }
 
     fun updateFlags(json: String) {
-        flagsJson = json
+        flagsJson = try {
+            val root = JSONObject(json)
+            root.put("FFlagAllowList", JSONObject())
+            root.put("FFlagAllowListEnabled", false)
+            root.toString()
+        } catch (_: Throwable) {
+            json
+        }
     }
 
     private fun handleConnection(client: Socket) {
@@ -80,11 +88,16 @@ object MitmProxy {
             val path = parts.getOrElse(1) { "/" }
 
             val isCdn = CDN_HOSTS.any { host.contains(it) }
-            val isFlagPath = FLAG_PATHS.any { path.startsWith(it) }
+            val isFlagPath = FLAG_PATHS.any { path.startsWith(it) } ||
+                    path.contains("settings", ignoreCase = true) ||
+                    path.contains("client-settings", ignoreCase = true)
 
             if (isCdn && isFlagPath && method == "GET") {
                 injectFlags(output)
-                Log.d(TAG, "intercepted $host$path → injected flags")
+                Log.d(TAG, "intercepted $host$path → unrestricted flags injected")
+            } else if (AntiBan.isTelemetryPath(path)) {
+                output.write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                output.flush()
             } else {
                 passThrough(method, path, host, headers, output)
             }
@@ -101,7 +114,9 @@ object MitmProxy {
             val line = reader.readLine() ?: break
             if (line.isEmpty()) break
             val idx = line.indexOf(':')
-            if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+            if (idx > 0) {
+                headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+            }
         }
         return headers
     }
@@ -109,10 +124,10 @@ object MitmProxy {
     private fun injectFlags(output: OutputStream) {
         val body = flagsJson.toByteArray(Charsets.UTF_8)
         val response = "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: application/json; charset=utf-8\r\n" +
-            "Content-Length: ${body.size}\r\n" +
-            "Cache-Control: no-cache\r\n" +
-            "Connection: close\r\n\r\n"
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Content-Length: ${body.size}\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "Connection: close\r\n\r\n"
         output.write(response.toByteArray())
         output.write(body)
         output.flush()
