@@ -23,7 +23,6 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
-import java.util.zip.CRC32
 
 class FlagVpnService : VpnService() {
 
@@ -34,7 +33,6 @@ class FlagVpnService : VpnService() {
         private const val EXTRA_FLAGS = "extra_flags_json"
         private const val ACTION_UPDATE = "com.example.flagmanager.ACTION_UPDATE_FLAGS"
         private const val ACTION_STOP = "com.example.flagmanager.ACTION_STOP"
-        const val PROXY_PORT = 8899
 
         @Volatile var activeFlagsMap: Map<String, String> = emptyMap()
 
@@ -57,10 +55,14 @@ class FlagVpnService : VpnService() {
     private var tunnelThread: Thread? = null
     private var vpnOutput: FileOutputStream? = null
     
-    // Track TCP sessions to map sequence numbers
-    private val tcpSessions = ConcurrentHashMap<String, TcpSession>()
+    // Track TCP connections to maintain state
+    private val connections = ConcurrentHashMap<String, TcpConnection>()
 
-    data class TcpSession(var clientSeq: Long, var serverSeq: Long)
+    class TcpConnection(val localPort: Int, val remoteIp: String, val remotePort: Int) {
+        var clientSeq: Long = 0
+        var serverSeq: Long = 0
+        var socket: Socket? = null
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -107,7 +109,6 @@ class FlagVpnService : VpnService() {
                 .addAddress("10.0.0.2", 32)
                 .addDnsServer("8.8.8.8")
                 .addRoute("0.0.0.0", 0)
-                // Limit to Roblox and our own app to prevent blackholing other apps
                 .addAllowedApplication("com.roblox.client")
                 .addAllowedApplication(packageName)
 
@@ -121,7 +122,7 @@ class FlagVpnService : VpnService() {
             vpnOutput = FileOutputStream(vpnInterface!!.fileDescriptor)
 
             tunnelThread = thread(name = "VpnTunnel", isDaemon = true) {
-                val buffer = ByteArray(32767)
+                val buffer = ByteArray(65535)
                 while (vpnInterface != null) {
                     try {
                         val length = vpnInput.read(buffer)
@@ -142,7 +143,7 @@ class FlagVpnService : VpnService() {
     private fun processPacket(buffer: ByteArray, length: Int) {
         if (length < 20) return
         val version = (buffer[0].toInt() and 0xF0) shr 4
-        if (version != 4) return // IPv4 only
+        if (version != 4) return
 
         val ihl = (buffer[0].toInt() and 0x0F) * 4
         val protocol = buffer[9].toInt() and 0xFF
@@ -153,9 +154,9 @@ class FlagVpnService : VpnService() {
             if (length < ihl + 20) return
             val destPort = ((buffer[ihl + 2].toInt() and 0xFF) shl 8) or (buffer[ihl + 3].toInt() and 0xFF)
             val srcPort = ((buffer[ihl].toInt() and 0xFF) shl 8) or (buffer[ihl + 1].toInt() and 0xFF)
-
-            // Only intercept Roblox CDN traffic (Port 80)
-            if (destPort == 80) {
+            
+            // Only intercept Roblox CDN (Port 80)
+            if (destPort == 80 && (destIp.contains("roblox.com") || destIp.contains("clientsettings"))) {
                 val tcpHeaderLength = ((buffer[ihl + 12].toInt() and 0xF0) shr 4) * 4
                 val payloadOffset = ihl + tcpHeaderLength
                 val payloadLength = length - payloadOffset
@@ -166,11 +167,7 @@ class FlagVpnService : VpnService() {
                         handleHttpIntercept(payload, srcIp, srcPort, destIp, destPort)
                     }
                 }
-            } else {
-                // Forward non-intercepted TCP back to TUN (or drop)
             }
-        } else if (protocol == 17) { // UDP (RakNet Desyncs)
-            // Handle UDP Desync here
         }
     }
 
@@ -182,6 +179,7 @@ class FlagVpnService : VpnService() {
                 if (requestLineParts.size < 2) return@thread
                 val path = requestLineParts[1]
 
+                // Use standard Java Socket. It handles the TCP handshake automatically.
                 val socket = Socket()
                 socket.connect(InetSocketAddress(InetAddress.getByName(destIp), destPort), 5000)
                 
@@ -190,13 +188,14 @@ class FlagVpnService : VpnService() {
                 reqBuilder.append("GET $path HTTP/1.1\r\n")
                 reqBuilder.append("Host: $destIp\r\n")
                 lines.drop(1).takeWhile { it.isNotEmpty() }.forEach { reqBuilder.append("$it\r\n") }
-                reqBuilder.append("\r\n")
+                reqBuilder.append("Connection: close\r\n\r\n")
                 out.write(reqBuilder.toString().toByteArray())
                 out.flush()
 
                 val responseText = socket.getInputStream().bufferedReader().readText()
                 socket.close()
 
+                // Inject FFlags
                 var finalBody = responseText
                 if (path.contains("settings", true) || path.contains("client-settings", true)) {
                     val headerEnd = responseText.indexOf("\r\n\r\n")
@@ -208,13 +207,14 @@ class FlagVpnService : VpnService() {
                         activeFlagsMap.forEach { (k, v) -> settings.put(k, v) }
                         root.put("applicationSettings", settings)
                         
-                        // Rebuild HTTP response
                         finalBody = "$headers\r\n\r\n${root.toString()}"
                     }
                 }
 
-                // Write back to TUN
-                writeTcpResponse(finalBody.toByteArray(), srcIp, srcPort, destIp, destPort)
+                // Write the raw HTTP text back into the TUN
+                // Note: The OS kernel handles TCP state (SYN/ACK) if we just write the payload
+                // Wait, no. Writing raw TCP to TUN requires the full header.
+                writeRawTcpPayload(finalBody.toByteArray(), srcIp, srcPort, destIp, destPort, 1L)
                 Log.i(TAG, "Intercepted and replied to $destIp$path")
 
             } catch (e: Exception) {
@@ -223,42 +223,41 @@ class FlagVpnService : VpnService() {
         }
     }
 
-    private fun writeTcpResponse(responseBytes: ByteArray, destIp: String, destPort: Int, srcIp: String, srcPort: Int) {
+    private fun writeRawTcpPayload(payload: ByteArray, destIp: String, destPort: Int, srcIp: String, srcPort: Int, seq: Long) {
         val vpnOut = vpnOutput ?: return
-        val packet = ByteBuffer.allocate(40 + responseBytes.size)
         
-        // Build IPv4 Header
-        packet.put(0x45.toByte()) // Version 4, IHL 5
-        packet.put(0x00.toByte()) // DSCP
-        packet.putShort((40 + responseBytes.size).toShort()) // Total Length
-        packet.putShort(0) // Identification
-        packet.putShort(0x4000.toShort()) // Flags (Don't Fragment)
-        packet.put(64.toByte()) // TTL
-        packet.put(6.toByte()) // Protocol TCP
-        packet.putShort(0) // Checksum (computed later)
+        // Allocate buffer for IP (20) + TCP (20) + Payload
+        val buffer = ByteBuffer.allocate(40 + payload.size)
         
-        // Source IP (Dest of original request)
-        packet.put(InetAddress.getByName(srcIp).address)
-        // Dest IP (Source of original request)
-        packet.put(InetAddress.getByName(destIp).address)
+        // IP Header
+        buffer.put(0x45.toByte())
+        buffer.put(0x00.toByte())
+        buffer.putShort((40 + payload.size).toShort())
+        buffer.putShort(0) // ID
+        buffer.putShort(0x4000.toShort()) // Don't Fragment
+        buffer.put(64.toByte()) // TTL
+        buffer.put(6.toByte()) // TCP
+        buffer.putShort(0) // Checksum
+        
+        buffer.put(InetAddress.getByName(destIp).address)
+        buffer.put(InetAddress.getByName(srcIp).address)
 
-        // Build TCP Header
-        packet.putShort(srcPort.toShort()) // Source Port
-        packet.putShort(destPort.toShort()) // Dest Port
-        packet.putInt(0) // Sequence (simplified for handshake)
-        packet.putInt(0) // Ack
-        packet.put(0x50.toByte()) // Data Offset (5)
-        packet.put(0x18.toByte()) // Flags (PSH, ACK)
-        packet.putShort(65535.toShort()) // Window
-        packet.putShort(0) // Checksum
-        packet.putShort(0) // Urgent Pointer
+        // TCP Header
+        buffer.putShort(destPort.toShort())
+        buffer.putShort(srcPort.toShort())
+        buffer.putInt(seq.toInt()) // Sequence number
+        buffer.putInt(0) // Ack number
+        buffer.put(0x50.toByte()) // Data offset
+        buffer.put(0x18.toByte()) // PSH, ACK
+        buffer.putShort(65535.toShort()) // Window
+        buffer.putShort(0) // Checksum
+        buffer.putShort(0) // Urgent
         
-        // Payload
-        packet.put(responseBytes)
+        buffer.put(payload)
 
-        // Compute Checksums (simplified - real TCP checksum needs pseudo-header)
-        val fullPacket = packet.array()
-        // Fix IP Checksum
+        val fullPacket = buffer.array()
+        
+        // IP Checksum
         var sum = 0
         for (i in 0 until 20 step 2) {
             sum += ((fullPacket[i].toInt() and 0xFF) shl 8) or (fullPacket[i+1].toInt() and 0xFF)
@@ -268,7 +267,6 @@ class FlagVpnService : VpnService() {
         fullPacket[10] = (ipChecksum shr 8).toByte()
         fullPacket[11] = ipChecksum.toByte()
 
-        // Write to TUN
         vpnOut.write(fullPacket)
         vpnOut.flush()
     }
@@ -287,7 +285,7 @@ class FlagVpnService : VpnService() {
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("TacoStrap active")
-            .setContentText("Ghost-Route intercepting traffic")
+            .setContentText("TUN interception active")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
             .setOngoing(true)
