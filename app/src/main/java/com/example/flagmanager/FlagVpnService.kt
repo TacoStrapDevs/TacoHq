@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.InetAddress
 
 class FlagVpnService : VpnService() {
@@ -29,13 +30,12 @@ class FlagVpnService : VpnService() {
         private const val TUN_MASK      = 32
         private const val TUN_MTU       = 1500
 
-        // Roblox CDN hosts — only their IPs get routed through the TUN
         private val CDN_HOSTS = listOf(
             "clientsettingscdn.roblox.com",
             "clientsettings.roblox.com"
         )
 
-        // swap package if your bootstrapper uses a different one
+        // change if your bootstrapper uses a different package
         private const val ROBLOX_PKG = "com.roblox.client"
 
         fun buildStartIntent(context: Context, flagsJson: String): Intent? = prepare(context)
@@ -63,14 +63,13 @@ class FlagVpnService : VpnService() {
             ACTION_STOP -> { teardown(); stopSelf(); return START_NOT_STICKY }
             ACTION_UPDATE -> {
                 MitmProxy.updateFlags(intent.getStringExtra(EXTRA_FLAGS) ?: "{}")
-                Log.d(TAG, "flags updated live")
                 return START_STICKY
             }
         }
-
         val flagsJson = intent?.getStringExtra(EXTRA_FLAGS) ?: "{}"
         postNotification()
-        startPipeline(flagsJson)
+
+        proxyJob = scope.launch { startPipeline(flagsJson) }
         return START_STICKY
     }
 
@@ -82,32 +81,30 @@ class FlagVpnService : VpnService() {
 
     // ── pipeline ──────────────────────────────────────────────────────────────
 
-    private fun startPipeline(flagsJson: String) {
-        // 1. resolve CDN IPs so we can add /32 routes — surgical, only CDN traffic through TUN
+    private suspend fun startPipeline(flagsJson: String) = withContext(Dispatchers.IO) {
+        // STEP 1: resolve CDN IPs BEFORE establishing TUN
+        // if we resolve after TUN is up, DNS goes through TUN → loops → fails
         val cdnIps = resolveCdnHosts()
         Log.d(TAG, "CDN IPs resolved: $cdnIps")
 
-        // 2. build TUN — THIS is what was missing in your version
+        // STEP 2: establish TUN
         tunFd = buildTun(cdnIps)
         if (tunFd == null) {
             Log.e(TAG, "TUN establish failed — stopping")
-            stopSelf(); return
+            stopSelf(); return@withContext
         }
 
-        // 3. wire vpnService ref BEFORE proxy starts so protect() works in passThrough
-        //    without this the upstream socket loops back into TUN forever
-        MitmProxy.vpnService = this
+        // STEP 3: wire vpnService ref so protect() is available in MitmProxy.passThrough
+        MitmProxy.vpnService = this@FlagVpnService
 
-        // 4. start proxy (HTTP :8899 + HTTPS :8900)
-        proxyJob = scope.launch {
-            try {
-                MitmProxy.start(flagsJson, MitmProxy.PROXY_PORT_HTTP, applicationContext)
-            } catch (e: Exception) {
-                Log.e(TAG, "proxy error: ${e.message}")
-            }
+        // STEP 4: start proxy — protect() now works for all upstream sockets
+        try {
+            MitmProxy.start(flagsJson, MitmProxy.PROXY_PORT_HTTP, applicationContext)
+        } catch (e: Exception) {
+            Log.e(TAG, "proxy start error: ${e.message}")
         }
 
-        Log.d(TAG, "pipeline live — TUN up, proxy HTTP :${MitmProxy.PROXY_PORT_HTTP} HTTPS :${MitmProxy.PROXY_PORT_HTTPS}")
+        Log.d(TAG, "pipeline live — HTTP :${MitmProxy.PROXY_PORT_HTTP} HTTPS :${MitmProxy.PROXY_PORT_HTTPS}")
     }
 
     private fun buildTun(cdnIps: List<String>): ParcelFileDescriptor? = runCatching {
@@ -118,27 +115,27 @@ class FlagVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
 
         if (cdnIps.isNotEmpty()) {
-            // surgical routing: only CDN IPs go through TUN
-            // game servers, login, everything else bypasses completely
+            // surgical: only CDN IPs through TUN, everything else untouched
             cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
         } else {
-            // fallback: full route if DNS resolve failed
-            // proxy's passThrough still handles non-CDN traffic correctly
+            // fallback if DNS resolve failed — full route, passThrough handles non-CDN
             builder.addRoute("0.0.0.0", 0)
-            Log.w(TAG, "DNS resolve failed — full traffic route active")
+            Log.w(TAG, "DNS resolve failed — full route fallback active")
         }
 
-        // scope to Roblox only — no other apps affected
+        // scope to Roblox only — no other apps go through TUN
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
-            .onFailure { Log.w(TAG, "addAllowedApplication: ${it.message}") }
+            .onFailure { Log.w(TAG, "addAllowedApplication failed: ${it.message}") }
 
         builder.establish()
-    }.onFailure { Log.e(TAG, "TUN build: ${it.message}") }.getOrNull()
+    }.onFailure { Log.e(TAG, "buildTun: ${it.message}") }.getOrNull()
 
     private fun resolveCdnHosts(): List<String> =
         CDN_HOSTS.flatMap { host ->
             runCatching {
-                InetAddress.getAllByName(host).mapNotNull { it.hostAddress }.filter { it.isNotEmpty() }
+                InetAddress.getAllByName(host)
+                    .mapNotNull { it.hostAddress }
+                    .filter { it.isNotEmpty() }
             }.onFailure { Log.w(TAG, "resolve $host: ${it.message}") }
              .getOrElse { emptyList() }
         }.distinct()
