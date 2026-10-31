@@ -2,24 +2,11 @@ package com.example.flagmanager
 
 /**
  * AntiBan — header and payload filter for the MITM proxy.
- *
  * Strips Roblox telemetry headers and known detection vectors from
- * outbound requests before they reach the CDN. This reduces the signal
- * that a proxy is sitting in the path.
- *
- * Rules applied by MitmProxy.passThrough() for every non-intercepted request.
+ * outbound requests before they reach the CDN.
  */
 object AntiBan {
 
-    /**
-     * Returns true if this request header should be dropped from the
-     * forwarded request to the upstream server.
-     *
-     * Blocked categories:
-     *  - Roblox analytics / telemetry IDs
-     *  - Proxy-detection fingerprints (Via, X-Forwarded-For)
-     *  - Session tokens we don't want leaked through an unexpected path
-     */
     fun isBlockedHeader(headerNameLower: String): Boolean =
         headerNameLower in BLOCKED_HEADERS || BLOCKED_PREFIXES.any { headerNameLower.startsWith(it) }
 
@@ -32,7 +19,7 @@ object AntiBan {
         "forwarded",
         "x-roblox-id",
         "x-roblox-session",
-        "x-csrf-token",             // CSRF — not needed on GET CDN calls; stripping avoids token leak
+        "x-csrf-token",
         "roblox-session-id",
         "rbx-analytics",
         "rbx-browser-userid",
@@ -52,13 +39,6 @@ object AntiBan {
         "x-telemetry-"
     )
 
-    /**
-     * Strip known Roblox telemetry endpoint paths.
-     * Called by MitmProxy before deciding to pass through or drop a request.
-     *
-     * @return true if the request should be silently dropped (responded to with 204)
-     *         rather than forwarded to the real server.
-     */
     fun isTelemetryPath(path: String): Boolean =
         TELEMETRY_PATHS.any { path.startsWith(it) }
 
@@ -71,7 +51,7 @@ object AntiBan {
         "/v1/events",
         "/game/report-stats",
         "/timing/",
-        "/e.png",          // pixel tracker
+        "/e.png",
         "/t.png"
     )
 }
