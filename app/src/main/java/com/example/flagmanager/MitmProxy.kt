@@ -5,13 +5,23 @@ import java.io.BufferedReader
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
+import javax.net.ssl.SSLSocket
 import kotlin.concurrent.thread
 
 /**
- * MitmProxy — plain TCP proxy on PROXY_PORT.
- * Intercepts HTTP GET requests to Roblox CDN flag endpoints and returns flagsJson.
- * Everything else is forwarded to the real server.
- * No raw IP packet manipulation — no crashes.
+ * MitmProxy — plain TCP/TLS proxy on PROXY_PORT.
+ *
+ * Intercept path  : Roblox CDN flag endpoints → injectFlags() returns flagsJson.
+ * Telemetry path  : AntiBan.isTelemetryPath() → silent 204, never forwarded.
+ * Pass-through    : everything else → forwarded to real upstream on correct port.
+ *
+ * HTTPS handling  : upstream connections on port 443 use CertManager.getTrustAllFactory()
+ * so the proxy can talk TLS to the real server without its own cert store blocking it.
+ * Roblox → proxy TLS requires the generated CA cert installed as a system cert
+ * (or user cert with network_security_config allowing user CAs). See CertManager.
+ *
+ * Port is parsed from the Host header (host:port); defaults to 443.
+ * No raw IP packet manipulation — no kernel driver needed.
  */
 object MitmProxy {
 
@@ -74,19 +84,36 @@ object MitmProxy {
             val requestLine = input.readLine() ?: return
             val headers = readHeaders(input)
 
-            val host = headers["host"]?.lowercase() ?: ""
+            val hostHeader = headers["host"]?.lowercase() ?: ""
+            // Parse host and port from Host header (e.g. "clientsettingscdn.roblox.com:443")
+            val hostOnly = hostHeader.substringBefore(":")
+            val port = hostHeader.substringAfter(":", "443").toIntOrNull() ?: 443
+
             val parts = requestLine.split(" ")
             val method = parts.getOrElse(0) { "GET" }
             val path = parts.getOrElse(1) { "/" }
 
-            val isCdn = CDN_HOSTS.any { host.contains(it) }
+            val isCdn = CDN_HOSTS.any { hostOnly.contains(it) }
             val isFlagPath = FLAG_PATHS.any { path.startsWith(it) }
 
-            if (isCdn && isFlagPath && method == "GET") {
-                injectFlags(output)
-                Log.d(TAG, "intercepted $host$path → injected flags")
-            } else {
-                passThrough(method, path, host, headers, output)
+            when {
+                isCdn && isFlagPath && method == "GET" -> {
+                    // Intercept: return our flag JSON instead of the real CDN response.
+                    injectFlags(output)
+                    Log.d(TAG, "intercepted $hostOnly$path → injected flags")
+                }
+                AntiBan.isTelemetryPath(path) -> {
+                    // Drop telemetry silently — 204 No Content, nothing forwarded to Roblox.
+                    output.write(
+                        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .toByteArray()
+                    )
+                    output.flush()
+                    Log.d(TAG, "telemetry dropped: $path")
+                }
+                else -> {
+                    passThrough(method, path, hostOnly, port, headers, output)
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "conn error: ${e.message}")
@@ -101,7 +128,10 @@ object MitmProxy {
             val line = reader.readLine() ?: break
             if (line.isEmpty()) break
             val idx = line.indexOf(':')
-            if (idx > 0) headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+            if (idx > 0) {
+                headers[line.substring(0, idx).trim().lowercase()] =
+                    line.substring(idx + 1).trim()
+            }
         }
         return headers
     }
@@ -119,15 +149,25 @@ object MitmProxy {
     }
 
     private fun passThrough(
-        method: String, path: String, host: String,
+        method: String,
+        path: String,
+        host: String,
+        port: Int,
         reqHeaders: Map<String, String>,
         clientOut: OutputStream
     ) {
         try {
-            val upstream = Socket(host, 80)
+            // Use TLS for port 443; plain socket for anything else (port 80, etc.)
+            val upstream: Socket = if (port == 443) {
+                val ssl = CertManager.getTrustAllFactory().createSocket(host, port) as SSLSocket
+                ssl.startHandshake()
+                ssl
+            } else {
+                Socket(host, port)
+            }
             upstream.soTimeout = 8_000
-            val upOut = upstream.getOutputStream()
 
+            val upOut = upstream.getOutputStream()
             val sb = StringBuilder()
             sb.append("$method $path HTTP/1.1\r\n")
             reqHeaders.forEach { (k, v) ->
@@ -142,9 +182,13 @@ object MitmProxy {
             upstream.close()
         } catch (e: Exception) {
             runCatching {
-                clientOut.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                clientOut.write(
+                    "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .toByteArray()
+                )
                 clientOut.flush()
             }
+            Log.w(TAG, "passThrough error [$host:$port$path]: ${e.message}")
         }
     }
 }
