@@ -3179,7 +3179,7 @@ class TacoState(
     val draftFlags = mutableStateMapOf<String, String>()
     val layers = mutableStateListOf<FlagLayer>()
     val games = mutableStateMapOf<String, PinnedGame>()
-    private var savedFlags by mutableStateOf<Map<String, String>>(emptyMap())
+    private var savedFlags by mutableStateOf>(emptyMap())
 
     var path by mutableStateOf(prefs.getString("path2", DEFAULT_PATH) ?: DEFAULT_PATH)
     var pkg by mutableStateOf(prefs.getString("pkg", DEFAULT_PKG) ?: DEFAULT_PKG)
@@ -3785,6 +3785,10 @@ fun TacoRoot() {
     // Register state on application so MainActivity's VPN permission launcher can call back into it
     LaunchedEffect(Unit) {
         (context.applicationContext as? TacoApplication)?.tacoState = state
+        // Auto-restart VPN bypass if it was active when the app was last closed
+        if (state.vpnBypass) {
+            state.startVpnBypass(context)
+        }
     }
     LaunchedEffect(Unit) { state.refreshLoop() }
 
