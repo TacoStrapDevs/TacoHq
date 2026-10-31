@@ -163,6 +163,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -3658,9 +3659,9 @@ class TacoState(
         val intent = FlagVpnService.buildStartIntent(context, flags)
         if (intent != null) {
             vpnStatus = "starting"
-            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
-            // Store it so MainActivity can launch it. We signal via vpnStatus.
-            _pendingVpnIntent = intent
+            // VpnService.prepare() returned a non-null Intent — MainActivity must startActivityForResult.
+            // Send through channel so it's consumed exactly once.
+            pendingVpnIntent.trySend(intent)
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
             // Already prepared — start directly.
@@ -3676,21 +3677,20 @@ class TacoState(
         notify("VPN bypass stopped.", "other")
     }
 
-    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
-    var _pendingVpnIntent: android.content.Intent? = null
+    // Pending VPN permission intent — Channel(1) so MainActivity's launcher consumes
+    // exactly one intent per permission request without a polling race.
+    val pendingVpnIntent: Channel<android.content.Intent> = Channel(capacity = 1)
 
     fun onVpnPermissionGranted(context: Context) {
         val flags = toJson(mergedFlags())
         context.startService(FlagVpnService.buildDirectIntent(context, flags))
         vpnStatus = "active"
-        _pendingVpnIntent = null
         notify("VPN bypass active — CDN interception live.", "other")
     }
 
     fun onVpnPermissionDenied() {
         vpnBypass = false
         vpnStatus = "off"
-        _pendingVpnIntent = null
         persist()
         notify("VPN permission denied — bypass disabled.", "other")
     }
@@ -3750,18 +3750,12 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent {
-            // Observe pending VPN intent from state and launch it
+            // Observe pending VPN intent from state and launch it.
+            // Channel(1) delivers exactly one intent per permission request — no polling race.
             LaunchedEffect(Unit) {
-                while (true) {
-                    delay(300)
-                    val state = (application as? TacoApplication)?.tacoState ?: continue
-                    // Consume the pending intent before launching the permission screen.
-                    // Otherwise this polling loop can launch the same request every 300 ms.
-                    val intent = state._pendingVpnIntent
-                    if (intent != null) {
-                        state._pendingVpnIntent = null
-                        vpnPermLauncher.launch(intent)
-                    }
+                val state = (application as? TacoApplication)?.tacoState ?: return@LaunchedEffect
+                for (intent in state.pendingVpnIntent) {
+                    vpnPermLauncher.launch(intent)
                 }
             }
             TacoRoot()
