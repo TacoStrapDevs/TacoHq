@@ -1768,6 +1768,37 @@ private val FS_LOD = FS.Choice("Detail distance", "How far high detail models re
     listOf(Opt("Default", emptyMap()), Opt("Near", mapOf("DFIntDebugFRMQualityLevelOverride" to "1")),
         Opt("Far", mapOf("DFIntDebugFRMQualityLevelOverride" to "6"))))
 
+private val FS_FPS = FS.Choice(
+    "Frame rate limit",
+    "Above 60 also lifts the Android frame rate cap",
+    listOf(Opt("Default", emptyMap())) + listOf(30, 60, 90, 120, 144, 165, 240).map {
+        Opt("$it FPS", mapOf(FPS_FLAG to "$it"))
+    }
+)
+
+private val FS_FPSCOUNT = FS.Toggle(
+    "FPS counter",
+    "Shows frame rate in the corner",
+    mapOf("FFlagDebugDisplayFPS" to "True")
+)
+
+private val FS_PRELOAD = FS.Toggle(
+    "Faster loading",
+    "Preloads more assets. Can use a lot of memory",
+    mapOf(
+        "DFIntNumAssetsMaxToPreload" to "2147483647",
+        "DFIntAssetPreloading" to "2147483647"
+    )
+)
+
+private val FS_QUALITY = FS.Choice(
+    "Graphics quality override",
+    "Locks the Roblox graphics level",
+    listOf(Opt("Default", emptyMap())) +
+        listOf(1, 3, 5, 7, 10).map {
+            Opt("Level $it", mapOf("FIntRomarkStartWithGraphicQualityLevel" to "$it"))
+        }
+)
 
 private val FS_DESYNC = FS.Toggle(
     title = "Network Desync / Physics Offset",
@@ -1849,6 +1880,8 @@ val SECTIONS: List<Pair<String, List<FS>>> = listOf(
     "Interface"        to listOf(FS_BLUR)
 )
 
+internal fun fsKeys(fs: FS): Set<String> = when (fs) {
+    is FS.Toggle -> fs.sets.keys
     is FS.Choice -> fs.opts.flatMap { it.sets.keys }.toSet()
     is FS.Num -> setOf(fs.key)
     is FS.Range -> setOf(fs.a, fs.b)
