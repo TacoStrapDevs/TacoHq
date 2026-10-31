@@ -6,33 +6,31 @@ import java.io.File
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.SecureRandom
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Date
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import javax.security.auth.x500.X500Principal
 
 /**
  * CertManager — generates and caches a self-signed RSA-2048 CA key+cert for
  * the MITM proxy's TLS interception of HTTPS traffic.
  *
- * Current VPN bypass uses HTTP-level interception (port 80 redirect).
- * This class wires HTTPS interception (port 443) when the user installs the
- * generated CA cert as a trusted user cert on the device.
+ * Zero external dependencies — uses Android's bundled sun.security.x509 APIs
+ * via fully-qualified class names (present on all Android API levels via
+ * the Conscrypt/OpenJDK runtime that ships with Android). No BouncyCastle needed.
  *
- * Usage:
- *   val factory = CertManager.getSslSocketFactory(context)
- *   // Pass factory to MitmProxy for outbound upstream connections
- *
- * The CA cert in PEM form is exposed via [getCaPemString] so the UI can
+ * The CA cert in PEM form is exposed via [getOrCreateCaPem] so the UI can
  * offer "Copy CA cert" → user installs in Settings → Security → Trusted credentials.
  *
- * Note: Android 7+ restricts user-installed CAs for apps that target N+.
+ * Note: Android 7+ restricts user-installed CAs for apps targeting N+.
  * Roblox must have a network_security_config that trusts user certs, OR
  * the cert must be installed as a system cert (requires root) for HTTPS
- * interception to work. Without it, HTTP interception (current mode) still
- * injects flags on the plain CDN endpoint.
+ * interception to work. getTrustAllFactory() is still used for upstream
+ * (proxy → real server) connections regardless.
  */
 object CertManager {
 
@@ -40,106 +38,91 @@ object CertManager {
     private const val CERT_FILE = "mitm_ca.pem"
     private const val KEY_FILE  = "mitm_ca.key"
     private const val KEY_SIZE  = 2048
-    private const val CERT_ALIAS = "mitm_ca"
 
-    // In-memory cache
     @Volatile private var cachedFactory: SSLSocketFactory? = null
     @Volatile private var cachedPem: String? = null
 
     /**
-     * Returns an SSLSocketFactory that trusts all upstream certificates —
-     * needed so the proxy can connect to the real server without its own
-     * cert store getting in the way.
-     *
-     * The RETURNED factory is for upstream (proxy → server) connections.
-     * Client (Roblox → proxy) TLS uses the generated CA cert.
+     * Returns an SSLSocketFactory that trusts ALL upstream certs —
+     * used by MitmProxy for outbound (proxy → real server) TLS connections
+     * so the proxy isn't blocked by its own trust store.
      */
     fun getTrustAllFactory(): SSLSocketFactory {
         cachedFactory?.let { return it }
-
         val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
-
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, trustAll, SecureRandom())
-        return sslContext.socketFactory.also { cachedFactory = it }
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, trustAll, SecureRandom())
+        return ctx.socketFactory.also { cachedFactory = it }
     }
 
     /**
-     * Generates (or loads from disk) the MITM CA key pair and self-signed cert.
-     * Returns the PEM string of the CA cert to show in the UI.
+     * Generates (or loads from disk) a self-signed X509v3 CA cert + RSA-2048 key.
+     * Returns the PEM string of the CA cert, or null if generation fails.
      *
-     * Generation uses Java's built-in KeyPairGenerator; no BouncyCastle needed
-     * for the RSA key pair itself, but the X509 self-signed cert does require
-     * either BouncyCastle or Android's sun.security.x509 internal API.
+     * Uses sun.security.x509.* via reflection-free fully-qualified references —
+     * these classes are present in Android's runtime (Conscrypt/OpenJDK) on all
+     * supported API levels. No additional build.gradle dep required.
      *
-     * If you have bcprov-jdk15on in your build.gradle, CertManagerBouncyCastle
-     * (a separate file you can add) gives a cleaner implementation.
-     * This version uses the Android-available X500Principal + X509V3CertificateGenerator
-     * shim via reflection so it compiles without extra deps.
-     *
-     * Returns null if generation fails — HTTPS interception won't work but
-     * HTTP interception (current mode) is unaffected.
+     * If generation fails (e.g. future Android strips sun.security), HTTPS
+     * interception won't work but getTrustAllFactory() (upstream TLS) is unaffected.
      */
     fun getOrCreateCaPem(context: Context): String? {
         cachedPem?.let { return it }
-
         val certFile = File(context.filesDir, CERT_FILE)
         if (certFile.exists()) {
             return certFile.readText().also { cachedPem = it }
         }
-
         return try {
             val keyGen = KeyPairGenerator.getInstance("RSA")
             keyGen.initialize(KEY_SIZE, SecureRandom())
             val keyPair = keyGen.generateKeyPair()
 
-            // Build a real self-signed X509v3 CA cert via BouncyCastle.
-            // build.gradle dep: implementation("org.bouncycastle:bcprov-jdk15on:1.70")
-            val now = java.util.Date()
-            val expiry = java.util.Date(now.time + 10L * 365 * 24 * 60 * 60 * 1000) // 10 years
-            val subject = org.bouncycastle.asn1.x500.X500Name("CN=TacoStrap CA, O=TacoStrap, C=US")
+            val now = Date()
+            val expiry = Date(now.time + 10L * 365 * 24 * 60 * 60 * 1000)
+            val subject = X500Principal("CN=TacoStrap CA, O=TacoStrap, C=US")
+            val serial = BigInteger.valueOf(SecureRandom().nextLong().and(Long.MAX_VALUE))
 
-            val certBuilder = org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
-                subject,                                          // issuer = subject (self-signed)
-                java.math.BigInteger.valueOf(SecureRandom().nextLong().and(Long.MAX_VALUE)),
-                now,
-                expiry,
-                subject,
-                keyPair.public
+            // sun.security.x509 — ships with Android runtime, zero extra deps
+            val info = sun.security.x509.X509CertInfo()
+            val interval = sun.security.x509.CertificateValidity(now, expiry)
+            val serialNum = sun.security.x509.CertificateSerialNumber(serial)
+            val algorithmId = sun.security.x509.AlgorithmId(
+                sun.security.x509.AlgorithmId.sha256WithRSAEncryption_oid
             )
+            val owner = sun.security.x509.X500Name(subject.name)
 
-            // Mark as CA so the device trusts certs issued from it
-            certBuilder.addExtension(
-                org.bouncycastle.asn1.x509.Extension.basicConstraints,
-                true,
-                org.bouncycastle.asn1.x509.BasicConstraints(true)
+            info.set(sun.security.x509.X509CertInfo.VALIDITY, interval)
+            info.set(sun.security.x509.X509CertInfo.SERIAL_NUMBER, serialNum)
+            info.set(sun.security.x509.X509CertInfo.SUBJECT, owner)
+            info.set(sun.security.x509.X509CertInfo.ISSUER, owner)
+            info.set(sun.security.x509.X509CertInfo.KEY,
+                sun.security.x509.CertificateX509Key(keyPair.public))
+            info.set(sun.security.x509.X509CertInfo.VERSION,
+                sun.security.x509.CertificateVersion(sun.security.x509.CertificateVersion.V3))
+            info.set(sun.security.x509.X509CertInfo.ALGORITHM_ID,
+                sun.security.x509.CertificateAlgorithmId(algorithmId))
+
+            // BasicConstraints extension — marks this as a CA cert
+            val extensions = sun.security.x509.CertificateExtensions()
+            extensions.set(
+                sun.security.x509.BasicConstraintsExtension.NAME,
+                sun.security.x509.BasicConstraintsExtension(true, true, Int.MAX_VALUE)
             )
-            certBuilder.addExtension(
-                org.bouncycastle.asn1.x509.Extension.keyUsage,
-                true,
-                org.bouncycastle.asn1.x509.KeyUsage(
-                    org.bouncycastle.asn1.x509.KeyUsage.keyCertSign or
-                        org.bouncycastle.asn1.x509.KeyUsage.cRLSign
-                )
-            )
+            info.set(sun.security.x509.X509CertInfo.EXTENSIONS, extensions)
 
-            val signer = org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256WithRSAEncryption")
-                .build(keyPair.private)
-            val cert = org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
-                .getCertificate(certBuilder.build(signer))
+            // Sign with our own private key (self-signed)
+            val cert = sun.security.x509.X509CertImpl(info)
+            cert.sign(keyPair.private, "SHA256WithRSA")
 
-            // PEM-encode the cert
             val certPem = buildString {
                 append("-----BEGIN CERTIFICATE-----\n")
                 append(android.util.Base64.encodeToString(cert.encoded, android.util.Base64.DEFAULT))
                 append("-----END CERTIFICATE-----\n")
             }
-
-            // PEM-encode the private key alongside (used for upstream TLS presentation)
             val keyPem = buildString {
                 append("-----BEGIN RSA PRIVATE KEY-----\n")
                 append(android.util.Base64.encodeToString(keyPair.private.encoded, android.util.Base64.DEFAULT))
@@ -155,7 +138,7 @@ object CertManager {
         }
     }
 
-    /** Clear cached cert/key — forces regeneration on next call. */
+    /** Clears cached cert/key and deletes disk files — forces regeneration on next call. */
     fun clearCert(context: Context) {
         File(context.filesDir, CERT_FILE).delete()
         File(context.filesDir, KEY_FILE).delete()
