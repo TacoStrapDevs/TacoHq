@@ -15,10 +15,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * FlagVpnService — starts the MITM proxy and keeps a foreground notification alive.
- * No raw IP packet processing — the proxy runs as a plain TCP server on PROXY_PORT.
- * Roblox traffic reaches it because we set the VPN tun address and the proxy
- * binds to that address; no packet rewriting needed.
+ * FlagVpnService — foreground service that starts MitmProxy and (when root
+ * is present) redirects the Roblox CDN hosts to the local proxy.
+ * No TUN is established; a TUN without a packet forwarder blackholes traffic.
  */
 class FlagVpnService : VpnService() {
 
@@ -29,11 +28,10 @@ class FlagVpnService : VpnService() {
         private const val EXTRA_FLAGS = "extra_flags_json"
         private const val ACTION_UPDATE = "com.example.flagmanager.ACTION_UPDATE_FLAGS"
         private const val ACTION_STOP = "com.example.flagmanager.ACTION_STOP"
-
         const val PROXY_PORT = 8899
 
         fun buildStartIntent(context: Context, flagsJson: String): Intent? =
-            prepare(context) // null = already permitted, caller starts directly
+            prepare(context)
 
         fun buildDirectIntent(context: Context, flagsJson: String): Intent =
             Intent(context, FlagVpnService::class.java).putExtra(EXTRA_FLAGS, flagsJson)
@@ -52,11 +50,14 @@ class FlagVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
             ACTION_UPDATE -> {
                 val json = intent.getStringExtra(EXTRA_FLAGS) ?: "{}"
                 MitmProxy.updateFlags(json)
-                Log.d(TAG, "flags updated")
+                Log.d(TAG, "flags updated live")
                 return START_STICKY
             }
         }
@@ -64,7 +65,6 @@ class FlagVpnService : VpnService() {
         val flagsJson = intent?.getStringExtra(EXTRA_FLAGS) ?: "{}"
         postNotification()
 
-        // Start the proxy — plain TCP, no raw IP manipulation
         proxyJob = scope.launch {
             try {
                 MitmProxy.start(flagsJson, PROXY_PORT)
@@ -73,8 +73,25 @@ class FlagVpnService : VpnService() {
             }
         }
 
-        Log.d(TAG, "VPN service started, proxy on :$PROXY_PORT")
+        // Optional root redirect for HTTP flag endpoints
+        scope.launch { redirectCdnToProxy() }
+
+        Log.d(TAG, "service started, proxy on :$PROXY_PORT")
         return START_STICKY
+    }
+
+    private fun redirectCdnToProxy() {
+        val hosts = listOf(
+            "clientsettingscdn.roblox.com",
+            "clientsettings.roblox.com"
+        )
+        for (host in hosts) {
+            val cmd = "iptables -t nat -A OUTPUT -p tcp -d $host --dport 80 -j REDIRECT --to-ports $PROXY_PORT"
+            runCatching {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)).waitFor()
+            }
+        }
+        Log.i(TAG, "CDN redirect rules applied (if root present)")
     }
 
     private fun postNotification() {
@@ -90,8 +107,8 @@ class FlagVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE
         )
         val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MangoStrap VPN bypass active")
-            .setContentText("CDN interception live")
+            .setContentTitle("TacoStrap flag channel active")
+            .setContentText("CDN interception + unrestricted flags")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
             .setOngoing(true)
@@ -102,8 +119,11 @@ class FlagVpnService : VpnService() {
     override fun onDestroy() {
         proxyJob?.cancel()
         MitmProxy.stop()
+        runCatching {
+            Runtime.getRuntime().exec(arrayOf("su", "-c", "iptables -t nat -F OUTPUT")).waitFor()
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
-        Log.d(TAG, "VPN service destroyed")
+        Log.d(TAG, "service destroyed")
         super.onDestroy()
     }
 }
