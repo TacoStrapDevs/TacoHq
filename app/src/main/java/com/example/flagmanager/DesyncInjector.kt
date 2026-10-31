@@ -10,19 +10,18 @@ object DesyncInjector {
 
     private const val TAG = "DesyncInjector"
     private const val KEY = "WorldStepMax"
-    private const val ON = "-99999999999999"
-    private const val OFF = "-1"
+    // fixed: Long values not strings — Roblox int flags reject string values
+    private const val ON  = -99999999999999L
+    private const val OFF = -1L
 
-    /** Call only when the toggle is ON. */
     fun ensureInMap(flags: MutableMap<String, String>) {
-        flags[KEY] = ON
-        flags["DFIntPhysicsSenderMaxBandwidthBps"] = "0"
+        flags[KEY]                                    = ON.toString()
+        flags["DFIntPhysicsSenderMaxBandwidthBps"]    = "0"
         flags["DFIntPhysicsSenderMaxBandwidthBpsScaling"] = "0"
     }
 
-    /** Soft reset — call when the toggle is turned OFF. */
     fun removeFromMap(flags: MutableMap<String, String>) {
-        flags[KEY] = OFF
+        flags[KEY] = OFF.toString()
         flags.remove("DFIntPhysicsSenderMaxBandwidthBps")
         flags.remove("DFIntPhysicsSenderMaxBandwidthBpsScaling")
     }
@@ -30,17 +29,22 @@ object DesyncInjector {
     fun inject(versionDir: File, enable: Boolean): Boolean {
         if (!versionDir.isDirectory) return false
         val settings = File(versionDir, "ClientSettings").apply { mkdirs() }
-        val file = File(settings, "ClientAppSettings.json")
+        val file     = File(settings, "ClientAppSettings.json")
         return try {
-            val root = if (file.exists()) JSONObject(file.readText(StandardCharsets.UTF_8))
-                       else JSONObject()
+            val root = if (file.exists())
+                JSONObject(file.readText(StandardCharsets.UTF_8))
+            else
+                JSONObject()
+
             if (enable) {
+                // put as Long so JSON serializes as a number, not a string
                 root.put(KEY, ON)
                 root.put("DFIntPhysicsSenderMaxBandwidthBps", 0)
                 root.put("DFIntPhysicsSenderMaxBandwidthBpsScaling", 0)
             } else {
                 root.put(KEY, OFF)
             }
+
             FileOutputStream(file).use {
                 it.write(root.toString(2).toByteArray(StandardCharsets.UTF_8))
                 it.fd.sync()
