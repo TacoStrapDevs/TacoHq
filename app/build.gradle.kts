@@ -1,3 +1,4 @@
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -30,6 +31,13 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    // Fix duplicate BouncyCastle metadata
+    packaging {
+        resources {
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
     }
 }
 
