@@ -15,12 +15,12 @@ android {
         versionName = "2.0"
     }
 
-    buildFeatures { 
-        compose = true 
+    buildFeatures {
+        compose = true
     }
 
-    composeOptions { 
-        kotlinCompilerExtensionVersion = "1.5.14" 
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     compileOptions {
@@ -28,8 +28,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions { 
-        jvmTarget = "17" 
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
@@ -38,11 +38,15 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
-    
+
     // Shizuku API
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // Discord RPC WebSocket Support
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+    // BouncyCastle Support
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 }
