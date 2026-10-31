@@ -4,12 +4,10 @@ package com.example.flagmanager
  * AntiBan — header and payload filter for the MITM proxy.
  *
  * Strips Roblox telemetry headers and known detection vectors from
- * outbound requests before they reach the CDN. Reduces the signal
+ * outbound requests before they reach the CDN. This reduces the signal
  * that a proxy is sitting in the path.
  *
- * MitmProxy.handleConnection() calls:
- *   isBlockedHeader() — on every forwarded request header
- *   isTelemetryPath() — before deciding to pass through or drop a request
+ * Rules applied by MitmProxy.passThrough() for every non-intercepted request.
  */
 object AntiBan {
 
@@ -23,8 +21,7 @@ object AntiBan {
      *  - Session tokens we don't want leaked through an unexpected path
      */
     fun isBlockedHeader(headerNameLower: String): Boolean =
-        headerNameLower in BLOCKED_HEADERS ||
-            BLOCKED_PREFIXES.any { headerNameLower.startsWith(it) }
+        headerNameLower in BLOCKED_HEADERS || BLOCKED_PREFIXES.any { headerNameLower.startsWith(it) }
 
     private val BLOCKED_HEADERS = setOf(
         "via",
@@ -56,11 +53,11 @@ object AntiBan {
     )
 
     /**
-     * Returns true if the request should be silently dropped with a 204
-     * rather than forwarded to the real server.
+     * Strip known Roblox telemetry endpoint paths.
+     * Called by MitmProxy before deciding to pass through or drop a request.
      *
-     * Called by MitmProxy.handleConnection() before passThrough.
-     * Matches known Roblox telemetry and diagnostics endpoint prefixes.
+     * @return true if the request should be silently dropped (responded to with 204)
+     *         rather than forwarded to the real server.
      */
     fun isTelemetryPath(path: String): Boolean =
         TELEMETRY_PATHS.any { path.startsWith(it) }
@@ -74,7 +71,7 @@ object AntiBan {
         "/v1/events",
         "/game/report-stats",
         "/timing/",
-        "/e.png",           // pixel tracker
+        "/e.png",          // pixel tracker
         "/t.png"
     )
 }
