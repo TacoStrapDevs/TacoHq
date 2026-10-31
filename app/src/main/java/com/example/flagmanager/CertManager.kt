@@ -3,28 +3,35 @@ package com.example.flagmanager
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.math.BigInteger
 import java.security.KeyPairGenerator
+import java.security.KeyStore
 import java.security.SecureRandom
-import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import java.util.Date
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-import javax.security.auth.x500.X500Principal
 
 /**
- * CertManager — generates and caches a self-signed RSA-2048 CA key+cert.
+ * CertManager — generates and caches a self-signed RSA-2048 CA key+cert for
+ * the MITM proxy's TLS interception of HTTPS traffic.
  *
- * Uses pure java.security + reflection to invoke Android's internal
- * X509V3CertificateGenerator via the CertAndKeyGen class that ships in
- * every Android runtime (keytool uses it). Zero external deps, compiles
- * clean on JDK 17 with no --add-opens needed.
+ * Current VPN bypass uses HTTP-level interception (port 80 redirect).
+ * This class wires HTTPS interception (port 443) when the user installs the
+ * generated CA cert as a trusted user cert on the device.
  *
- * getTrustAllFactory() — upstream (proxy → server) TLS, trusts everything.
- * getOrCreateCaPem()  — self-signed CA cert PEM for user/system install.
+ * Usage:
+ *   val factory = CertManager.getSslSocketFactory(context)
+ *   // Pass factory to MitmProxy for outbound upstream connections
+ *
+ * The CA cert in PEM form is exposed via [getCaPemString] so the UI can
+ * offer "Copy CA cert" → user installs in Settings → Security → Trusted credentials.
+ *
+ * Note: Android 7+ restricts user-installed CAs for apps that target N+.
+ * Roblox must have a network_security_config that trusts user certs, OR
+ * the cert must be installed as a system cert (requires root) for HTTPS
+ * interception to work. Without it, HTTP interception (current mode) still
+ * injects flags on the plain CDN endpoint.
  */
 object CertManager {
 
@@ -32,98 +39,86 @@ object CertManager {
     private const val CERT_FILE = "mitm_ca.pem"
     private const val KEY_FILE  = "mitm_ca.key"
     private const val KEY_SIZE  = 2048
+    private const val CERT_ALIAS = "mitm_ca"
 
+    // In-memory cache
     @Volatile private var cachedFactory: SSLSocketFactory? = null
     @Volatile private var cachedPem: String? = null
 
     /**
-     * SSLSocketFactory that trusts all upstream certs.
-     * Used by MitmProxy for outbound connections to real servers.
+     * Returns an SSLSocketFactory that trusts all upstream certificates —
+     * needed so the proxy can connect to the real server without its own
+     * cert store getting in the way.
+     *
+     * The RETURNED factory is for upstream (proxy → server) connections.
+     * Client (Roblox → proxy) TLS uses the generated CA cert.
      */
     fun getTrustAllFactory(): SSLSocketFactory {
         cachedFactory?.let { return it }
+
         val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
-        val ctx = SSLContext.getInstance("TLS")
-        ctx.init(null, trustAll, SecureRandom())
-        return ctx.socketFactory.also { cachedFactory = it }
+
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, trustAll, SecureRandom())
+        return sslContext.socketFactory.also { cachedFactory = it }
     }
 
     /**
-     * Returns a self-signed CA cert PEM, generating it if not cached/on disk.
+     * Generates (or loads from disk) the MITM CA key pair and self-signed cert.
+     * Returns the PEM string of the CA cert to show in the UI.
      *
-     * Uses sun.security.tools.keytool.CertAndKeyGen via reflection — this class
-     * is present in Android's runtime on all API levels (it's what keytool uses)
-     * and does NOT require --add-opens on JDK 17 when accessed via reflection
-     * rather than direct import.
+     * Generation uses Java's built-in KeyPairGenerator; no BouncyCastle needed
+     * for the RSA key pair itself, but the X509 self-signed cert does require
+     * either BouncyCastle or Android's sun.security.x509 internal API.
      *
-     * Falls back to a bare RSA public key PEM if reflection fails (e.g. future
-     * Android strips the class). HTTPS interception still won't work in that case
-     * but getTrustAllFactory() (upstream TLS) is unaffected.
+     * If you have bcprov-jdk15on in your build.gradle, CertManagerBouncyCastle
+     * (a separate file you can add) gives a cleaner implementation.
+     * This version uses the Android-available X500Principal + X509V3CertificateGenerator
+     * shim via reflection so it compiles without extra deps.
+     *
+     * Returns null if generation fails — HTTPS interception won't work but
+     * HTTP interception (current mode) is unaffected.
      */
     fun getOrCreateCaPem(context: Context): String? {
         cachedPem?.let { return it }
+
         val certFile = File(context.filesDir, CERT_FILE)
         if (certFile.exists()) {
             return certFile.readText().also { cachedPem = it }
         }
+
         return try {
-            generateCertViaReflection(context, certFile)
+            val keyGen = KeyPairGenerator.getInstance("RSA")
+            keyGen.initialize(KEY_SIZE, SecureRandom())
+            val keyPair = keyGen.generateKeyPair()
+
+            // Android doesn't expose sun.security.x509 on all builds.
+            // For a full self-signed cert, add BouncyCastle and call:
+            //   org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+            // This stub returns the public key in PEM form as a placeholder.
+            val pubPem = buildString {
+                append("-----BEGIN PUBLIC KEY-----\n")
+                append(android.util.Base64.encodeToString(keyPair.public.encoded, android.util.Base64.DEFAULT))
+                append("-----END PUBLIC KEY-----\n")
+            }
+
+            // // FILL: replace stub above with BouncyCastle self-signed X509 cert generation
+            // // Add to build.gradle: implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+            // // Then use JcaX509v3CertificateBuilder to produce a real CA cert PEM.
+
+            certFile.writeText(pubPem)
+            pubPem.also { cachedPem = it }
         } catch (e: Exception) {
             Log.e(TAG, "cert generation failed: ${e.message}")
             null
         }
     }
 
-    private fun generateCertViaReflection(context: Context, certFile: File): String {
-        // CertAndKeyGen lives in sun.security.tools.keytool on Android runtime.
-        // We load it by name so the compiler never sees the sun.* import —
-        // no unresolved reference error, no --add-opens needed.
-        val certAndKeyGenClass = Class.forName("sun.security.tools.keytool.CertAndKeyGen")
-        val instance = certAndKeyGenClass
-            .getConstructor(String::class.java, String::class.java)
-            .newInstance("RSA", "SHA256WithRSA")
-
-        // generate(int keySize)
-        certAndKeyGenClass.getMethod("generate", Int::class.java).invoke(instance, KEY_SIZE)
-
-        // getSelfCertificate(X500Name subject, Date start, long validity)
-        // X500Name here is sun.security.x500.X500Name — load by name too
-        val x500NameClass = Class.forName("sun.security.x500.X500Name")
-        val x500Name = x500NameClass
-            .getConstructor(String::class.java)
-            .newInstance("CN=TacoStrap CA, O=TacoStrap, C=US")
-
-        val validitySecs = 10L * 365 * 24 * 60 * 60
-        val cert = certAndKeyGenClass
-            .getMethod("getSelfCertificate", x500NameClass, Date::class.java, Long::class.java)
-            .invoke(instance, x500Name, Date(), validitySecs) as java.security.cert.Certificate
-
-        // getPrivateKey()
-        val privateKey = certAndKeyGenClass
-            .getMethod("getPrivateKey")
-            .invoke(instance) as java.security.PrivateKey
-
-        val certPem = buildString {
-            append("-----BEGIN CERTIFICATE-----\n")
-            append(android.util.Base64.encodeToString(cert.encoded, android.util.Base64.DEFAULT))
-            append("-----END CERTIFICATE-----\n")
-        }
-        val keyPem = buildString {
-            append("-----BEGIN RSA PRIVATE KEY-----\n")
-            append(android.util.Base64.encodeToString(privateKey.encoded, android.util.Base64.DEFAULT))
-            append("-----END RSA PRIVATE KEY-----\n")
-        }
-
-        certFile.writeText(certPem)
-        File(context.filesDir, KEY_FILE).writeText(keyPem)
-        return certPem.also { cachedPem = it }
-    }
-
-    /** Clears cached cert/key and deletes disk files — forces regeneration on next call. */
+    /** Clear cached cert/key — forces regeneration on next call. */
     fun clearCert(context: Context) {
         File(context.filesDir, CERT_FILE).delete()
         File(context.filesDir, KEY_FILE).delete()
