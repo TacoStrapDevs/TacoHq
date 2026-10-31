@@ -276,6 +276,7 @@ object DefaultBootstrapper : Bootstrapper {
 
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
+            // Desync is forced at the call site when the UI toggle is ON
             val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
             val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
             var success = false
@@ -3219,6 +3220,7 @@ class TacoState(
     }
 
     // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
+    var desyncEnabled by mutableStateOf(prefs.getBoolean("desyncEnabled", false))
     var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
     var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
 
@@ -3421,7 +3423,12 @@ class TacoState(
                 notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
             }
             if (applyOnSave) {
-                val r = engine.applyFlags(toJson(mergedFlags(g?.profile)), path, pkg, fpsCap, useRoot)
+                val r = engine.applyFlags(run {
+                val m = mergedFlags(g?.profile).toMutableMap()
+                if (desyncEnabled) DesyncInjector.ensureInMap(m)
+                else DesyncInjector.removeFromMap(m)
+                toJson(m)
+            }, path, pkg, fpsCap, useRoot)
                 if (r.startsWith("Failed")) { notify(r); return@launch }
             }
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
@@ -3433,7 +3440,9 @@ class TacoState(
         if (launchState is LaunchState.Running) return
         launchJob?.cancel()
         val target = targetGame?.let { games[it] }
-        val merged = mergedFlags(target?.profile)
+        val merged = mergedFlags(target?.profile).toMutableMap()
+        if (desyncEnabled) DesyncInjector.ensureInMap(merged)
+        else DesyncInjector.removeFromMap(merged)
         val m = mode
         val steps = mutableListOf<LaunchStep>()
         steps += LaunchStep("Check Shizuku")
@@ -3650,11 +3659,17 @@ class TacoState(
             .putFloat("wallpaperDim", wallpaperDim)
             .putBoolean("textureEnabled", textureEnabled)
             .putBoolean("vpnBypass", vpnBypass)
+            .putBoolean("desyncEnabled", desyncEnabled)
             .apply()
     }
 
     fun startVpnBypass(context: Context) {
-        val flags = toJson(mergedFlags())
+        val flags = run {
+            val m = mergedFlags().toMutableMap()
+            if (desyncEnabled) DesyncInjector.ensureInMap(m)
+            else DesyncInjector.removeFromMap(m)
+            toJson(m)
+        }
         val intent = FlagVpnService.buildStartIntent(context, flags)
         if (intent != null) {
             vpnStatus = "starting"
@@ -3680,7 +3695,12 @@ class TacoState(
     var _pendingVpnIntent: android.content.Intent? = null
 
     fun onVpnPermissionGranted(context: Context) {
-        val flags = toJson(mergedFlags())
+        val flags = run {
+            val m = mergedFlags().toMutableMap()
+            if (desyncEnabled) DesyncInjector.ensureInMap(m)
+            else DesyncInjector.removeFromMap(m)
+            toJson(m)
+        }
         context.startService(FlagVpnService.buildDirectIntent(context, flags))
         vpnStatus = "active"
         _pendingVpnIntent = null
