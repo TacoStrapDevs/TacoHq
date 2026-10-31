@@ -372,8 +372,6 @@ sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, 
  * ====================================================================== */
 
 object TacoPalette {
-    // Snapshot-backed colors let every existing component react to a theme change,
-    // including components that use TacoPalette directly instead of MaterialTheme.
     var Charcoal by mutableStateOf(Color(0xFF0F0B09))
     var CharcoalDeep by mutableStateOf(Color(0xFF070504))
     var Surface by mutableStateOf(Color(0xFF18120E))
@@ -2884,7 +2882,6 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Full visual presets: these change several appearance settings together.
             Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Complete appearance presets", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -2924,7 +2921,6 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // App Font Style Options
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("App Font Style", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
@@ -2935,7 +2931,6 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Card Glass Transparency Selector
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Card Glass Transparency", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -2949,7 +2944,6 @@ fun SettingsScreen(state: TacoState) {
                 }
             }
 
-            // Corner Radius Selector
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Card Corner Rounding", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -3217,9 +3211,8 @@ class TacoState(
         persist()
     }
 
-    // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
     var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
-    var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
+    var vpnStatus by mutableStateOf<String>("off")
 
     var shizuku by mutableStateOf<ShizukuState>(ShizukuState.NotRunning)
     var rootAvailable by mutableStateOf<Boolean?>(null)
@@ -3480,12 +3473,10 @@ class TacoState(
                 }
                 push(vIdx, StepStatus.Done, vmsg)
 
-                // VPN bypass step — inject flags via CDN interception
                 if (vpnBypass) {
                     val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
                     if (vpnIdx >= 0) {
                         push(vpnIdx, StepStatus.Running, "starting CDN interceptor…")
-                        // FlagVpnService handles the actual proxy; we just signal it to update flags
                         val ctx = appContext
                         if (ctx != null) {
                             FlagVpnService.updateFlags(ctx, toJson(merged))
@@ -3657,12 +3648,9 @@ class TacoState(
         val intent = FlagVpnService.buildStartIntent(context, flags)
         if (intent != null) {
             vpnStatus = "starting"
-            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
-            // Store it so MainActivity can launch it. We signal via vpnStatus.
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            // Already prepared — start directly.
             context.startService(FlagVpnService.buildDirectIntent(context, flags))
             vpnStatus = "active"
             notify("VPN bypass active — CDN interception live.", "other")
@@ -3675,8 +3663,8 @@ class TacoState(
         notify("VPN bypass stopped.", "other")
     }
 
-    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
-    var _pendingVpnIntent: android.content.Intent? = null
+    // Fixed: explicitly specified type and initial value for delegate state variable
+    var _pendingVpnIntent by mutableStateOf<android.content.Intent?>(null)
 
     fun onVpnPermissionGranted(context: Context) {
         val flags = toJson(mergedFlags())
@@ -3718,17 +3706,15 @@ private val TAB_ICONS = listOf(
     TacoIcon.Type to "Fonts", TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
 
-// Application subclass so MainActivity can access TacoState for VPN permission callbacks.
-// Add android:name=".TacoApplication" to <application> in AndroidManifest.xml.
 class TacoApplication : android.app.Application() {
     var tacoState: TacoState? = null
 }
 
 class MainActivity : ComponentActivity() {
 
-    private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
+    // Fixed: explicit parameter names instead of invalid implicit 'it'
+    private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { requestCode, grantResult -> }
 
-    // VPN permission result launcher — Android requires startActivityForResult for VpnService.prepare()
     private lateinit var vpnPermLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -3749,13 +3735,10 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent {
-            // Observe pending VPN intent from state and launch it
             LaunchedEffect(Unit) {
                 while (true) {
                     delay(300)
                     val state = (application as? TacoApplication)?.tacoState ?: continue
-                    // Consume the pending intent before launching the permission screen.
-                    // Otherwise this polling loop can launch the same request every 300 ms.
                     val intent = state._pendingVpnIntent
                     if (intent != null) {
                         state._pendingVpnIntent = null
@@ -3782,10 +3765,8 @@ fun TacoRoot() {
     val snackbar = remember { SnackbarHostState() }
     val state = remember { TacoState(prefs, DefaultBootstrapper, DefaultAllowlist, scope, snackbar) }
 
-    // Register state on application so MainActivity's VPN permission launcher can call back into it
     LaunchedEffect(Unit) {
         (context.applicationContext as? TacoApplication)?.tacoState = state
-        // Auto-restart VPN bypass if it was active when the app was last closed
         if (state.vpnBypass) {
             state.startVpnBypass(context)
         }
