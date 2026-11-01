@@ -86,8 +86,8 @@ object MitmProxy {
         flagsJson = forceAllowlist(json)
     }
 
-    private fun forceAllowlist(json: String): String =
-        try {
+    private fun forceAllowlist(json: String): String {
+        return try {
             val root = JSONObject(json.ifBlank { "{}" })
             root.put("FFlagAllowList", JSONObject())
             root.put("FFlagAllowListEnabled", false)
@@ -96,6 +96,7 @@ object MitmProxy {
         } catch (_: Throwable) {
             json
         }
+    }
 
     private fun handle(client: Socket) {
         client.soTimeout = SO_TIMEOUT
@@ -256,19 +257,21 @@ object MitmProxy {
         }
     }
 
-    private fun buildServerContext(host: String): SSLContext? = try {
-        val leaf = CertManager.generateLeafFor(host) ?: return null
-        val ks = KeyStore.getInstance("PKCS12")
-        ks.load(null, null)
-        ks.setKeyEntry("leaf", leaf.keyPair.private, CharArray(0), arrayOf(leaf.cert))
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(ks, CharArray(0))
-        SSLContext.getInstance("TLS").apply {
-            init(kmf.keyManagers, null, SecureRandom())
+    private fun buildServerContext(host: String): SSLContext? {
+        return try {
+            val leaf = CertManager.generateLeafFor(host) ?: return null
+            val ks = KeyStore.getInstance("PKCS12")
+            ks.load(null, null)
+            ks.setKeyEntry("leaf", leaf.keyPair.private, CharArray(0), arrayOf(leaf.cert))
+            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+            kmf.init(ks, CharArray(0))
+            SSLContext.getInstance("TLS").apply {
+                init(kmf.keyManagers, null, SecureRandom())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "buildServerContext($host): ${e.message}")
+            null
         }
-    } catch (e: Exception) {
-        Log.e(TAG, "buildServerContext($host): ${e.message}")
-        null
     }
 
     private fun isFlagRequest(host: String, path: String, method: String): Boolean {
@@ -279,15 +282,17 @@ object MitmProxy {
             path.contains("client-settings", ignoreCase = true)
     }
 
-    private fun openUpstream(host: String, port: Int): Socket? = try {
-        val s = Socket()
-        vpnService?.protect(s)
-        s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
-        s.soTimeout = SO_TIMEOUT
-        s
-    } catch (e: Exception) {
-        Log.w(TAG, "upstream $host:$port: ${e.message}")
-        null
+    private fun openUpstream(host: String, port: Int): Socket? {
+        return try {
+            val s = Socket()
+            vpnService?.protect(s)
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
+            s.soTimeout = SO_TIMEOUT
+            s
+        } catch (e: Exception) {
+            Log.w(TAG, "upstream $host:$port: ${e.message}")
+            null
+        }
     }
 
     private fun injectFlags(out: OutputStream) {
