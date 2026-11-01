@@ -183,7 +183,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "6.7"
+const val APP_VERSION = "6.2"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -251,34 +251,6 @@ fun fetchText(url: String): Pair<Boolean, String> = try {
     if (code in 200..299) true to c.inputStream.bufferedReader().readText()
     else false to "HTTP $code"
 } catch (e: Throwable) { false to (e.message ?: "network error") }
-
-data class NewsItem(val title: String, val link: String, val summary: String = "")
-
-/** Pull latest posts from the official Roblox blog RSS. Fails soft → empty list. */
-suspend fun fetchRobloxNews(limit: Int = 8): List<NewsItem> = withContext(Dispatchers.IO) {
-    val (ok, body) = fetchText("https://blog.roblox.com/feed/")
-    if (!ok || body.isBlank()) return@withContext emptyList()
-    val items = mutableListOf<NewsItem>()
-    // Minimal RSS item scrape — no XML dependency
-    val itemRegex = Regex("<item>([\\s\\S]*?)</item>", RegexOption.IGNORE_CASE)
-    val titleRegex = Regex("<title><!\\[CDATA\\[(.*?)\\]\\]></title>|<title>(.*?)</title>", RegexOption.IGNORE_CASE)
-    val linkRegex = Regex("<link>(.*?)</link>", RegexOption.IGNORE_CASE)
-    val descRegex = Regex("<description><!\\[CDATA\\[(.*?)\\]\\]></description>|<description>(.*?)</description>", RegexOption.IGNORE_CASE)
-    for (m in itemRegex.findAll(body)) {
-        if (items.size >= limit) break
-        val block = m.groupValues[1]
-        val title = titleRegex.find(block)?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }?.trim().orEmpty()
-        val link = linkRegex.find(block)?.groupValues?.getOrNull(1)?.trim().orEmpty()
-        var summary = descRegex.find(block)?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }?.trim().orEmpty()
-        summary = summary.replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").take(140)
-        if (title.isNotEmpty() && link.startsWith("http")) {
-            items += NewsItem(title, link, summary)
-        }
-    }
-    items
-}
-
-
 
 interface Bootstrapper {
     fun shizukuState(): ShizukuState
@@ -362,14 +334,13 @@ object DefaultBootstrapper : Bootstrapper {
             val mkCmd = "mkdir -p ${shq(fontDir)}"
             runCmd(mkCmd, root)
 
-            if (fontBytes == null) {
-                return@withContext "Preset fonts are not bundled — pick a .ttf file to inject."
+            if (fontBytes != null) {
+                val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
+                val targetFile = "$fontDir/custom_font.ttf"
+                val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
+                val (ok, out) = runCmd(writeCmd, root)
+                if (!ok) return@withContext "Failed to inject font file: $out"
             }
-            val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
-            val targetFile = "$fontDir/custom_font.ttf"
-            val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
-            val (ok, out) = runCmd(writeCmd, root)
-            if (!ok) return@withContext "Failed to inject font file: $out"
             "Successfully injected font ($fontName) into Roblox!"
         }
 
@@ -463,113 +434,6 @@ val LocalTacoAccent = compositionLocalOf { TACO_ACCENTS[0] }
 val LocalReduceMotion = compositionLocalOf { false }
 val LocalAppearanceStyle = compositionLocalOf { 0 }
 val LocalCustomFont = compositionLocalOf<FontFamily> { FontFamily.SansSerif }
-
-
-/* ======================================================================
- *  UI KIT — polished components (presentation only, no engine changes)
- * ====================================================================== */
-
-object TacoDimens {
-    val radiusSm = 12.dp
-    val radiusMd = 16.dp
-    val radiusLg = 22.dp
-    val padScreen = 16.dp
-    val padCard = 14.dp
-    val gap = 10.dp
-}
-
-@Composable
-fun tacoCardBrush() = Brush.verticalGradient(
-    listOf(TacoPalette.SurfaceHigh.copy(alpha = 0.92f), TacoPalette.Surface.copy(alpha = 0.88f))
-)
-
-@Composable
-fun StatusChip(
-    label: String,
-    ok: Boolean,
-    onClick: (() -> Unit)? = null
-) {
-    val bg = if (ok) TacoPalette.Guac.copy(0.18f) else TacoPalette.Salsa.copy(0.18f)
-    val fg = if (ok) TacoPalette.Guac else TacoPalette.Salsa
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(bg)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(fg))
-        Text(label, color = fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-    }
-}
-
-@Composable
-fun GlassCard(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Column(
-        modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(TacoDimens.radiusMd))
-            .background(tacoCardBrush())
-            .border(1.dp, TacoPalette.Outline.copy(0.45f), RoundedCornerShape(TacoDimens.radiusMd))
-            .padding(TacoDimens.padCard),
-        verticalArrangement = Arrangement.spacedBy(TacoDimens.gap),
-        content = content
-    )
-}
-
-@Composable
-fun SectionHeader(title: String, subtitle: String? = null) {
-    Column(Modifier.padding(bottom = 4.dp)) {
-        Text(title, style = TacoType.display, color = TacoPalette.Cream)
-        if (subtitle != null) {
-            Text(subtitle, color = TacoPalette.Muted, fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onToggle: () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(TacoDimens.radiusSm))
-            .clickable(onClick = onToggle)
-            .padding(vertical = 10.dp, horizontal = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, color = TacoPalette.Cream, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Text(subtitle, color = TacoPalette.Muted, fontSize = 12.sp)
-        }
-        Box(
-            Modifier
-                .size(48.dp, 28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (checked) TacoPalette.Guac else TacoPalette.Outline)
-        ) {
-            Box(
-                Modifier
-                    .align(if (checked) Alignment.CenterEnd else Alignment.CenterStart)
-                    .padding(3.dp)
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(TacoPalette.Cream)
-            )
-        }
-    }
-}
-
 
 object TacoType {
     @Composable
@@ -1093,175 +957,45 @@ fun StatusSheetContent(
     shizukuConnected: Boolean,
     onGrantShizuku: () -> Unit,
     onOpenShizukuGuide: () -> Unit,
-    onDismiss: () -> Unit,
-    // optional extras — Home passes these for the upgraded sheet
-    desyncEnabled: Boolean = false,
-    vpnStatus: String = "off",
-    useRoot: Boolean = false,
-    onCopyAdb: (() -> Unit)? = null,
-    onToggleRoot: (() -> Unit)? = null
+    onDismiss: () -> Unit
 ) {
     val accent = LocalTacoAccent.current
-    val context = LocalContext.current
-    val adbCmd = "adb shell \"content read --uri content://com.example.flagmanager.helper/start | sh\""
-
-    Column(
-        Modifier
-            .padding(horizontal = 22.dp)
-            .padding(bottom = 28.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        Text("Helper & status", style = TacoType.display)
-        Text(
-            "Same job as VoidStrap’s helper — clearer state, faster fixes.",
-            color = TacoPalette.Muted,
-            fontSize = 12.sp
-        )
+    Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
+        Text("Kitchen status", style = TacoType.display)
         Spacer(Modifier.height(16.dp))
-
-        // Live LEDs
-        statuses.forEach { (name, stateLabel, color) ->
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        statuses.forEach { (name, state, color) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(9.dp).clip(CircleShape).background(color))
                 Spacer(Modifier.width(10.dp))
-                Text(name, style = TacoType.body, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(stateLabel, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(9.dp).clip(CircleShape)
-                    .background(if (desyncEnabled) TacoPalette.Guac else TacoPalette.Faint)
-            )
-            Spacer(Modifier.width(10.dp))
-            Text("Desync", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(if (desyncEnabled) "ON" else "OFF", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                color = if (desyncEnabled) TacoPalette.Guac else TacoPalette.Muted)
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            val vpnColor = when (vpnStatus) {
-                "active" -> TacoPalette.Guac
-                "starting" -> TacoPalette.Tortilla
-                else -> TacoPalette.Faint
-            }
-            Box(Modifier.size(9.dp).clip(CircleShape).background(vpnColor))
-            Spacer(Modifier.width(10.dp))
-            Text("VPN channel", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(vpnStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vpnColor)
-        }
-
-        Spacer(Modifier.height(18.dp))
-        Text("HELPER METHOD", style = TacoType.label, color = accent.neon)
-        Spacer(Modifier.height(8.dp))
-
-        // Method cards — VoidStrap-style clarity, tighter
-        listOf(
-            Triple(
-                "Shizuku (recommended)",
-                if (shizukuConnected) "Connected — flags write with elevated shell." else "Not connected. Start Shizuku, then Grant.",
-                shizukuConnected
-            ),
-            Triple(
-                "Root",
-                if (useRoot) "Enabled in Settings — permanent after reboot." else "Optional. Magisk/SU + “Use root” in Settings.",
-                useRoot
-            ),
-            Triple(
-                "ADB (one-shot)",
-                "PC required once per session. Copy command below, run from platform-tools.",
-                false
-            )
-        ).forEach { (title, body, ok) ->
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(TacoPalette.Surface)
-                    .border(1.dp, if (ok) TacoPalette.Guac.copy(0.45f) else TacoPalette.Outline, RoundedCornerShape(14.dp))
-                    .padding(14.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(8.dp).clip(CircleShape)
-                            .background(if (ok) TacoPalette.Guac else TacoPalette.Faint)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(body, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 17.sp)
+                Text(name, style = TacoType.body, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text(state, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = color)
             }
             Spacer(Modifier.height(8.dp))
         }
-
-        // ADB command
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(TacoPalette.CharcoalDeep)
-                .border(1.dp, TacoPalette.Outline, RoundedCornerShape(14.dp))
-                .padding(12.dp)
-        ) {
-            Text("ADB START COMMAND", style = TacoType.label, color = accent.neon)
-            Spacer(Modifier.height(6.dp))
-            Text(adbCmd, fontSize = 11.sp, color = TacoPalette.Cream, lineHeight = 15.sp)
-            Spacer(Modifier.height(8.dp))
-            TacoButton(
-                "Copy ADB command",
-                {
-                    onCopyAdb?.invoke()
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("adb", adbCmd))
-                },
-                Modifier.fillMaxWidth(),
-                ButtonKind.Ghost,
-                height = 42.dp
-            )
-        }
-
         Spacer(Modifier.height(14.dp))
         fixSteps.forEach { (name, steps) ->
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .background(TacoPalette.Surface)
-                    .border(1.dp, TacoPalette.Outline, RoundedCornerShape(14.dp))
+                Modifier.fillMaxWidth().clip(TacoShapes.control)
+                    .background(TacoPalette.Surface).border(1.dp, TacoPalette.Outline, TacoShapes.control)
                     .padding(14.dp)
             ) {
                 Text(name.uppercase(), style = TacoType.label, color = accent.neon)
                 Spacer(Modifier.height(4.dp))
                 Text(steps, fontSize = 13.sp, color = TacoPalette.Muted, lineHeight = 18.sp)
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
         }
-
-        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (!shizukuConnected) {
                 TacoButton("Grant Shizuku", onGrantShizuku, Modifier.weight(1f), ButtonKind.Ghost, TacoIcon.Bolt, 46.dp)
             }
-            TacoButton("Settings", onOpenShizukuGuide, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Sliders, 46.dp)
+            TacoButton("Setup guide", onOpenShizukuGuide, Modifier.weight(1f), ButtonKind.Quiet, TacoIcon.Globe, 46.dp)
         }
-        if (onToggleRoot != null) {
-            Spacer(Modifier.height(8.dp))
-            TacoButton(
-                if (useRoot) "Root is ON — open Settings to change" else "Prefer root? Open Settings",
-                onToggleRoot,
-                Modifier.fillMaxWidth(),
-                ButtonKind.Quiet,
-                height = 44.dp
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         TacoButton("Close", onDismiss, Modifier.fillMaxWidth(), ButtonKind.Quiet, height = 46.dp)
     }
 }
-
 
 @Composable
 fun ModeSelector(selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
@@ -1821,11 +1555,6 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
                     LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
-                    LedStatus(
-                        "Desync",
-                        if (state.desyncEnabled) "ON" else "OFF",
-                        if (state.desyncEnabled) TacoPalette.Guac else TacoPalette.Faint
-                    ),
                     LedStatus("VPN", state.vpnStatus,
                         when (state.vpnStatus) {
                             "active" -> TacoPalette.Guac
@@ -1838,207 +1567,116 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             )
         }
 
-        if (!state.shizuku.ok && !state.useRoot) {
-            Spacer(Modifier.height(10.dp))
-            Appear(0) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(TacoPalette.Salsa.copy(0.12f))
-                        .border(1.dp, TacoPalette.Salsa.copy(0.4f), RoundedCornerShape(14.dp))
-                        .clickable { showStatusSheet = true }
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(TacoPalette.Salsa))
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Helper offline", fontWeight = FontWeight.Bold, color = TacoPalette.Cream)
-                        Text("Tap to fix Shizuku / root — required to apply flags", fontSize = 12.sp, color = TacoPalette.Muted)
-                    }
-                    Text("FIX", fontWeight = FontWeight.Bold, color = TacoPalette.Salsa, fontSize = 13.sp)
-                }
-            }
-        }
-
         Spacer(Modifier.height(6.dp))
 
-
-        Spacer(Modifier.height(14.dp))
-
         Appear(1) {
-            Column {
-                Text("What's New", style = TacoType.display)
-                Text(
-                    "Roblox news & TacoStrap tips — flag inject lives on the Flags tab",
-                    fontSize = 12.sp,
-                    color = TacoPalette.Muted
-                )
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // Featured / hero card
-        Appear(1) {
-            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(accent.primary.copy(0.35f), TacoPalette.SurfaceHigh)
-                        )
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth(0.8f)) {
+                    ComalDial(
+                        heat = heat,
+                        launch = state.launchState,
+                        enabled = state.shizuku.ok || state.useRoot,
+                        onTrigger = {
+                            if (state.hapticsOn) hapticCrunch(context)
+                            state.runLaunch()
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    .border(1.dp, accent.neon.copy(0.35f), RoundedCornerShape(18.dp))
-                    .clickable { uriHandler.openUri("https://www.roblox.com/discover") }
-                    .padding(18.dp)
-            ) {
-                Text("FEATURED", style = TacoType.label, color = accent.neon)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Discover experiences on Roblox",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = TacoPalette.Cream
-                )
+                    SizzleParticles(
+                        active = state.launchState is LaunchState.Running,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    "Open Discover to see what's trending. Configure FastFlags on the Flags tab, then launch from Games.",
-                    fontSize = 13.sp,
-                    color = TacoPalette.Muted,
-                    lineHeight = 18.sp
+                ModeSelector(
+                    selected = state.mode.ordinal,
+                    onSelect = { state.mode = LaunchMode.entries[it] },
+                    modifier = Modifier.fillMaxWidth(0.8f)
                 )
-                Spacer(Modifier.height(12.dp))
-                Text("Open Discover →", fontWeight = FontWeight.Bold, color = accent.neon, fontSize = 13.sp)
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-
-        Appear(2) {
-            val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-            var news by remember { mutableStateOf<List<NewsItem>>(emptyList()) }
-            var newsLoading by remember { mutableStateOf(true) }
-            var newsError by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(Unit) {
-                newsLoading = true
-                newsError = null
-                val remote = runCatching { fetchRobloxNews(8) }.getOrElse { emptyList() }
-                if (remote.isEmpty()) {
-                    newsError = "Couldn’t reach Roblox blog — showing tips"
-                    news = listOf(
-                        NewsItem("Inject flags on the Flags tab", "", "Edit flags, turn on Desync if you want it, then tap Inject flags."),
-                        NewsItem("Helper offline?", "", "Tap the status strip to fix Shizuku or root before injecting."),
-                        NewsItem("Roblox Blog", "https://blog.roblox.com", "Official product and community updates."),
-                        NewsItem("Creator Hub", "https://create.roblox.com/docs", "Docs and release notes for developers."),
-                        NewsItem("Platform status", "https://status.roblox.com", "Check if Roblox services are degraded.")
-                    )
-                } else {
-                    news = remote
-                }
-                newsLoading = false
-            }
-            Text("News", style = TacoType.label, color = accent.neon)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (newsLoading) "Loading Roblox blog…"
-                else if (newsError != null) newsError!!
-                else "Live from blog.roblox.com",
-                fontSize = 12.sp,
-                color = TacoPalette.Muted
-            )
-            Spacer(Modifier.height(8.dp))
-            if (newsLoading) {
-                repeat(3) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(72.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(TacoPalette.SurfaceHigh)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-            } else {
-                news.forEach { item ->
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(TacoPalette.SurfaceHigh.copy(0.9f))
-                            .border(1.dp, TacoPalette.Outline.copy(0.5f), RoundedCornerShape(14.dp))
-                            .then(
-                                if (item.link.isNotBlank()) Modifier.clickable { uriHandler.openUri(item.link) }
-                                else Modifier
-                            )
-                            .padding(14.dp)
-                    ) {
-                        Text(item.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = TacoPalette.Cream)
-                        if (item.summary.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(item.summary, fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 17.sp)
-                        }
-                        if (item.link.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text("Open →", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = accent.neon)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                }
+        if (state.launchState !is LaunchState.Idle) {
+            Spacer(Modifier.height(18.dp))
+            Appear(2) {
+                PipelineTimeline(
+                    launch = state.launchState,
+                    onCancel = { state.cancelLaunch() },
+                    onRetry = { state.retryLaunch() }
+                )
             }
         }
+
+        Spacer(Modifier.height(20.dp))
 
         Appear(3) {
-            // Shortcuts only — no inject / no dial on Home
-            Text("Shortcuts", style = TacoType.label, color = accent.neon)
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TacoButton(
-                    "Flags",
-                    { onNavigate("flags") },
-                    Modifier.weight(1f),
-                    ButtonKind.Primary,
-                    TacoIcon.Flag,
-                    48.dp
+            OrderTicket(cardCorner = state.cardCornerRadius, glassOpacity = state.glassOpacity) {
+                Text("THE ORDER", style = TacoType.label, color = accent.neon)
+                Spacer(Modifier.height(6.dp))
+                DashedDivider()
+                TicketLine(
+                    "Roblox",
+                    value = state.robloxVersion ?: "detecting…",
+                    sub = "tap to copy",
+                    onClick = {
+                        state.robloxVersion?.let {
+                            state.copyText("Roblox version", it)
+                            state.notify("Version copied.")
+                        }
+                    }
                 )
-                TacoButton(
-                    "Games",
-                    { onNavigate("games") },
-                    Modifier.weight(1f),
-                    ButtonKind.Ghost,
-                    TacoIcon.Gamepad,
-                    48.dp
+                TicketLine("Channel", state.channel, onClick = { showChannelDialog = true })
+                TicketLine("Profile", state.activeLayerName(), onClick = { onNavigate("profiles") }, sub = "tap to quick-switch")
+                TicketLine("Flags", "${merged.size} active", onClick = { onNavigate("flags") })
+                TicketLine(
+                    "Allowlist",
+                    "$allowed of ${merged.size} allowed",
+                    valueColor = TacoPalette.Guac,
+                    onClick = { showAllowlistDialog = true }
                 )
+                TicketLine("Target", state.targetLabel(), onClick = { showTargetDialog = true })
+                DashedDivider()
+                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("tacostrap · hold-to-launch armed", style = TacoType.label)
+                    if (state.launchState is LaunchState.Success) {
+                        Text("SERVED ✓", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Guac)
+                    }
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TacoButton(
-                    "Profiles",
-                    { onNavigate("profiles") },
-                    Modifier.weight(1f),
-                    ButtonKind.Quiet,
-                    height = 44.dp
-                )
-                TacoButton(
-                    "Settings",
-                    { onNavigate("settings") },
-                    Modifier.weight(1f),
-                    ButtonKind.Quiet,
-                    height = 44.dp
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "${merged.size} flags in draft · inject only from Flags",
-                fontSize = 12.sp,
-                color = TacoPalette.Muted
-            )
         }
 
+        Spacer(Modifier.height(22.dp))
 
+        Appear(4) {
+            Column {
+                SectionLabel("The menu")
+                Spacer(Modifier.height(10.dp))
+                if (state.games.isEmpty()) {
+                    Column(
+                        Modifier.fillMaxWidth().clip(FoldedSheetShape())
+                            .border(1.dp, TacoPalette.Outline, FoldedSheetShape())
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        TacoIcon(TacoIcon.Gamepad, TacoPalette.Faint, 28.dp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Nothing on the menu yet", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TacoPalette.Muted)
+                        Spacer(Modifier.height(10.dp))
+                        TacoButton("Add a game", { onNavigate("games") }, kind = ButtonKind.Ghost, icon = TacoIcon.Plus, height = 40.dp)
+                    }
+                } else {
+                    MenuCarousel(
+                        games = state.games.entries.map { it.key to it.value.placeId },
+                        onPick = { name -> state.targetGame = name; state.notify("Target: $name") },
+                        onLongLaunch = { id ->
+                            if (state.hapticsOn) hapticTick(context)
+                            state.launchGameById(id)
+                        },
+                        onAddGame = { onNavigate("games") }
+                    )
+                }
+            }
+        }
     }
 
     if (showStatusSheet) {
@@ -2051,23 +1689,18 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             StatusSheetContent(
                 statuses = listOf(
                     Triple("Shizuku", state.shizuku.long, state.shizuku.color),
-                    Triple("Root", if (state.useRoot) "in use" else if (state.rootAvailable == true) "available (optional)" else "not found — optional", if (state.useRoot) TacoPalette.Guac else TacoPalette.Muted),
+                    Triple("Root", if (state.rootAvailable == true) "available (optional)" else "not found — optional", TacoPalette.Muted),
                     Triple("Roblox", state.robloxVersion ?: "not detected", if (state.robloxVersion == null) TacoPalette.Salsa else TacoPalette.Guac)
                 ),
                 fixSteps = listOf(
-                    "Shizuku" to "1. Install & start Shizuku (wireless debugging or root start).\n2. Tap Grant Shizuku below.\n3. Status LED turns green — you’re done.",
-                    "Root" to "Optional. Enable Magisk/SU, turn on “Use root” in Settings. Survives reboot. No root? Stay on Shizuku.",
-                    "Roblox" to "If version shows “not detected”, check package name in Settings (com.roblox.client)."
+                    "Shizuku" to "1. Start Shizuku (wireless debugging or root start).\n2. Tap Grant below.\n3. LED turns green.",
+                    "Root" to "Optional. Enable Magisk/SU, then turn on “Use root” in Settings. No root? Use Shizuku instead.",
+                    "Roblox" to "Confirm the package name in Settings if the version shows “not detected”."
                 ),
                 shizukuConnected = state.shizuku.ok,
                 onGrantShizuku = { state.requestShizukuPermission() },
                 onOpenShizukuGuide = { showStatusSheet = false; onNavigate("settings") },
-                onDismiss = { showStatusSheet = false },
-                desyncEnabled = state.desyncEnabled,
-                vpnStatus = state.vpnStatus,
-                useRoot = state.useRoot,
-                onCopyAdb = { state.notify("ADB command copied.") },
-                onToggleRoot = { showStatusSheet = false; onNavigate("settings") }
+                onDismiss = { showStatusSheet = false }
             )
         }
     }
@@ -2307,7 +1940,7 @@ fun FlagsScreen(state: TacoState) {
                             Text("pending changes", fontSize = 13.sp, color = TacoPalette.Muted, modifier = Modifier.weight(1f))
                             TacoButton("Discard", { state.discardDraft() }, kind = ButtonKind.Quiet, height = 34.dp)
                             Spacer(Modifier.width(6.dp))
-                            TacoButton("Inject flags", { state.applyDraft() }, kind = ButtonKind.Primary, icon = TacoIcon.Bolt, height = 34.dp)
+                            TacoButton("Apply", { state.applyDraft() }, kind = ButtonKind.Primary, icon = TacoIcon.Bolt, height = 34.dp)
                         }
                         Spacer(Modifier.height(10.dp))
                     }
@@ -2346,27 +1979,6 @@ fun FlagsScreen(state: TacoState) {
             visible.forEach { (title, list) ->
                 val rows = list.filter { it.matches(search) }
                 if (rows.isNotEmpty()) {
-
-        item(key = "desync_card") {
-            GlassCard {
-                SectionHeader("Desync", "WorldStepMax — frozen replica for others")
-                ToggleRow(
-                    title = "Desync animation",
-                    subtitle = if (state.desyncEnabled) "ON — others see you frozen" else "OFF — normal network sync",
-                    checked = state.desyncEnabled,
-                    onToggle = {
-                        state.desyncEnabled = !state.desyncEnabled
-                        state.persist()
-                        state.syncVpnFlagsIfActive()
-                        state.notify(
-                            if (state.desyncEnabled) "Desync ON — sync to VPN if active, Inject to write disk" else "Desync OFF",
-                            "flag"
-                        )
-                    }
-                )
-            }
-        }
-
                     item(key = "sec_$title") { SectionLabel(title) }
                     items(rows, key = { "fs_${it.title}" }) { fs -> FlagSettingRow(fs, draft, state) }
                 }
@@ -3759,29 +3371,14 @@ class TacoState(
         savedFlags = draftFlags.toMap()
         syncBase()
         persist()
-        // Disk write lives here — Flags section owns apply, not Home
-        scope.launch {
-            val sh = engine.shizukuState()
-            if (!sh.ok && !useRoot) {
-                notify("Flags saved locally. Helper offline — open Home status to grant Shizuku/root, then Apply again.", "flag")
-                return@launch
-            }
-            val merged = mergedFlags().toMutableMap()
-            if (desyncEnabled) DesyncInjector.ensureInMap(merged)
-            else DesyncInjector.removeFromMap(merged)
-            val msg = engine.applyFlags(toJson(merged), path, pkg, fpsCap, useRoot)
-            notify(msg, "flag")
-            if (vpnBypass && appContext != null && !msg.startsWith("Failed")) {
-                FlagVpnService.updateFlags(appContext!!, toJson(merged))
-            }
-        }
+        notify("Flags saved.", "flag")
     }
 
     fun moveLayer(from: Int, to: Int) {
-        if (from !in layers.indices || to !in layers.indices || from == 0 || to == 0) return
-        val item = layers.removeAt(from)
-        layers.add(if (to > from) to - 1 else to, item)
-        persist()
+        if (from in layers.indices && to in layers.indices && from != 0 && to != 0) {
+            layers.add(to, layers.removeAt(from))
+            persist()
+        }
     }
 
     fun setLayerEnabled(id: String, enabled: Boolean) {
@@ -3893,11 +3490,15 @@ class TacoState(
             if (!sh.ok && !useRoot) {
                 notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
             }
-            if (vpnBypass && vpnStatus != "active") {
-                notify("Failed: VPN bypass on but not active — grant VPN, Inject flags, then launch.", "launch")
-                return@launch
+            if (applyOnSave) {
+                val r = engine.applyFlags(run {
+                val m = mergedFlags(g?.profile).toMutableMap()
+                if (desyncEnabled) DesyncInjector.ensureInMap(m)
+                else DesyncInjector.removeFromMap(m)
+                toJson(m)
+            }, path, pkg, fpsCap, useRoot)
+                if (r.startsWith("Failed")) { notify(r); return@launch }
             }
-            // Apply is owned by Flags tab — this path only launches
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
             notify(launchMsg, "launch")
         }
@@ -3913,10 +3514,10 @@ class TacoState(
         val m = mode
         val steps = mutableListOf<LaunchStep>()
         steps += LaunchStep("Check Shizuku")
-        // Flags section owns Apply — Home only verifies / launches
+        if (m != LaunchMode.VERIFY) steps += LaunchStep("Apply ${merged.size} flags")
         steps += LaunchStep("Verify")
         if (vpnBypass) steps += LaunchStep("VPN bypass")
-        if (m != LaunchMode.VERIFY) steps += LaunchStep("Launch Roblox")
+        if (m == LaunchMode.SAVE_LAUNCH) steps += LaunchStep("Launch Roblox")
         val vIdx = steps.indexOfFirst { it.title == "Verify" }
         launchState = LaunchState.Running(steps.toList(), 0)
 
@@ -3937,59 +3538,48 @@ class TacoState(
                 }
                 push(0, StepStatus.Done, if (useRoot) "via root" else "connected")
 
-                // Apply is done from Flags → Inject. Home only verifies what's on disk.
+                if (m != LaunchMode.VERIFY) {
+                    if (applyOnSave) {
+                        val msg = engine.applyFlags(toJson(merged), path, pkg, fpsCap, useRoot)
+                        if (msg.startsWith("Failed")) {
+                            steps[1] = steps[1].copy(status = StepStatus.Failed, detail = msg)
+                            fail(1, msg); return@job
+                        }
+                        push(1, StepStatus.Done, msg)
+                    } else {
+                        push(1, StepStatus.Skipped, "write-on-apply disabled in Settings")
+                    }
+                }
+
                 val vmsg = engine.verify(toJson(merged), path, useRoot)
                 if (vmsg.startsWith("Verify failed")) {
-                    val hint = if (vmsg.contains("cannot read", ignoreCase = true))
-                        "Verify failed: no flag file on disk — open Flags and tap Inject flags first."
-                    else vmsg
-                    steps[vIdx] = steps[vIdx].copy(status = StepStatus.Failed, detail = hint)
-                    fail(vIdx, hint); return@job
+                    steps[vIdx] = steps[vIdx].copy(status = StepStatus.Failed, detail = vmsg)
+                    fail(vIdx, vmsg); return@job
                 }
                 push(vIdx, StepStatus.Done, vmsg)
 
-                // VPN bypass step — only claim live when service is already active
+                // VPN bypass step — inject flags via CDN interception
                 if (vpnBypass) {
                     val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
                     if (vpnIdx >= 0) {
+                        push(vpnIdx, StepStatus.Running, "updating CDN interceptor…")
                         val ctx = appContext
-                        when {
-                            ctx == null ->
-                                push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
-                            vpnStatus == "active" -> {
-                                FlagVpnService.updateFlags(ctx, toJson(merged))
-                                push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags")
+                        if (ctx != null) {
+                            // Make sure the service is running before updating flags
+                            if (vpnStatus != "active") {
+                                startVpnBypass(ctx)
                             }
-                            else -> {
-                                // Kick off permission / start; do not lie that intercept is live
-                                runCatching { startVpnBypass(ctx) }
-                                    .onFailure {
-                                        push(vpnIdx, StepStatus.Skipped, "VPN start error: ${it.message}")
-                                        return@job
-                                    }
-                                push(
-                                    vpnIdx,
-                                    StepStatus.Skipped,
-                                    "VPN not active yet — grant permission if prompted, then Inject flags again"
-                                )
-                            }
+                            FlagVpnService.updateFlags(ctx, toJson(merged))
+                            push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
+                        } else {
+                            push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
                         }
                     }
                 }
 
                 val finalMsg: String
-                if (m != LaunchMode.VERIFY) {
-                    val lIdx = steps.indexOfFirst { it.title == "Launch Roblox" }.let { if (it < 0) steps.lastIndex else it }
-                    // First-launch race: don't open Roblox before VPN is actually active
-                    if (vpnBypass && vpnStatus != "active") {
-                        push(lIdx, StepStatus.Skipped, "VPN permission pending — grant, then launch again")
-                        launchState = LaunchState.Success(
-                            "VPN pending — grant permission (or Inject with VPN active), then launch again.",
-                            steps.toList()
-                        )
-                        notify("Failed: VPN not active yet — grant permission, then launch again.", "launch")
-                        return@job
-                    }
+                if (m == LaunchMode.SAVE_LAUNCH) {
+                    val lIdx = steps.lastIndex
                     val msg = if (target != null) engine.launchGame(pkg, target.placeId, useRoot, restart)
                     else engine.launchRoblox(pkg, useRoot, restart)
                     if (msg.startsWith("Failed")) {
@@ -3999,7 +3589,7 @@ class TacoState(
                     push(lIdx, StepStatus.Done, msg)
                     finalMsg = if (target != null) "Launched $targetGame." else "Roblox is served."
                 } else {
-                    finalMsg = "Verification complete — apply flags from the Flags tab."
+                    finalMsg = if (m == LaunchMode.VERIFY) "Verification complete." else "Flags applied and verified."
                 }
                 launchState = LaunchState.Success(finalMsg, steps.toList())
                 notify(finalMsg, "launch")
@@ -4144,19 +3734,6 @@ class TacoState(
             .apply()
     }
 
-
-    /** Start FlagVpnService without requiring startFlagVpnService (works with older service class). */
-    private fun startFlagVpnService(context: Context, flagsJson: String): Boolean =
-        runCatching {
-            val i = FlagVpnService.buildDirectIntent(context, flagsJson)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(i)
-            } else {
-                context.startService(i)
-            }
-            true
-        }.getOrDefault(false)
-
     fun startVpnBypass(context: Context) {
         // ADD THIS CHECK
         if (!shizuku.ok && !useRoot) {
@@ -4179,31 +3756,10 @@ class TacoState(
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            val started = runCatching { startFlagVpnService(context, flags) }.getOrDefault(false)
-            if (started) {
-                vpnStatus = "active"
-                notify("VPN bypass active — CDN interception live.", "other")
-            } else {
-                vpnStatus = "error"
-                vpnBypass = false
-                persist()
-                notify("VPN start failed — check FOREGROUND_SERVICE permission.", "other")
-            }
+            context.startService(FlagVpnService.buildDirectIntent(context, flags))
+            vpnStatus = "active"
+            notify("VPN bypass active — CDN interception live.", "other")
         }
-    }
-
-    /** Push current merged flags to MitmProxy when the channel is already up. */
-    fun syncVpnFlagsIfActive() {
-        if (!vpnBypass || vpnStatus != "active") return
-        val ctx = appContext ?: return
-        val m = mergedFlags().toMutableMap()
-        if (desyncEnabled) DesyncInjector.ensureInMap(m)
-        else DesyncInjector.removeFromMap(m)
-        runCatching { FlagVpnService.updateFlags(ctx, toJson(m)) }
-            .onFailure {
-                vpnStatus = "error"
-                notify("VPN update failed: ${it.message ?: "service dead"}", "other")
-            }
     }
 
     fun stopVpnBypass(context: Context) {
@@ -4222,17 +3778,10 @@ class TacoState(
             else DesyncInjector.removeFromMap(m)
             toJson(m)
         }
-        val started = runCatching { startFlagVpnService(context, flags) }.getOrDefault(false)
-        if (started) {
-            vpnStatus = "active"
-            notify("VPN bypass active — CDN interception live.", "other")
-        } else {
-            vpnStatus = "error"
-            vpnBypass = false
-            persist()
-            notify("VPN start failed — check FOREGROUND_SERVICE permission.", "other")
-        }
+        context.startService(FlagVpnService.buildDirectIntent(context, flags))
+        vpnStatus = "active"
         _pendingVpnIntent = null
+        notify("VPN bypass active — CDN interception live.", "other")
     }
 
     fun onVpnPermissionDenied() {
@@ -4286,10 +3835,6 @@ class MainActivity : ComponentActivity() {
 
         vpnPermLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val state = (application as? TacoApplication)?.tacoState
-                ?: (applicationContext as? TacoApplication)?.tacoState
-            if (state == null) {
-                android.util.Log.e("TacoStrap", "VPN result dropped: TacoApplication.tacoState is null — set android:name=.TacoApplication in manifest")
-            }
             if (result.resultCode == RESULT_OK) {
                 state?.onVpnPermissionGranted(this)
             } else {
@@ -4341,14 +3886,12 @@ fun TacoRoot() {
     }
     
     // Auto-restart VPN bypass ONLY WHEN Shizuku is actually connected
-    LaunchedEffect(state.shizuku, state.vpnBypass, state.vpnStatus) {
-        if (state.shizuku.ok && state.vpnBypass &&
-            (state.vpnStatus == "off" || state.vpnStatus == "error")
-        ) {
+    LaunchedEffect(state.shizuku, state.vpnBypass) {
+        if (state.shizuku.ok && state.vpnBypass && state.vpnStatus != "active") {
             state.startVpnBypass(context)
         }
     }
-    LaunchedEffect(state) { state.refreshLoop() }
+    LaunchedEffect(Unit) { state.refreshLoop() }
 
     TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx, state.appearancePreset.coerceIn(0, 4)) {
         var currentRoute by rememberSaveable { mutableStateOf("home") }
@@ -4373,7 +3916,7 @@ fun TacoRoot() {
                 Crossfade(
                     targetState = currentRoute,
                     modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 86.dp),
-                    animationSpec = if (state.reduceMotion) tween(0) else tween(200),
+                    animationSpec = tween(200),
                     label = "nav"
                 ) { r ->
                     when (r) {
@@ -4426,7 +3969,7 @@ fun TacoRoot() {
 
                 SnackbarHost(
                     hostState = snackbar,
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 140.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp)
                 ) { d ->
                     Snackbar(
                         d, shape = RoundedCornerShape(18.dp),
