@@ -64,6 +64,7 @@ class FlagVpnService : VpnService() {
     private var tunnelJob : Job? = null
     private var tunFd    : ParcelFileDescriptor? = null
     private var vpnOutput : FileOutputStream? = null
+    private var isRunning = true
 
     private val tcpConnections = ConcurrentHashMap<String, TcpState>()
 
@@ -129,7 +130,7 @@ class FlagVpnService : VpnService() {
 
         cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
 
-        // CRITICAL FIX: Allow both Roblox and our own app to bypass the TUN loop
+        // Critical: Allow BOTH Roblox and our own app to bypass the TUN loop
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
         runCatching { builder.addAllowedApplication(packageName) }
 
@@ -150,7 +151,7 @@ class FlagVpnService : VpnService() {
 
         thread(name = "TunLoop", isDaemon = true) {
             val buffer = ByteArray(65535)
-            while (tunFd != null) {
+            while (isRunning && tunFd != null) {
                 try {
                     val length = input.read(buffer)
                     if (length > 0) {
@@ -292,6 +293,7 @@ class FlagVpnService : VpnService() {
     }
 
     private fun teardown() {
+        isRunning = false
         tunnelJob?.cancel()
         runCatching { tunFd?.close() }
         tunFd = null
