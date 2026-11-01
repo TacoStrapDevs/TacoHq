@@ -33,25 +33,23 @@ import javax.net.ssl.X509TrustManager
 // build.gradle: implementation("org.bouncycastle:bcprov-jdk15on:1.70")
 object CertManager {
 
-    private const val TAG = "CertManager"
-    private const val CERT_FILE = "mitm_ca.pem"
-    private const val KEY_FILE = "mitm_ca.key"
-    private const val KEY_SIZE = 2048
-    private const val CERT_ALIAS = "mitm_ca"
+    private const val TAG         = "CertManager"
+    private const val CERT_FILE   = "mitm_ca.pem"
+    private const val KEY_FILE    = "mitm_ca.key"
+    private const val KEY_SIZE    = 2048
+    private const val CERT_ALIAS  = "mitm_ca"
     private const val VALIDITY_MS = 10L * 365 * 24 * 60 * 60 * 1000
 
-    @Volatile private var cachedPem: String? = null
-    @Volatile private var cachedKeyPair: KeyPair? = null
-    @Volatile private var cachedCert: X509Certificate? = null
-    @Volatile private var cachedFactory: SSLSocketFactory? = null
-    @Volatile private var cachedServer: SSLServerSocketFactory? = null
+    @Volatile private var cachedPem    : String?                 = null
+    @Volatile private var cachedKeyPair: KeyPair?                = null
+    @Volatile private var cachedCert   : X509Certificate?        = null
+    @Volatile private var cachedFactory: SSLSocketFactory?       = null
+    @Volatile private var cachedServer : SSLServerSocketFactory? = null
 
     fun getOrCreateCaPem(context: Context): String? {
         cachedPem?.let { return it }
-        return runCatching {
-            loadOrGenerate(context)
-            cachedPem
-        }.onFailure { Log.e(TAG, "getOrCreateCaPem: ${it.message}") }
+        return runCatching { loadOrGenerate(context); cachedPem }
+            .onFailure { Log.e(TAG, "getOrCreateCaPem: ${it.message}") }
             .getOrNull()
     }
 
@@ -68,26 +66,21 @@ object CertManager {
         return ctx.socketFactory.also { cachedFactory = it }
     }
 
-    /**
-     * Server socket factory presenting our CA for inbound TLS (Roblox → proxy).
-     * Returns null if CA generation/load fails — MitmProxy then runs HTTP-only.
-     */
+    /** Server socket factory presenting our CA for inbound TLS (Roblox → proxy). */
     fun getServerSocketFactory(context: Context): SSLServerSocketFactory? {
         cachedServer?.let { return it }
         return runCatching {
             loadOrGenerate(context)
-            val kp = cachedKeyPair ?: return@runCatching null
-            val cert = cachedCert ?: return@runCatching null
             val ks = KeyStore.getInstance("PKCS12")
             ks.load(null, null)
-            ks.setKeyEntry(CERT_ALIAS, kp.private, CharArray(0), arrayOf(cert))
+            ks.setKeyEntry(CERT_ALIAS, cachedKeyPair!!.private, "".toCharArray(), arrayOf(cachedCert!!))
             val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-            kmf.init(ks, CharArray(0))
+            kmf.init(ks, "".toCharArray())
             val ctx = SSLContext.getInstance("TLS")
             ctx.init(kmf.keyManagers, null, SecureRandom())
             ctx.serverSocketFactory.also { cachedServer = it }
         }.onFailure { Log.e(TAG, "getServerSocketFactory: ${it.message}") }
-            .getOrNull()
+         .getOrNull()
     }
 
     /**
@@ -96,10 +89,10 @@ object CertManager {
      * Required for HTTPS interception on Android 7+ without root.
      */
     fun promptInstall(context: Context) {
-        val pem = getOrCreateCaPem(context) ?: return
+        val pem  = getOrCreateCaPem(context) ?: return
         val file = File(context.cacheDir, "flagmanager_ca.crt")
         file.writeText(pem)
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+        val uri  = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
         context.startActivity(
             Intent(Intent.ACTION_VIEW)
                 .setDataAndType(uri, "application/x-x509-ca-cert")
@@ -110,11 +103,8 @@ object CertManager {
     fun clearCert(context: Context) {
         File(context.filesDir, CERT_FILE).delete()
         File(context.filesDir, KEY_FILE).delete()
-        cachedPem = null
-        cachedKeyPair = null
-        cachedCert = null
-        cachedFactory = null
-        cachedServer = null
+        cachedPem = null; cachedKeyPair = null; cachedCert = null
+        cachedFactory = null; cachedServer = null
     }
 
     // ── internal ──────────────────────────────────────────────────────────────
@@ -122,7 +112,7 @@ object CertManager {
     private fun loadOrGenerate(context: Context) {
         if (cachedCert != null && cachedKeyPair != null) return
         val certFile = File(context.filesDir, CERT_FILE)
-        val keyFile = File(context.filesDir, KEY_FILE)
+        val keyFile  = File(context.filesDir, KEY_FILE)
         if (certFile.exists() && keyFile.exists()) loadFromDisk(certFile, keyFile)
         else generate(certFile, keyFile)
     }
@@ -130,18 +120,18 @@ object CertManager {
     private fun generate(certFile: File, keyFile: File) {
         val kpg = KeyPairGenerator.getInstance("RSA")
         kpg.initialize(KEY_SIZE, SecureRandom())
-        val kp = kpg.generateKeyPair()
-        val now = Date()
+        val kp     = kpg.generateKeyPair()
+        val now    = Date()
         val expiry = Date(now.time + VALIDITY_MS)
         val serial = BigInteger(64, SecureRandom())
-        val name = X500Name("CN=FlagManager CA, O=FlagManager, C=US")
+        val name   = X500Name("CN=FlagManager CA, O=FlagManager, C=US")
 
         val cb = JcaX509v3CertificateBuilder(name, serial, now, expiry, name, kp.public)
         cb.addExtension(Extension.basicConstraints, true, BasicConstraints(true))
         cb.addExtension(Extension.keyUsage, true, KeyUsage(KeyUsage.keyCertSign or KeyUsage.cRLSign))
 
         val signer = JcaContentSignerBuilder("SHA256WithRSAEncryption").build(kp.private)
-        val cert = JcaX509CertificateConverter().getCertificate(cb.build(signer))
+        val cert   = JcaX509CertificateConverter().getCertificate(cb.build(signer))
 
         val pemStr = "-----BEGIN CERTIFICATE-----\n" +
             Base64.encodeToString(cert.encoded, Base64.DEFAULT) +
@@ -152,29 +142,27 @@ object CertManager {
 
         certFile.writeText(pemStr)
         keyFile.writeText(keyPem)
-        cachedKeyPair = kp
-        cachedCert = cert
-        cachedPem = pemStr
+        cachedKeyPair = kp; cachedCert = cert; cachedPem = pemStr
         Log.d(TAG, "CA generated serial=$serial")
     }
 
     private fun loadFromDisk(certFile: File, keyFile: File) {
-        val pem = certFile.readText()
+        val pem    = certFile.readText()
         val keyPem = keyFile.readText()
 
         fun strip(s: String, h: String, f: String) =
             Base64.decode(s.replace(h, "").replace(f, "").replace("\n", ""), Base64.DEFAULT)
 
         val certBytes = strip(pem, "-----BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----")
-        val keyBytes = strip(keyPem, "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----")
+        val keyBytes  = strip(keyPem, "-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----")
 
         val cert = java.security.cert.CertificateFactory.getInstance("X.509")
             .generateCertificate(certBytes.inputStream()) as X509Certificate
-        val key = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+        val key  = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyBytes))
 
         cachedKeyPair = KeyPair(cert.publicKey, key)
-        cachedCert = cert
-        cachedPem = pem
+        cachedCert    = cert
+        cachedPem     = pem
         Log.d(TAG, "CA loaded from disk")
     }
 }
