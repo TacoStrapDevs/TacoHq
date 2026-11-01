@@ -129,6 +129,7 @@ class FlagVpnService : VpnService() {
 
         cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
 
+        // CRITICAL FIX: Allow both Roblox and our own app to bypass the TUN loop
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
         runCatching { builder.addAllowedApplication(packageName) }
 
