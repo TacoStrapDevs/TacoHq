@@ -13,7 +13,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
+/**
+ * Foreground service hosting MitmProxy. NO TUN — nothing is routed,
+ * nothing can blackhole. The bypass transport is the system HTTP proxy
+ * + a user-installed MITM CA (both rootless).
+ */
 class FlagVpnService : VpnService() {
 
     companion object {
@@ -23,20 +29,39 @@ class FlagVpnService : VpnService() {
         private const val EXTRA_FLAGS = "extra_flags_json"
         private const val ACTION_UPDATE = "com.example.flagmanager.ACTION_UPDATE_FLAGS"
         private const val ACTION_STOP = "com.example.flagmanager.ACTION_STOP"
-        const val PROXY_PORT = 8899
 
-        fun buildStartIntent(context: Context, flagsJson: String): Intent? = prepare(context)
+        @Volatile var isActive = false
+            private set
 
         fun buildDirectIntent(context: Context, flagsJson: String): Intent =
             Intent(context, FlagVpnService::class.java).putExtra(EXTRA_FLAGS, flagsJson)
 
         fun updateFlags(context: Context, flagsJson: String) {
-            context.startService(
-                Intent(context, FlagVpnService::class.java)
-                    .setAction(ACTION_UPDATE)
-                    .putExtra(EXTRA_FLAGS, flagsJson)
-            )
+            val i = Intent(context, FlagVpnService::class.java)
+                .setAction(ACTION_UPDATE)
+                .putExtra(EXTRA_FLAGS, flagsJson)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(i)
+                } else {
+                    context.startService(i)
+                }
+            }.onFailure { Log.e(TAG, "updateFlags failed: ${it.message}") }
         }
+
+        fun startSafely(context: Context, flagsJson: String): Boolean =
+            runCatching {
+                val i = buildDirectIntent(context, flagsJson)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(i)
+                } else {
+                    context.startService(i)
+                }
+                true
+            }.getOrElse {
+                Log.e(TAG, "startSafely failed: ${it.message}")
+                false
+            }
     }
 
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -50,95 +75,138 @@ class FlagVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_UPDATE -> {
-                val json = intent.getStringExtra(EXTRA_FLAGS) ?: "{}"
-                MitmProxy.updateFlags(json)
-                Log.d(TAG, "flags updated live")
+                MitmProxy.updateFlags(intent.getStringExtra(EXTRA_FLAGS) ?: "{}")
                 return START_STICKY
             }
         }
-
         val flagsJson = intent?.getStringExtra(EXTRA_FLAGS) ?: "{}"
         postNotification()
 
-        // 1. Start the local proxy
-        proxyJob = scope.launch {
-            try {
-                MitmProxy.start(flagsJson, PROXY_PORT, applicationContext)
-            } catch (e: Exception) {
-                Log.e(TAG, "proxy start error: ${e.message}")
-            }
+        if (proxyJob == null || !MitmProxy.isRunning()) {
+            proxyJob = scope.launch { startPipeline(flagsJson) }
+        } else {
+            MitmProxy.updateFlags(flagsJson)
         }
-
-        // 2. Redirect Roblox's CDN traffic using Shizuku
-        scope.launch { setupShizukuRedirect() }
-
-        Log.d(TAG, "service started, proxy on :$PROXY_PORT")
         return START_STICKY
     }
 
-    private fun setupShizukuRedirect() {
-        val hosts = listOf(
-            "clientsettingscdn.roblox.com",
-            "clientsettings.roblox.com"
-        )
-        
-        // Flush old rules to prevent stacking
-        runShizuku("iptables -t nat -F OUTPUT")
-
-        // CRITICAL FIX: Bypass the loop for our own app
-        val appUid = applicationInfo.uid
-        runShizuku("iptables -t nat -A OUTPUT -m owner --uid-owner $appUid -j RETURN")
-
-        // Add redirect rules for port 80 (HTTP) to the proxy
-        for (host in hosts) {
-            val cmd = "iptables -t nat -A OUTPUT -p tcp -d $host --dport 80 -j REDIRECT --to-ports $PROXY_PORT"
-            runShizuku(cmd)
-            Log.i(TAG, "Redirected $host to proxy")
+    private suspend fun startPipeline(flagsJson: String) = withContext(Dispatchers.IO) {
+        MitmProxy.start(flagsJson, applicationContext)
+        MitmProxy.vpnService = this@FlagVpnService
+        if (!MitmProxy.isRunning()) {
+            Log.e(TAG, "proxy failed to bind")
+            stopSelf()
+            return@withContext
         }
+        Log.d(TAG, "MitmProxy listening on 127.0.0.1:${MitmProxy.PROXY_PORT_HTTP}")
+
+        val ok = trySetProxy("127.0.0.1", MitmProxy.PROXY_PORT_HTTP)
+        if (!ok) {
+            Log.w(TAG, "system proxy not set — grant WRITE_SECURE_SETTINGS or run Shizuku")
+        } else {
+            Log.d(TAG, "system http_proxy = 127.0.0.1:${MitmProxy.PROXY_PORT_HTTP}")
+        }
+        isActive = true
     }
 
-    private fun runShizuku(cmd: String) {
-        try {
-            // Execute via Shizuku shell instead of Runtime.exec
-            val m = rikka.shizuku.Shizuku::class.java.getDeclaredMethod(
-                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+    private fun trySetProxy(host: String, port: Int): Boolean {
+        val shizukuOk = runCatching {
+            val cmdClass = Class.forName("rikka.shizuku.Shizuku")
+            val ping = cmdClass.getMethod("pingBinder").invoke(null) as Boolean
+            if (!ping) return@runCatching false
+            val perm = cmdClass.getMethod("checkSelfPermission").invoke(null) as Int
+            perm == 0
+        }.getOrDefault(false)
+
+        if (shizukuOk) {
+            val ok = runCatching {
+                val newProcess = Class.forName("rikka.shizuku.Shizuku")
+                    .getDeclaredMethod(
+                        "newProcess",
+                        Array<String>::class.java,
+                        Array<String>::class.java,
+                        String::class.java
+                    ).apply { isAccessible = true }
+                val p = newProcess.invoke(
+                    null,
+                    arrayOf("sh", "-c", "settings put global http_proxy $host:$port"),
+                    null,
+                    null
+                ) as Process
+                p.waitFor() == 0
+            }.getOrDefault(false)
+            if (ok) return true
+        }
+
+        val direct = runCatching {
+            Runtime.getRuntime()
+                .exec(arrayOf("sh", "-c", "settings put global http_proxy $host:$port"))
+                .waitFor() == 0
+        }.getOrDefault(false)
+        if (direct) return true
+
+        return runCatching {
+            Runtime.getRuntime()
+                .exec(arrayOf("su", "-c", "settings put global http_proxy $host:$port"))
+                .waitFor() == 0
+        }.getOrDefault(false)
+    }
+
+    private fun clearProxy() {
+        runCatching {
+            val newProcess = Class.forName("rikka.shizuku.Shizuku")
+                .getDeclaredMethod(
+                    "newProcess",
+                    Array<String>::class.java,
+                    Array<String>::class.java,
+                    String::class.java
+                ).apply { isAccessible = true }
+            newProcess.invoke(
+                null,
+                arrayOf("sh", "-c", "settings put global http_proxy :0"),
+                null,
+                null
             )
-            m.isAccessible = true
-            val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-            p.waitFor()
-            Log.i(TAG, "Shizuku cmd executed: $cmd")
-        } catch (e: Exception) {
-            Log.e(TAG, "Shizuku cmd failed: ${e.message}")
+        }
+        runCatching {
+            Runtime.getRuntime().exec(arrayOf("sh", "-c", "settings put global http_proxy :0")).waitFor()
+        }
+        runCatching {
+            Runtime.getRuntime().exec(arrayOf("su", "-c", "settings put global http_proxy :0")).waitFor()
         }
     }
 
     private fun teardown() {
+        isActive = false
         proxyJob?.cancel()
+        proxyJob = null
+        clearProxy()
         MitmProxy.stop()
-        runShizuku("iptables -t nat -F OUTPUT")
-        Log.d(TAG, "pipeline torn down")
+        Log.d(TAG, "teardown complete")
     }
 
     private fun postNotification() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "VPN Bypass", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, "Flag Bypass", NotificationManager.IMPORTANCE_LOW)
             )
         }
         val stopPi = PendingIntent.getService(
             this, 0,
             Intent(this, FlagVpnService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("TacoStrap active")
-            .setContentText("CDN interception live")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
-            .setOngoing(true)
-            .build()
-        startForeground(NOTIF_ID, notif)
+        startForeground(
+            NOTIF_ID,
+            NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("TacoStrap Bypass")
+                .setContentText("MITM proxy live — flags injected")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
+                .setOngoing(true)
+                .build()
+        )
     }
 
     override fun onDestroy() {
