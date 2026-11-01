@@ -80,13 +80,18 @@ class FlagVpnService : VpnService() {
         val cdnIps = resolveCdnHosts()
         Log.d(TAG, "CDN IPs resolved: $cdnIps")
 
+        if (cdnIps.isEmpty()) {
+            Log.e(TAG, "Could not resolve CDN IPs. Aborting TUN to prevent blackhole.")
+            stopSelf()
+            return@withContext
+        }
+
         tunFd = buildTun(cdnIps)
         if (tunFd == null) {
             Log.e(TAG, "TUN establish failed — stopping")
             stopSelf(); return@withContext
         }
 
-        // Must set vpnService reference BEFORE starting MitmProxy for protect() to work
         MitmProxy.vpnService = this@FlagVpnService
 
         try {
@@ -105,16 +110,10 @@ class FlagVpnService : VpnService() {
             .addAddress(TUN_ADDRESS, TUN_MASK)
             .addDnsServer("8.8.8.8")
 
-        if (cdnIps.isNotEmpty()) {
-            // CRITICAL FIX: Only route the exact CDN IPs. Do NOT use 0.0.0.0/0.
-            cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
-        } else {
-            // If DNS fails, abort the TUN rather than blackholing the whole phone.
-            Log.e(TAG, "DNS resolve failed — aborting TUN to prevent loop")
-            return null
+        cdnIps.forEach { ip -> 
+            if (ip.isNotEmpty()) builder.addRoute(ip, 32) 
         }
 
-        // Restrict to Roblox and our own app
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
             .onFailure { Log.w(TAG, "addAllowedApplication ROBLOX failed: ${it.message}") }
         runCatching { builder.addAllowedApplication(packageName) }
