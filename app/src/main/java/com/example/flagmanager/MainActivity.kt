@@ -183,7 +183,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "6.3"
+const val APP_VERSION = "6.6"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -362,13 +362,14 @@ object DefaultBootstrapper : Bootstrapper {
             val mkCmd = "mkdir -p ${shq(fontDir)}"
             runCmd(mkCmd, root)
 
-            if (fontBytes != null) {
-                val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
-                val targetFile = "$fontDir/custom_font.ttf"
-                val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
-                val (ok, out) = runCmd(writeCmd, root)
-                if (!ok) return@withContext "Failed to inject font file: $out"
+            if (fontBytes == null) {
+                return@withContext "Preset fonts are not bundled — pick a .ttf file to inject."
             }
+            val b64 = Base64.encodeToString(fontBytes, Base64.NO_WRAP)
+            val targetFile = "$fontDir/custom_font.ttf"
+            val writeCmd = "printf %s ${shq(b64)} | base64 -d > ${shq(targetFile)} && chmod 644 ${shq(targetFile)}"
+            val (ok, out) = runCmd(writeCmd, root)
+            if (!ok) return@withContext "Failed to inject font file: $out"
             "Successfully injected font ($fontName) into Roblox!"
         }
 
@@ -2356,8 +2357,9 @@ fun FlagsScreen(state: TacoState) {
                     onToggle = {
                         state.desyncEnabled = !state.desyncEnabled
                         state.persist()
+                        state.syncVpnFlagsIfActive()
                         state.notify(
-                            if (state.desyncEnabled) "Desync ON — will apply on next launch" else "Desync OFF",
+                            if (state.desyncEnabled) "Desync ON — sync to VPN if active, Inject to write disk" else "Desync OFF",
                             "flag"
                         )
                     }
@@ -3776,10 +3778,10 @@ class TacoState(
     }
 
     fun moveLayer(from: Int, to: Int) {
-        if (from in layers.indices && to in layers.indices && from != 0 && to != 0) {
-            layers.add(to, layers.removeAt(from))
-            persist()
-        }
+        if (from !in layers.indices || to !in layers.indices || from == 0 || to == 0) return
+        val item = layers.removeAt(from)
+        layers.add(if (to > from) to - 1 else to, item)
+        persist()
     }
 
     fun setLayerEnabled(id: String, enabled: Boolean) {
@@ -3891,6 +3893,10 @@ class TacoState(
             if (!sh.ok && !useRoot) {
                 notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
             }
+            if (vpnBypass && vpnStatus != "active") {
+                notify("VPN bypass on but not active — open Settings, grant VPN, Inject flags, then launch.", "launch")
+                return@launch
+            }
             // Apply is owned by Flags tab — this path only launches
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
             notify(launchMsg, "launch")
@@ -3931,29 +3937,42 @@ class TacoState(
                 }
                 push(0, StepStatus.Done, if (useRoot) "via root" else "connected")
 
-                // Apply is done from Flags → Apply. Home only verifies what's on disk.
+                // Apply is done from Flags → Inject. Home only verifies what's on disk.
                 val vmsg = engine.verify(toJson(merged), path, useRoot)
                 if (vmsg.startsWith("Verify failed")) {
-                    steps[vIdx] = steps[vIdx].copy(status = StepStatus.Failed, detail = vmsg)
-                    fail(vIdx, vmsg); return@job
+                    val hint = if (vmsg.contains("cannot read", ignoreCase = true))
+                        "Verify failed: no flag file on disk — open Flags and tap Inject flags first."
+                    else vmsg
+                    steps[vIdx] = steps[vIdx].copy(status = StepStatus.Failed, detail = hint)
+                    fail(vIdx, hint); return@job
                 }
                 push(vIdx, StepStatus.Done, vmsg)
 
-                // VPN bypass step — inject flags via CDN interception
+                // VPN bypass step — only claim live when service is already active
                 if (vpnBypass) {
                     val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
                     if (vpnIdx >= 0) {
-                        push(vpnIdx, StepStatus.Running, "updating CDN interceptor…")
                         val ctx = appContext
-                        if (ctx != null) {
-                            // Make sure the service is running before updating flags
-                            if (vpnStatus != "active") {
-                                startVpnBypass(ctx)
+                        when {
+                            ctx == null ->
+                                push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
+                            vpnStatus == "active" -> {
+                                FlagVpnService.updateFlags(ctx, toJson(merged))
+                                push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags")
                             }
-                            FlagVpnService.updateFlags(ctx, toJson(merged))
-                            push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
-                        } else {
-                            push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
+                            else -> {
+                                // Kick off permission / start; do not lie that intercept is live
+                                runCatching { startVpnBypass(ctx) }
+                                    .onFailure {
+                                        push(vpnIdx, StepStatus.Skipped, "VPN start error: ${it.message}")
+                                        return@job
+                                    }
+                                push(
+                                    vpnIdx,
+                                    StepStatus.Skipped,
+                                    "VPN not active yet — grant permission if prompted, then Inject flags again"
+                                )
+                            }
                         }
                     }
                 }
@@ -4137,10 +4156,30 @@ class TacoState(
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            context.startService(FlagVpnService.buildDirectIntent(context, flags))
-            vpnStatus = "active"
-            notify("VPN bypass active — CDN interception live.", "other")
+            if (FlagVpnService.startSafely(context, flags)) {
+                vpnStatus = "active"
+                notify("VPN bypass active — CDN interception live.", "other")
+            } else {
+                vpnStatus = "error"
+                vpnBypass = false
+                persist()
+                notify("VPN start failed — check FOREGROUND_SERVICE permission.", "other")
+            }
         }
+    }
+
+    /** Push current merged flags to MitmProxy when the channel is already up. */
+    fun syncVpnFlagsIfActive() {
+        if (!vpnBypass || vpnStatus != "active") return
+        val ctx = appContext ?: return
+        val m = mergedFlags().toMutableMap()
+        if (desyncEnabled) DesyncInjector.ensureInMap(m)
+        else DesyncInjector.removeFromMap(m)
+        runCatching { FlagVpnService.updateFlags(ctx, toJson(m)) }
+            .onFailure {
+                vpnStatus = "error"
+                notify("VPN update failed: ${it.message ?: "service dead"}", "other")
+            }
     }
 
     fun stopVpnBypass(context: Context) {
@@ -4159,10 +4198,16 @@ class TacoState(
             else DesyncInjector.removeFromMap(m)
             toJson(m)
         }
-        context.startService(FlagVpnService.buildDirectIntent(context, flags))
-        vpnStatus = "active"
+        if (FlagVpnService.startSafely(context, flags)) {
+            vpnStatus = "active"
+            notify("VPN bypass active — CDN interception live.", "other")
+        } else {
+            vpnStatus = "error"
+            vpnBypass = false
+            persist()
+            notify("VPN start failed — check FOREGROUND_SERVICE permission.", "other")
+        }
         _pendingVpnIntent = null
-        notify("VPN bypass active — CDN interception live.", "other")
     }
 
     fun onVpnPermissionDenied() {
@@ -4216,6 +4261,10 @@ class MainActivity : ComponentActivity() {
 
         vpnPermLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val state = (application as? TacoApplication)?.tacoState
+                ?: (applicationContext as? TacoApplication)?.tacoState
+            if (state == null) {
+                android.util.Log.e("TacoStrap", "VPN result dropped: TacoApplication.tacoState is null — set android:name=.TacoApplication in manifest")
+            }
             if (result.resultCode == RESULT_OK) {
                 state?.onVpnPermissionGranted(this)
             } else {
@@ -4267,12 +4316,14 @@ fun TacoRoot() {
     }
     
     // Auto-restart VPN bypass ONLY WHEN Shizuku is actually connected
-    LaunchedEffect(state.shizuku, state.vpnBypass) {
-        if (state.shizuku.ok && state.vpnBypass && state.vpnStatus != "active") {
+    LaunchedEffect(state.shizuku, state.vpnBypass, state.vpnStatus) {
+        if (state.shizuku.ok && state.vpnBypass &&
+            (state.vpnStatus == "off" || state.vpnStatus == "error")
+        ) {
             state.startVpnBypass(context)
         }
     }
-    LaunchedEffect(Unit) { state.refreshLoop() }
+    LaunchedEffect(state) { state.refreshLoop() }
 
     TacoTheme(state.accentIdx, state.amoled, state.reduceMotion, state.fontIdx, state.appearancePreset.coerceIn(0, 4)) {
         var currentRoute by rememberSaveable { mutableStateOf("home") }
@@ -4297,7 +4348,7 @@ fun TacoRoot() {
                 Crossfade(
                     targetState = currentRoute,
                     modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = 86.dp),
-                    animationSpec = tween(200),
+                    animationSpec = if (state.reduceMotion) tween(0) else tween(200),
                     label = "nav"
                 ) { r ->
                     when (r) {
@@ -4350,7 +4401,7 @@ fun TacoRoot() {
 
                 SnackbarHost(
                     hostState = snackbar,
-                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 140.dp)
                 ) { d ->
                     Snackbar(
                         d, shape = RoundedCornerShape(18.dp),
