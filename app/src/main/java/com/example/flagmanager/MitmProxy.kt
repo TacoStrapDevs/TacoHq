@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -15,10 +16,10 @@ import kotlin.concurrent.thread
 object MitmProxy {
 
     private const val TAG = "MitmProxy"
-    const val PROXY_PORT_HTTP = 8899
+    const val PROXY_PORT_HTTP  = 8899
     const val PROXY_PORT_HTTPS = 8900
     private const val CONNECT_TIMEOUT = 8_000
-    private const val SO_TIMEOUT = 8_000
+    private const val SO_TIMEOUT      = 8_000
 
     private val CDN_HOSTS = setOf(
         "clientsettingscdn.roblox.com",
@@ -86,9 +87,8 @@ object MitmProxy {
         }
     }
 
-    /** 2-arg overload for older call sites. */
+    /** 2-arg overload for older call sites (HTTP only). */
     fun start(initialFlags: String, port: Int) {
-        // No Context → HTTP only
         if (running) {
             updateFlags(initialFlags)
             return
@@ -124,10 +124,15 @@ object MitmProxy {
         flagsJson = forceAllowlist(json)
     }
 
+    /**
+     * Force the allowlist off so all injected flags apply.
+     * NOTE: if your build of Roblox reads FFlagAllowListEnabled as the master
+     * switch (true = allowlist active), false is what disables it. Do not flip
+     * this to true — that would re-enable the allowlist and block your flags.
+     */
     private fun forceAllowlist(json: String): String =
         try {
             val root = JSONObject(json.ifBlank { "{}" })
-            root.put("FFlagAllowList", JSONObject())
             root.put("FFlagAllowListEnabled", false)
             root.toString()
         } catch (_: Throwable) {
@@ -137,7 +142,7 @@ object MitmProxy {
     private fun handlePlain(client: Socket) {
         client.soTimeout = SO_TIMEOUT
         try {
-            processRequest(client.getInputStream().bufferedReader(), client.getOutputStream(), ssl = false)
+            processRequest(client.getInputStream(), client.getOutputStream(), ssl = false)
         } catch (e: Exception) {
             Log.w(TAG, "plain: ${e.message}")
         } finally {
@@ -150,7 +155,7 @@ object MitmProxy {
         client.useClientMode = false
         try {
             client.startHandshake()
-            processRequest(client.inputStream.bufferedReader(), client.outputStream, ssl = true)
+            processRequest(client.inputStream, client.outputStream, ssl = true)
         } catch (e: Exception) {
             Log.w(TAG, "ssl: ${e.message}")
         } finally {
@@ -158,9 +163,33 @@ object MitmProxy {
         }
     }
 
-    private fun processRequest(input: BufferedReader, output: OutputStream, ssl: Boolean) {
-        val requestLine = input.readLine() ?: return
-        val headers = readHeaders(input)
+    private fun processRequest(input: InputStream, output: OutputStream, ssl: Boolean) {
+        // Read raw bytes so we can handle non-HTTP TLS ClientHello payloads
+        // that the TUN forwards before HTTP framing exists.
+        val buffered = java.io.BufferedInputStream(input)
+        if (ssl) {
+            // TLS connection from the TUN may be a raw ClientHello (no HTTP yet).
+            // Read what's available, then hand off to upstream pass-through or
+            // direct injection if an HTTP request is visible.
+            val head = readAvailable(buffered, max = 8192)
+            if (head.isEmpty()) return
+            if (!looksLikeHttp(head)) {
+                passThroughRaw(head, buffered, output, ssl = true)
+                return
+            }
+            processHttpHead(head, buffered, output, ssl = true)
+        } else {
+            processHttpHead(null, buffered, output, ssl = false)
+        }
+    }
+
+    private fun processHttpHead(
+        preRead: ByteArray?, input: java.io.BufferedInputStream,
+        output: OutputStream, ssl: Boolean
+    ) {
+        val reader = (preRead?.inputStream()?.bufferedReader() ?: input.bufferedReader())
+        val requestLine = reader.readLine() ?: return
+        val headers = readHeaders(reader)
         val host = headers["host"]?.lowercase() ?: ""
         val parts = requestLine.split(" ")
         val method = parts.getOrElse(0) { "GET" }
@@ -251,4 +280,13 @@ object MitmProxy {
             runCatching { rawSock?.close() }
         }
     }
-}
+
+    /**
+     * Raw byte relay for non-HTTP TLS connections (e.g. the initial
+     * ClientHello forwarded from the TUN). The proxy server socket is already
+     * SSL-terminating, so once we read bytes from it the handshake is done.
+     */
+    private fun passThroughRaw(
+        initial: ByteArray,
+        input: java.io.BufferedInputStream,
+        client
