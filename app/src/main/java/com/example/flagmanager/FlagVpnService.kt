@@ -51,12 +51,32 @@ class FlagVpnService : VpnService() {
             Intent(context, FlagVpnService::class.java).putExtra(EXTRA_FLAGS, flagsJson)
 
         fun updateFlags(context: Context, flagsJson: String) {
-            context.startService(
-                Intent(context, FlagVpnService::class.java)
-                    .setAction(ACTION_UPDATE)
-                    .putExtra(EXTRA_FLAGS, flagsJson)
-            )
+            val i = Intent(context, FlagVpnService::class.java)
+                .setAction(ACTION_UPDATE)
+                .putExtra(EXTRA_FLAGS, flagsJson)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(i)
+                } else {
+                    context.startService(i)
+                }
+            }.onFailure { Log.e(TAG, "updateFlags failed: ${it.message}") }
         }
+
+        /** Safe start for MainActivity; returns false on failure, never throws. */
+        fun startSafely(context: Context, flagsJson: String): Boolean =
+            runCatching {
+                val i = buildDirectIntent(context, flagsJson)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(i)
+                } else {
+                    context.startService(i)
+                }
+                true
+            }.getOrElse {
+                Log.e(TAG, "startSafely failed: ${it.message}")
+                false
+            }
     }
 
     private val scope    = CoroutineScope(Dispatchers.IO)
