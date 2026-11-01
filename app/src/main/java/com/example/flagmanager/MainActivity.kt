@@ -3883,8 +3883,11 @@ fun TacoRoot() {
     // Register state on application so MainActivity's VPN permission launcher can call back into it
     LaunchedEffect(Unit) {
         (context.applicationContext as? TacoApplication)?.tacoState = state
-        // Auto-restart VPN bypass if it was active when the app was last closed
-        if (state.vpnBypass) {
+    }
+    
+    // Auto-restart VPN bypass ONLY WHEN Shizuku is actually connected
+    LaunchedEffect(state.shizuku, state.vpnBypass) {
+        if (state.shizuku.ok && state.vpnBypass && state.vpnStatus != "active") {
             state.startVpnBypass(context)
         }
     }
