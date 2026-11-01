@@ -35,7 +35,6 @@ class FlagVpnService : VpnService() {
             "clientsettings.roblox.com"
         )
 
-        // change if your bootstrapper uses a different package
         private const val ROBLOX_PKG = "com.roblox.client"
 
         fun buildStartIntent(context: Context, flagsJson: String): Intent? = prepare(context)
@@ -55,8 +54,6 @@ class FlagVpnService : VpnService() {
     private val scope    = CoroutineScope(Dispatchers.IO)
     private var proxyJob : Job? = null
     private var tunFd    : ParcelFileDescriptor? = null
-
-    // ── lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -79,32 +76,26 @@ class FlagVpnService : VpnService() {
         super.onDestroy()
     }
 
-    // ── pipeline ──────────────────────────────────────────────────────────────
-
     private suspend fun startPipeline(flagsJson: String) = withContext(Dispatchers.IO) {
-        // STEP 1: resolve CDN IPs BEFORE establishing TUN
-        // if we resolve after TUN is up, DNS goes through TUN → loops → fails
         val cdnIps = resolveCdnHosts()
         Log.d(TAG, "CDN IPs resolved: $cdnIps")
 
-        // STEP 2: establish TUN
         tunFd = buildTun(cdnIps)
         if (tunFd == null) {
             Log.e(TAG, "TUN establish failed — stopping")
             stopSelf(); return@withContext
         }
 
-        // STEP 3: wire vpnService ref so protect() is available in MitmProxy.passThrough
+        // Must set vpnService reference BEFORE starting MitmProxy for protect() to work
         MitmProxy.vpnService = this@FlagVpnService
 
-        // STEP 4: start proxy — protect() now works for all upstream sockets
         try {
             MitmProxy.start(flagsJson, MitmProxy.PROXY_PORT_HTTP, applicationContext)
         } catch (e: Exception) {
             Log.e(TAG, "proxy start error: ${e.message}")
         }
 
-        Log.d(TAG, "pipeline live — HTTP :${MitmProxy.PROXY_PORT_HTTP} HTTPS :${MitmProxy.PROXY_PORT_HTTPS}")
+        Log.d(TAG, "pipeline live — HTTP :${MitmProxy.PROXY_PORT_HTTP}")
     }
 
     private fun buildTun(cdnIps: List<String>): ParcelFileDescriptor? = runCatching {
@@ -115,17 +106,19 @@ class FlagVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
 
         if (cdnIps.isNotEmpty()) {
-            // surgical: only CDN IPs through TUN, everything else untouched
+            // CRITICAL FIX: Only route the exact CDN IPs. Do NOT use 0.0.0.0/0.
             cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
         } else {
-            // fallback if DNS resolve failed — full route, passThrough handles non-CDN
-            builder.addRoute("0.0.0.0", 0)
-            Log.w(TAG, "DNS resolve failed — full route fallback active")
+            // If DNS fails, abort the TUN rather than blackholing the whole phone.
+            Log.e(TAG, "DNS resolve failed — aborting TUN to prevent loop")
+            return null
         }
 
-        // scope to Roblox only — no other apps go through TUN
+        // Restrict to Roblox and our own app
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
-            .onFailure { Log.w(TAG, "addAllowedApplication failed: ${it.message}") }
+            .onFailure { Log.w(TAG, "addAllowedApplication ROBLOX failed: ${it.message}") }
+        runCatching { builder.addAllowedApplication(packageName) }
+            .onFailure { Log.w(TAG, "addAllowedApplication SELF failed: ${it.message}") }
 
         builder.establish()
     }.onFailure { Log.e(TAG, "buildTun: ${it.message}") }.getOrNull()
@@ -133,9 +126,7 @@ class FlagVpnService : VpnService() {
     private fun resolveCdnHosts(): List<String> =
         CDN_HOSTS.flatMap { host ->
             runCatching {
-                InetAddress.getAllByName(host)
-                    .mapNotNull { it.hostAddress }
-                    .filter { it.isNotEmpty() }
+                InetAddress.getAllByName(host).mapNotNull { it.hostAddress }.filter { it.isNotEmpty() }
             }.onFailure { Log.w(TAG, "resolve $host: ${it.message}") }
              .getOrElse { emptyList() }
         }.distinct()
@@ -147,8 +138,6 @@ class FlagVpnService : VpnService() {
         tunFd = null
         Log.d(TAG, "pipeline torn down")
     }
-
-    // ── notification ──────────────────────────────────────────────────────────
 
     private fun postNotification() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -166,7 +155,7 @@ class FlagVpnService : VpnService() {
             NOTIF_ID,
             NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("TacoStrap VPN active")
-                .setContentText("CDN interception live — flags injected")
+                .setContentText("CDN interception live")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .addAction(android.R.drawable.ic_delete, "Stop", stopPi)
                 .setOngoing(true)
