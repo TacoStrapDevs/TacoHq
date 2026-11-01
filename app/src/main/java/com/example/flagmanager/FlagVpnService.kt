@@ -15,7 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramPacket
@@ -65,14 +64,13 @@ class FlagVpnService : VpnService() {
     private var tunFd    : ParcelFileDescriptor? = null
     private var vpnOutput : FileOutputStream? = null
     private var isRunning = true
+    private val writeLock = Any() // Prevents TUN packet overlap
 
     private val tcpConnections = ConcurrentHashMap<String, TcpState>()
-    private val udpSockets = ConcurrentHashMap<String, DatagramSocket>()
+    private val udpSessions = ConcurrentHashMap<String, UdpState>()
 
-    data class TcpState(
-        var clientSeq: Long = 0,
-        var serverSeq: Long = 0
-    )
+    data class TcpState(var clientSeq: Long = 0, var serverSeq: Long = 0)
+    data class UdpState(val socket: DatagramSocket)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -93,11 +91,9 @@ class FlagVpnService : VpnService() {
     }
 
     private suspend fun startPipeline(flagsJson: String) = withContext(Dispatchers.IO) {
-        // 1. Start the local proxy
         MitmProxy.start(flagsJson, MitmProxy.PROXY_PORT_HTTP, applicationContext)
         MitmProxy.vpnService = this@FlagVpnService
 
-        // 2. Setup TUN
         val cdnIps = resolveCdnHosts()
         if (cdnIps.isEmpty()) { 
             Log.e(TAG, "DNS failed")
@@ -124,8 +120,6 @@ class FlagVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
 
         cdnIps.forEach { ip -> if (ip.isNotEmpty()) builder.addRoute(ip, 32) }
-
-        // Allow Roblox and our app to prevent loop
         runCatching { builder.addAllowedApplication(ROBLOX_PKG) }
         runCatching { builder.addAllowedApplication(packageName) }
 
@@ -169,14 +163,16 @@ class FlagVpnService : VpnService() {
         val destIp = "${buffer[16].toInt() and 0xFF}.${buffer[17].toInt() and 0xFF}.${buffer[18].toInt() and 0xFF}.${buffer[19].toInt() and 0xFF}"
 
         if (protocol == 6) { // TCP (HTTP Request)
+            if (length < ihl + 20) return // Bounds check
             val srcPort = ((buffer[ihl].toInt() and 0xFF) shl 8) or (buffer[ihl + 1].toInt() and 0xFF)
             val destPort = ((buffer[ihl + 2].toInt() and 0xFF) shl 8) or (buffer[ihl + 3].toInt() and 0xFF)
 
             val seq = ByteBuffer.wrap(buffer, ihl + 4, 4).int.toLong() and 0xFFFFFFFFL
             val flags = buffer[ihl + 13].toInt() and 0xFF
             val tcpHeaderLen = ((buffer[ihl + 12].toInt() and 0xF0) shr 4) * 4
+            
+            if (length < ihl + tcpHeaderLen) return // Payload bounds check
             val payloadLen = length - ihl - tcpHeaderLen
-
             val connKey = "$srcPort-$destIp-$destPort"
 
             if (destPort == 80) {
@@ -193,45 +189,53 @@ class FlagVpnService : VpnService() {
                     }
                 }
             }
-        } else if (protocol == 17) { // UDP (RakNet Game Traffic)
+        } else if (protocol == 17) { // UDP (Game Traffic)
+            if (length < ihl + 8) return // Bounds check
             val srcPort = ((buffer[ihl].toInt() and 0xFF) shl 8) or (buffer[ihl + 1].toInt() and 0xFF)
             val destPort = ((buffer[ihl + 2].toInt() and 0xFF) shl 8) or (buffer[ihl + 3].toInt() and 0xFF)
-            val udpLen = ((buffer[ihl + 4].toInt() and 0xFF) shl 8) or (buffer[ihl + 5].toInt() and 0xFF)
-            val payloadLen = udpLen - 8
+            
+            val payloadLen = length - ihl - 8 // Safer than parsing UDP length header
             if (payloadLen > 0) {
                 val payload = ByteArray(payloadLen)
                 System.arraycopy(buffer, ihl + 8, payload, 0, payloadLen)
-                handleUdpForward(payload, srcIp, srcPort, destIp, destPort)
+                forwardUdpTraffic(payload, srcIp, srcPort, destIp, destPort)
             }
         }
     }
 
-    private fun handleUdpForward(payload: ByteArray, srcIp: String, srcPort: Int, destIp: String, destPort: Int) {
-        thread {
-            try {
-                val key = "$srcPort-$destIp-$destPort"
-                val socket = udpSockets.getOrPut(key) { 
-                    DatagramSocket().also { protect(it) } 
-                }
-                val address = InetAddress.getByName(destIp)
-                socket.send(DatagramPacket(payload, payload.size, address, destPort))
-
+    private fun forwardUdpTraffic(payload: ByteArray, srcIp: String, srcPort: Int, destIp: String, destPort: Int) {
+        val key = "$srcPort-$destIp-$destPort"
+        
+        val state = udpSessions.getOrPut(key) {
+            val socket = DatagramSocket().also { protect(it) }
+            val newState = UdpState(socket)
+            
+            thread(isDaemon = true) {
                 val responseBuffer = ByteArray(65535)
                 val responsePacket = DatagramPacket(responseBuffer, responseBuffer.size)
-                socket.soTimeout = 3000
-                socket.receive(responsePacket)
-
-                sendUdpPacket(responsePacket.data, responsePacket.length, destIp, destPort, srcIp, srcPort)
-            } catch (e: Exception) {
-                // Silent catch for UDP timeouts
+                while (isRunning && !socket.isClosed) {
+                    try {
+                        socket.receive(responsePacket)
+                        // Write the game server response back to the TUN
+                        sendUdpPacket(responsePacket.data, responsePacket.length, destIp, destPort, srcIp, srcPort)
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
             }
+            newState
+        }
+
+        try {
+            state.socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(destIp), destPort))
+        } catch (e: Exception) {
+            Log.e(TAG, "UDP Send failed: ${e.message}")
         }
     }
 
     private fun handleHttpIntercept(requestText: String, srcIp: String, srcPort: Int, destIp: String, destPort: Int, clientSeq: Long, state: TcpState) {
         thread {
             try {
-                // Send to MitmProxy
                 val socket = Socket()
                 protect(socket)
                 socket.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), MitmProxy.PROXY_PORT_HTTP), 5000)
@@ -243,7 +247,6 @@ class FlagVpnService : VpnService() {
                 val responseText = socket.getInputStream().bufferedReader().readText()
                 socket.close()
 
-                // Write back to TUN
                 sendTcpPacket(state.serverSeq, clientSeq, 0x18, destIp, destPort, srcIp, srcPort, responseText.toByteArray())
                 state.serverSeq += responseText.length
 
@@ -268,15 +271,16 @@ class FlagVpnService : VpnService() {
         buffer.put(payload, 0, length)
 
         val packet = buffer.array()
-        
         var ipSum = 0
         for (i in 0 until 20 step 2) ipSum += ((packet[i].toInt() and 0xFF) shl 8) or (packet[i + 1].toInt() and 0xFF)
         while (ipSum shr 16 > 0) ipSum = (ipSum and 0xFFFF) + (ipSum shr 16)
         val ipChecksum = ipSum.inv() and 0xFFFF
         packet[10] = (ipChecksum shr 8).toByte(); packet[11] = ipChecksum.toByte()
 
-        vpnOut.write(packet)
-        vpnOut.flush()
+        synchronized(writeLock) {
+            vpnOut.write(packet)
+            vpnOut.flush()
+        }
     }
 
     private fun sendTcpPacket(seq: Long, ack: Long, flags: Int, srcIp: String, srcPort: Int, destIp: String, destPort: Int, payload: ByteArray = ByteArray(0)) {
@@ -297,7 +301,6 @@ class FlagVpnService : VpnService() {
         buffer.put(payload)
 
         val packet = buffer.array()
-
         var ipSum = 0
         for (i in 0 until 20 step 2) ipSum += ((packet[i].toInt() and 0xFF) shl 8) or (packet[i + 1].toInt() and 0xFF)
         while (ipSum shr 16 > 0) ipSum = (ipSum and 0xFFFF) + (ipSum shr 16)
@@ -320,8 +323,10 @@ class FlagVpnService : VpnService() {
         val tcpChecksum = tcpSum.inv() and 0xFFFF
         packet[36] = (tcpChecksum shr 8).toByte(); packet[37] = tcpChecksum.toByte()
 
-        vpnOut.write(packet)
-        vpnOut.flush()
+        synchronized(writeLock) {
+            vpnOut.write(packet)
+            vpnOut.flush()
+        }
     }
 
     private fun teardown() {
@@ -330,8 +335,8 @@ class FlagVpnService : VpnService() {
         runCatching { tunFd?.close() }
         tunFd = null
         tcpConnections.clear()
-        udpSockets.values.forEach { runCatching { it.close() } }
-        udpSockets.clear()
+        udpSessions.values.forEach { runCatching { it.socket.close() } }
+        udpSessions.clear()
         MitmProxy.stop()
     }
 
