@@ -3562,10 +3562,13 @@ class TacoState(
                 if (vpnBypass) {
                     val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
                     if (vpnIdx >= 0) {
-                        push(vpnIdx, StepStatus.Running, "starting CDN interceptor…")
-                        // FlagVpnService handles the actual proxy; we just signal it to update flags
+                        push(vpnIdx, StepStatus.Running, "updating CDN interceptor…")
                         val ctx = appContext
                         if (ctx != null) {
+                            // Make sure the service is running before updating flags
+                            if (vpnStatus != "active") {
+                                startVpnBypass(ctx)
+                            }
                             FlagVpnService.updateFlags(ctx, toJson(merged))
                             push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
                         } else {
@@ -3732,6 +3735,15 @@ class TacoState(
     }
 
     fun startVpnBypass(context: Context) {
+        // ADD THIS CHECK
+        if (!shizuku.ok && !useRoot) {
+            vpnBypass = false
+            vpnStatus = "off"
+            notify("Failed: Shizuku is required for VPN bypass.", "other")
+            persist()
+            return
+        }
+
         val flags = run {
             val m = mergedFlags().toMutableMap()
             if (desyncEnabled) DesyncInjector.ensureInMap(m)
@@ -3741,12 +3753,9 @@ class TacoState(
         val intent = FlagVpnService.buildStartIntent(context, flags)
         if (intent != null) {
             vpnStatus = "starting"
-            // VpnService.prepare() returned a non-null Intent — caller must startActivityForResult.
-            // Store it so MainActivity can launch it. We signal via vpnStatus.
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            // Already prepared — start directly.
             context.startService(FlagVpnService.buildDirectIntent(context, flags))
             vpnStatus = "active"
             notify("VPN bypass active — CDN interception live.", "other")
