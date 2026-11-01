@@ -183,7 +183,7 @@ import kotlin.random.Random
  *  1. ENGINE: JSON helpers + multi-path deployment & font injection
  * ====================================================================== */
 
-const val APP_VERSION = "6.6"
+const val APP_VERSION = "6.7"
 const val DEFAULT_PKG = "com.roblox.client"
 const val DEFAULT_PATH = "/data/local/tmp/ClientAppSettings.json"
 const val ALT_PATH = "/data/data/com.roblox.client/files/ClientSettings/ClientAppSettings.json"
@@ -3894,7 +3894,7 @@ class TacoState(
                 notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
             }
             if (vpnBypass && vpnStatus != "active") {
-                notify("VPN bypass on but not active — open Settings, grant VPN, Inject flags, then launch.", "launch")
+                notify("Failed: VPN bypass on but not active — grant VPN, Inject flags, then launch.", "launch")
                 return@launch
             }
             // Apply is owned by Flags tab — this path only launches
@@ -3980,6 +3980,16 @@ class TacoState(
                 val finalMsg: String
                 if (m != LaunchMode.VERIFY) {
                     val lIdx = steps.indexOfFirst { it.title == "Launch Roblox" }.let { if (it < 0) steps.lastIndex else it }
+                    // First-launch race: don't open Roblox before VPN is actually active
+                    if (vpnBypass && vpnStatus != "active") {
+                        push(lIdx, StepStatus.Skipped, "VPN permission pending — grant, then launch again")
+                        launchState = LaunchState.Success(
+                            "VPN pending — grant permission (or Inject with VPN active), then launch again.",
+                            steps.toList()
+                        )
+                        notify("Failed: VPN not active yet — grant permission, then launch again.", "launch")
+                        return@job
+                    }
                     val msg = if (target != null) engine.launchGame(pkg, target.placeId, useRoot, restart)
                     else engine.launchRoblox(pkg, useRoot, restart)
                     if (msg.startsWith("Failed")) {
@@ -4156,7 +4166,8 @@ class TacoState(
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            if (FlagVpnService.startSafely(context, flags)) {
+            val started = runCatching { FlagVpnService.startSafely(context, flags) }.getOrDefault(false)
+            if (started) {
                 vpnStatus = "active"
                 notify("VPN bypass active — CDN interception live.", "other")
             } else {
@@ -4198,7 +4209,8 @@ class TacoState(
             else DesyncInjector.removeFromMap(m)
             toJson(m)
         }
-        if (FlagVpnService.startSafely(context, flags)) {
+        val started = runCatching { FlagVpnService.startSafely(context, flags) }.getOrDefault(false)
+        if (started) {
             vpnStatus = "active"
             notify("VPN bypass active — CDN interception live.", "other")
         } else {
