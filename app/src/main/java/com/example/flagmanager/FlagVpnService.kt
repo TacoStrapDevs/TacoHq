@@ -45,6 +45,7 @@ class FlagVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                teardown()
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -81,14 +82,11 @@ class FlagVpnService : VpnService() {
             "clientsettings.roblox.com"
         )
         
-        // CRITICAL FIX: Flush old rules
+        // Flush old rules to prevent stacking
         runShizuku("iptables -t nat -F OUTPUT")
 
-        // CRITICAL FIX: Get the UID of TacoStrap
+        // CRITICAL FIX: Bypass the loop for our own app
         val appUid = applicationInfo.uid
-        
-        // CRITICAL FIX: Tell iptables to RETURN (bypass redirect) for TacoStrap's UID
-        // This stops the proxy from looping back into itself
         runShizuku("iptables -t nat -A OUTPUT -m owner --uid-owner $appUid -j RETURN")
 
         // Add redirect rules for port 80 (HTTP) to the proxy
@@ -101,11 +99,24 @@ class FlagVpnService : VpnService() {
 
     private fun runShizuku(cmd: String) {
         try {
-            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            // Execute via Shizuku shell instead of Runtime.exec
+            val m = rikka.shizuku.Shizuku::class.java.getDeclaredMethod(
+                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+            )
+            m.isAccessible = true
+            val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
             p.waitFor()
+            Log.i(TAG, "Shizuku cmd executed: $cmd")
         } catch (e: Exception) {
             Log.e(TAG, "Shizuku cmd failed: ${e.message}")
         }
+    }
+
+    private fun teardown() {
+        proxyJob?.cancel()
+        MitmProxy.stop()
+        runShizuku("iptables -t nat -F OUTPUT")
+        Log.d(TAG, "pipeline torn down")
     }
 
     private fun postNotification() {
@@ -131,11 +142,8 @@ class FlagVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        proxyJob?.cancel()
-        MitmProxy.stop()
-        runShizuku("iptables -t nat -F OUTPUT")
+        teardown()
         stopForeground(STOP_FOREGROUND_REMOVE)
-        Log.d(TAG, "service destroyed")
         super.onDestroy()
     }
 }
