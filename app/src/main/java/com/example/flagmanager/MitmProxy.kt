@@ -151,25 +151,24 @@ object MitmProxy {
         method: String, path: String, host: String,
         reqHeaders: Map<String, String>, clientOut: OutputStream, ssl: Boolean
     ) {
+        var rawSock: Socket? = null
+        var upstream: Socket? = null
         try {
             val port = if (ssl) 443 else 80
 
-            val rawSock = Socket()
+            rawSock = Socket()
 
-            // FIX: Protect the socket BEFORE connecting so it doesn't loop into the TUN
             val svc = vpnService
             if (svc != null) {
                 if (!svc.protect(rawSock)) {
                     Log.e(TAG, "protect() returned false — upstream will loop through TUN")
                 }
-            } else {
-                Log.w(TAG, "vpnService null — upstream socket unprotected, may loop")
             }
 
             rawSock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
             rawSock.soTimeout = SO_TIMEOUT
 
-            val upstream = if (ssl)
+            upstream = if (ssl)
                 CertManager.getTrustAllFactory().createSocket(rawSock, host, port, true) as SSLSocket
             else
                 rawSock
@@ -183,13 +182,16 @@ object MitmProxy {
 
             upstream.getInputStream().copyTo(clientOut)
             clientOut.flush()
-            upstream.close()
+
         } catch (e: Exception) {
             Log.w(TAG, "passThrough $host: ${e.message}")
             runCatching {
                 clientOut.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                 clientOut.flush()
             }
+        } finally {
+            runCatching { upstream?.close() }
+            runCatching { rawSock?.close() }
         }
     }
 }
