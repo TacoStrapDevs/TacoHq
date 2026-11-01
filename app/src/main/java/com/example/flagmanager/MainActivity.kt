@@ -4144,6 +4144,19 @@ class TacoState(
             .apply()
     }
 
+
+    /** Start FlagVpnService without requiring startFlagVpnService (works with older service class). */
+    private fun startFlagVpnService(context: Context, flagsJson: String): Boolean =
+        runCatching {
+            val i = FlagVpnService.buildDirectIntent(context, flagsJson)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(i)
+            } else {
+                context.startService(i)
+            }
+            true
+        }.getOrDefault(false)
+
     fun startVpnBypass(context: Context) {
         // ADD THIS CHECK
         if (!shizuku.ok && !useRoot) {
@@ -4166,7 +4179,7 @@ class TacoState(
             _pendingVpnIntent = intent
             notify("Grant VPN permission to enable bypass.", "other")
         } else {
-            val started = runCatching { FlagVpnService.startSafely(context, flags) }.getOrDefault(false)
+            val started = runCatching { startFlagVpnService(context, flags) }.getOrDefault(false)
             if (started) {
                 vpnStatus = "active"
                 notify("VPN bypass active — CDN interception live.", "other")
@@ -4209,7 +4222,7 @@ class TacoState(
             else DesyncInjector.removeFromMap(m)
             toJson(m)
         }
-        val started = runCatching { FlagVpnService.startSafely(context, flags) }.getOrDefault(false)
+        val started = runCatching { startFlagVpnService(context, flags) }.getOrDefault(false)
         if (started) {
             vpnStatus = "active"
             notify("VPN bypass active — CDN interception live.", "other")
