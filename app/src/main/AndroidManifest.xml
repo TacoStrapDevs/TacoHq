@@ -1,13 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Shizuku & Network Permissions -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    
+    <!-- Foreground Service Permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- BIND_VPN_SERVICE goes on the SERVICE not as a uses-permission -->
+    <!-- Required for Shizuku to work on Android 11+ -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="moe.shizuku.manager" />
+    </queries>
 
     <application
         android:name=".TacoApplication"
@@ -16,8 +24,10 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="TacoStrap"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
+        <!-- Shizuku Provider -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -26,6 +36,7 @@
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
+        <!-- Main App Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -35,6 +46,7 @@
             </intent-filter>
         </activity>
 
+        <!-- VPN & TUN Service -->
         <service
             android:name=".FlagVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
