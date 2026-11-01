@@ -29,7 +29,6 @@ object MitmProxy {
         "/v2/client-settings"
     )
 
-    // set by FlagVpnService BEFORE start() — required for protect() in passThrough
     @Volatile var vpnService: FlagVpnService? = null
 
     @Volatile private var flagsJson = "{}"
@@ -43,7 +42,6 @@ object MitmProxy {
         flagsJson = initialFlags
         running   = true
 
-        // HTTP listener — port 8899
         thread(name = "Proxy-HTTP", isDaemon = true) {
             try {
                 val ss = ServerSocket(PROXY_PORT_HTTP)
@@ -56,7 +54,6 @@ object MitmProxy {
             } catch (e: Exception) { if (running) Log.e(TAG, "HTTP accept: ${e.message}") }
         }
 
-        // HTTPS listener — port 8900
         thread(name = "Proxy-HTTPS", isDaemon = true) {
             val ssf = CertManager.getServerSocketFactory(context) ?: run {
                 Log.w(TAG, "no CA cert — HTTPS interception disabled"); return@thread
@@ -83,8 +80,6 @@ object MitmProxy {
 
     fun updateFlags(json: String) { flagsJson = json }
 
-    // ── plain HTTP ────────────────────────────────────────────────────────────
-
     private fun handlePlain(client: Socket) {
         client.soTimeout = SO_TIMEOUT
         try {
@@ -92,8 +87,6 @@ object MitmProxy {
         } catch (e: Exception) { Log.w(TAG, "plain: ${e.message}") }
         finally { runCatching { client.close() } }
     }
-
-    // ── HTTPS ─────────────────────────────────────────────────────────────────
 
     private fun handleSsl(client: SSLSocket) {
         client.soTimeout     = SO_TIMEOUT
@@ -105,8 +98,6 @@ object MitmProxy {
         finally { runCatching { client.close() } }
     }
 
-    // ── shared request handler ────────────────────────────────────────────────
-
     private fun processRequest(input: BufferedReader, output: OutputStream, ssl: Boolean) {
         val requestLine = input.readLine() ?: return
         val headers     = readHeaders(input)
@@ -115,7 +106,6 @@ object MitmProxy {
         val method      = parts.getOrElse(0) { "GET" }
         val path        = parts.getOrElse(1) { "/" }
 
-        // drop telemetry silently with 204
         if (AntiBan.isTelemetryPath(path)) {
             output.write("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
             output.flush()
@@ -164,12 +154,9 @@ object MitmProxy {
         try {
             val port = if (ssl) 443 else 80
 
-            // FIX: create unconnected socket first, protect it, THEN connect
-            // if we call Socket(host, port) directly it connects through TUN immediately
-            // and loops before protect() has any effect — this was the connection error
             val rawSock = Socket()
 
-            // protect MUST happen before connect()
+            // FIX: Protect the socket BEFORE connecting so it doesn't loop into the TUN
             val svc = vpnService
             if (svc != null) {
                 if (!svc.protect(rawSock)) {
@@ -179,7 +166,6 @@ object MitmProxy {
                 Log.w(TAG, "vpnService null — upstream socket unprotected, may loop")
             }
 
-            // now safe to connect — goes through real NIC not TUN
             rawSock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT)
             rawSock.soTimeout = SO_TIMEOUT
 
