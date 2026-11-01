@@ -161,7 +161,7 @@ object MitmProxy {
             val svc = vpnService
             if (svc != null) {
                 if (!svc.protect(rawSock)) {
-                    Log.e(TAG, "protect() returned false — upstream will loop through TUN")
+                    Log.e(TAG, "protect() returned false — upstream will loop")
                 }
             }
 
