@@ -53,6 +53,7 @@ dependencies {
     // Discord RPC WebSocket Support
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
-    // BouncyCastle (The line you asked for)
-    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+    // BouncyCastle Support (The Correct Pair)
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 }
