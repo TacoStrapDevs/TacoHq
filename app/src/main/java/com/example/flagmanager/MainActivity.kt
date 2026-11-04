@@ -276,34 +276,91 @@ object DefaultBootstrapper : Bootstrapper {
 
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
-            // Desync is forced at the call site when the UI toggle is ON
-            val b64 = Base64.encodeToString(json.toByteArray(), Base64.NO_WRAP)
-            val paths = listOf(path, ALT_PATH, EXE_PATH).distinct()
-            var success = false
-            var lastOut = ""
-
-            for (p in paths) {
-                val dir = p.substringBeforeLast('/', "")
-                val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
-                val cmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(p)} && chmod 644 ${shq(p)}"
-                val (ok, out) = runCmd(cmd, root)
-                if (ok) success = true else lastOut = out
+            val targetPath = path.trim()
+            if (targetPath.isEmpty() || !targetPath.startsWith("/")) {
+                return@withContext "Failed: choose a valid absolute ClientAppSettings.json path"
             }
 
-            if (!success) return@withContext "Failed: ${lastOut.ifBlank { "could not write flag file" }}"
-            if (fpsCap) runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
-            "Applied ${parseFlags(json).size} flags successfully"
+            // Reject malformed JSON before touching any existing configuration file.
+            val expected = try {
+                JSONObject(json)
+                parseFlags(json)
+            } catch (e: Exception) {
+                return@withContext "Failed: invalid JSON — ${e.message ?: "check the JSON syntax"}"
+            }
+
+            val b64 = Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            val dir = targetPath.substringBeforeLast('/', "")
+            val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
+            val writeCmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(targetPath)} && chmod 644 ${shq(targetPath)}"
+            val (writeOk, writeOut) = runCmd(writeCmd, root)
+            if (!writeOk) {
+                return@withContext "Failed: could not write configured path — ${writeOut.ifBlank { "permission denied or path unavailable" }}"
+            }
+
+            // Verify the exact configured file before reporting success.
+            val (readOk, readBack) = runCmd("cat ${shq(targetPath)}", root)
+            if (!readOk) {
+                return@withContext "Failed: file was written but could not be read back for verification"
+            }
+            val actual = try {
+                parseFlags(JSONObject(readBack).toString())
+            } catch (_: Exception) {
+                return@withContext "Failed: written file is not valid JSON"
+            }
+            val mismatches = expected.count { (key, value) -> actual[key] != value }
+            if (mismatches > 0 || actual.size != expected.size) {
+                return@withContext "Failed: read-back verification found $mismatches mismatched flags"
+            }
+
+            // Keep the additional package-specific locations as best-effort mirrors.
+            // Their failure must not hide a failure of the configured primary file.
+            val safePkg = pkg.trim().takeIf { it.matches(Regex("[A-Za-z0-9_.]+")) }
+            if (safePkg != null) {
+                val mirrorPaths = listOf(
+                    "/data/data/$safePkg/files/ClientSettings/ClientAppSettings.json",
+                    "/data/data/$safePkg/files/exe/ClientSettings/ClientAppSettings.json"
+                ).filter { it != targetPath }.distinct()
+                for (mirror in mirrorPaths) {
+                    val mirrorDir = mirror.substringBeforeLast('/')
+                    val mirrorCmd = "mkdir -p ${shq(mirrorDir)} && printf %s ${shq(b64)} | base64 -d > ${shq(mirror)} && chmod 644 ${shq(mirror)}"
+                    runCmd(mirrorCmd, root)
+                }
+            }
+
+            val fpsResult = if (fpsCap) {
+                runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
+            } else null
+            val fpsNote = if (fpsCap && fpsResult?.first != true) " (FPS system setting was not changed)" else ""
+            "Applied and verified ${expected.size} flags at $targetPath$fpsNote"
         }
 
     override suspend fun verify(json: String, path: String, root: Boolean): String =
         withContext(Dispatchers.IO) {
-            val (ok, out) = runCmd("cat ${shq(path)}", root)
-            if (!ok) return@withContext "Verify failed: cannot read flag file"
-            val onDisk = runCatching { parseFlags(out) }.getOrNull()
-                ?: return@withContext "Verify failed: file is not valid JSON"
-            val want = parseFlags(json)
-            val bad = want.count { onDisk[it.key] != it.value }
-            if (bad == 0) "Verified: ${want.size} flags on disk match." else "Verify failed: $bad flags differ on disk"
+            val targetPath = path.trim()
+            if (targetPath.isEmpty() || !targetPath.startsWith("/")) {
+                return@withContext "Verify failed: invalid file path"
+            }
+            val expected = try {
+                JSONObject(json)
+                parseFlags(json)
+            } catch (e: Exception) {
+                return@withContext "Verify failed: expected configuration is invalid JSON"
+            }
+            val (ok, out) = runCmd("cat ${shq(targetPath)}", root)
+            if (!ok) return@withContext "Verify failed: cannot read $targetPath"
+            val onDisk = try {
+                parseFlags(JSONObject(out).toString())
+            } catch (_: Exception) {
+                return@withContext "Verify failed: file is not a valid JSON object"
+            }
+            val bad = expected.count { (key, value) -> onDisk[key] != value }
+            val extra = onDisk.size != expected.size
+            if (bad == 0 && !extra) {
+                "Verified: all ${expected.size} flags on disk match."
+            } else {
+                "Verify failed: $bad mismatched flags; expected ${expected.size}, found ${onDisk.size}."
+            }
         }
 
     override suspend fun launchRoblox(pkg: String, root: Boolean, restart: Boolean): String =
@@ -358,7 +415,8 @@ interface AllowlistProvider {
 }
 
 object DefaultAllowlist : AllowlistProvider {
-    override fun isAllowed(key: String): Boolean = true
+    // No authoritative allowlist source is connected. Never claim a flag is allowed.
+    override fun isAllowed(key: String): Boolean = false
 }
 
 sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, val color: Color) {
@@ -832,10 +890,21 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun AllowlistBadge(allowed: Boolean?) {
+    val verified = allowed == true
     Row(verticalAlignment = Alignment.CenterVertically) {
-        TacoIcon(TacoIcon.Check, TacoPalette.Guac, 13.dp, 2.6f)
+        TacoIcon(
+            if (verified) TacoIcon.Check else TacoIcon.Info,
+            if (verified) TacoPalette.Guac else TacoPalette.Muted,
+            13.dp,
+            2.2f
+        )
         Spacer(Modifier.width(4.dp))
-        Text("allowed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = TacoPalette.Guac)
+        Text(
+            if (verified) "verified" else "not verified",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (verified) TacoPalette.Guac else TacoPalette.Muted
+        )
     }
 }
 
@@ -1555,7 +1624,7 @@ fun HomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                     LedStatus("Shizuku", state.shizuku.short, state.shizuku.color),
                     LedStatus("Root", if (state.rootAvailable == true) "ok" else "optional", TacoPalette.Muted, optional = true),
                     LedStatus("Roblox", state.robloxVersion ?: "…", if (state.robloxVersion == null) TacoPalette.Faint else TacoPalette.Guac),
-                    LedStatus("VPN", state.vpnStatus,
+                    LedStatus("Listener", state.vpnStatus,
                         when (state.vpnStatus) {
                             "active" -> TacoPalette.Guac
                             "starting" -> TacoPalette.Tortilla
@@ -3088,8 +3157,8 @@ fun SettingsScreen(state: TacoState) {
             SettingSwitch("Restart Roblox", "Force-stops Roblox before launching.", state.restart) { state.restart = it; state.persist() }
             SettingSwitch("Disable frame-rate cap", "Lifts Android's game frame cap above 60 FPS automatically.", state.fpsCap) { state.fpsCap = it; state.persist() }
             SettingSwitch(
-                title = "VPN flag bypass",
-                sub = "Intercepts Roblox's CDN flag fetch and injects all flags — bypasses the binary allowlist. Requires VPN permission.",
+                title = "Local diagnostic listener",
+                sub = "Starts a local status listener only. It does not intercept Roblox traffic or bypass FastFlag allowlists.",
                 checked = state.vpnBypass
             ) { enabled ->
                 state.vpnBypass = enabled
@@ -3099,13 +3168,13 @@ fun SettingsScreen(state: TacoState) {
             }
             if (state.vpnStatus != "off") {
                 SettingValue(
-                    title = "VPN bypass status",
+                    title = "Diagnostic listener status",
                     value = state.vpnStatus,
                     onClick = {},
                     sub = when (state.vpnStatus) {
-                        "active" -> "CDN interception live — all flags including blocked ones are injected"
-                        "starting" -> "Waiting for VPN permission grant…"
-                        "error" -> "Proxy error — check logcat for details"
+                        "active" -> "Local listener active; Roblox traffic is unchanged"
+                        "starting" -> "Starting local diagnostic listener…"
+                        "error" -> "Local listener failed; check the app log"
                         else -> ""
                     }
                 )
@@ -3516,7 +3585,7 @@ class TacoState(
         steps += LaunchStep("Check Shizuku")
         if (m != LaunchMode.VERIFY) steps += LaunchStep("Apply ${merged.size} flags")
         steps += LaunchStep("Verify")
-        if (vpnBypass) steps += LaunchStep("VPN bypass")
+        if (vpnBypass) steps += LaunchStep("Local diagnostic listener")
         if (m == LaunchMode.SAVE_LAUNCH) steps += LaunchStep("Launch Roblox")
         val vIdx = steps.indexOfFirst { it.title == "Verify" }
         launchState = LaunchState.Running(steps.toList(), 0)
@@ -3558,21 +3627,16 @@ class TacoState(
                 }
                 push(vIdx, StepStatus.Done, vmsg)
 
-                // VPN bypass step — inject flags via CDN interception
+                // This service is diagnostic-only; it never modifies Roblox traffic.
                 if (vpnBypass) {
-                    val vpnIdx = steps.indexOfFirst { it.title == "VPN bypass" }
-                    if (vpnIdx >= 0) {
-                        push(vpnIdx, StepStatus.Running, "updating CDN interceptor…")
+                    val listenerIdx = steps.indexOfFirst { it.title == "Local diagnostic listener" }
+                    if (listenerIdx >= 0) {
                         val ctx = appContext
-                        if (ctx != null) {
-                            // Make sure the service is running before updating flags
-                            if (vpnStatus != "active") {
-                                startVpnBypass(ctx)
-                            }
-                            FlagVpnService.updateFlags(ctx, toJson(merged))
-                            push(vpnIdx, StepStatus.Done, "CDN interception live — ${merged.size} flags injected")
+                        val listenerState = if (ctx != null) FlagVpnService.getState(ctx) else "off"
+                        if (listenerState == "active") {
+                            push(listenerIdx, StepStatus.Done, "local listener active; Roblox traffic unchanged")
                         } else {
-                            push(vpnIdx, StepStatus.Skipped, "no context — VPN not started")
+                            push(listenerIdx, StepStatus.Skipped, "diagnostic listener is not active")
                         }
                     }
                 }
@@ -3735,61 +3799,23 @@ class TacoState(
     }
 
     fun startVpnBypass(context: Context) {
-        // ADD THIS CHECK
-        if (!shizuku.ok && !useRoot) {
-            vpnBypass = false
-            vpnStatus = "off"
-            notify("Failed: Shizuku is required for VPN bypass.", "other")
-            persist()
-            return
-        }
-
-        val flags = run {
-            val m = mergedFlags().toMutableMap()
-            if (desyncEnabled) DesyncInjector.ensureInMap(m)
-            else DesyncInjector.removeFromMap(m)
-            toJson(m)
-        }
-        val intent = FlagVpnService.buildStartIntent(context, flags)
-        if (intent != null) {
+        // The retained service is a local diagnostic listener, not a VPN tunnel.
+        runCatching {
+            FlagVpnService.start(context.applicationContext)
             vpnStatus = "starting"
-            _pendingVpnIntent = intent
-            notify("Grant VPN permission to enable bypass.", "other")
-        } else {
-            context.startService(FlagVpnService.buildDirectIntent(context, flags))
-            vpnStatus = "active"
-            notify("VPN bypass active — CDN interception live.", "other")
+            notify("Local diagnostic listener is starting. Roblox traffic is unchanged.", "other")
+        }.onFailure { error ->
+            vpnStatus = "error"
+            notify("Failed to start local diagnostic listener: ${error.message ?: "unknown error"}", "other")
         }
+        persist()
     }
 
     fun stopVpnBypass(context: Context) {
-        context.stopService(android.content.Intent(context, FlagVpnService::class.java))
+        runCatching { FlagVpnService.stop(context.applicationContext) }
         vpnStatus = "off"
-        notify("VPN bypass stopped.", "other")
-    }
-
-    // Pending VPN permission intent — consumed by MainActivity's permission launcher.
-    var _pendingVpnIntent: android.content.Intent? = null
-
-    fun onVpnPermissionGranted(context: Context) {
-        val flags = run {
-            val m = mergedFlags().toMutableMap()
-            if (desyncEnabled) DesyncInjector.ensureInMap(m)
-            else DesyncInjector.removeFromMap(m)
-            toJson(m)
-        }
-        context.startService(FlagVpnService.buildDirectIntent(context, flags))
-        vpnStatus = "active"
-        _pendingVpnIntent = null
-        notify("VPN bypass active — CDN interception live.", "other")
-    }
-
-    fun onVpnPermissionDenied() {
-        vpnBypass = false
-        vpnStatus = "off"
-        _pendingVpnIntent = null
+        notify("Local diagnostic listener stopped.", "other")
         persist()
-        notify("VPN permission denied — bypass disabled.", "other")
     }
 
     suspend fun refreshLoop() {
@@ -3797,6 +3823,9 @@ class TacoState(
         var tick = 0
         while (currentCoroutineContext().isActive) {
             shizuku = engine.shizukuState()
+            appContext?.let { ctx ->
+                vpnStatus = FlagVpnService.getState(ctx)
+            }
             if (robloxVersion == null && (shizuku.ok || useRoot) && tick % 8 == 0) {
                 robloxVersion = engine.robloxVersion(pkg, useRoot)
             }
@@ -3816,7 +3845,7 @@ private val TAB_ICONS = listOf(
     TacoIcon.Type to "Fonts", TacoIcon.Gamepad to "Games", TacoIcon.Sliders to "Settings"
 )
 
-// Application subclass so MainActivity can access TacoState for VPN permission callbacks.
+// Application subclass used to retain the current app state for lifecycle compatibility.
 // Add android:name=".TacoApplication" to <application> in AndroidManifest.xml.
 class TacoApplication : android.app.Application() {
     var tacoState: TacoState? = null
@@ -3826,41 +3855,15 @@ class MainActivity : ComponentActivity() {
 
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
-    // VPN permission result launcher — Android requires startActivityForResult for VpnService.prepare()
-    private lateinit var vpnPermLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(permListener) }
-
-        vpnPermLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val state = (application as? TacoApplication)?.tacoState
-            if (result.resultCode == RESULT_OK) {
-                state?.onVpnPermissionGranted(this)
-            } else {
-                state?.onVpnPermissionDenied()
-            }
-        }
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         setContent {
-            // Observe pending VPN intent from state and launch it
-            LaunchedEffect(Unit) {
-                while (true) {
-                    delay(300)
-                    val state = (application as? TacoApplication)?.tacoState ?: continue
-                    // Consume the pending intent before launching the permission screen.
-                    // Otherwise this polling loop can launch the same request every 300 ms.
-                    val intent = state._pendingVpnIntent
-                    if (intent != null) {
-                        state._pendingVpnIntent = null
-                        vpnPermLauncher.launch(intent)
-                    }
-                }
-            }
             TacoRoot()
         }
     }
@@ -3880,14 +3883,14 @@ fun TacoRoot() {
     val snackbar = remember { SnackbarHostState() }
     val state = remember { TacoState(prefs, DefaultBootstrapper, DefaultAllowlist, scope, snackbar) }
 
-    // Register state on application so MainActivity's VPN permission launcher can call back into it
+    // Keep the application-level state reference for compatibility with the manifest setup.
     LaunchedEffect(Unit) {
         (context.applicationContext as? TacoApplication)?.tacoState = state
     }
-    
-    // Auto-restart VPN bypass ONLY WHEN Shizuku is actually connected
-    LaunchedEffect(state.shizuku, state.vpnBypass) {
-        if (state.shizuku.ok && state.vpnBypass && state.vpnStatus != "active") {
+
+    // Restore the optional local diagnostic listener when its setting is enabled.
+    LaunchedEffect(state.vpnBypass) {
+        if (state.vpnBypass && state.vpnStatus != "active") {
             state.startVpnBypass(context)
         }
     }
