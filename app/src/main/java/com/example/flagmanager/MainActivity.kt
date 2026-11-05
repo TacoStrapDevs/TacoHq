@@ -274,12 +274,14 @@ object DefaultBootstrapper : Bootstrapper {
 
     override suspend fun applyFlags(json: String, path: String, pkg: String, fpsCap: Boolean, root: Boolean): String =
         withContext(Dispatchers.IO) {
+            // Keep the configured path behavior. The default remains
+            // /data/local/tmp/ClientAppSettings.json and is written through Shizuku.
             val targetPath = path.trim()
             if (targetPath.isEmpty() || !targetPath.startsWith("/")) {
                 return@withContext "Failed: choose a valid absolute ClientAppSettings.json path"
             }
 
-            // Reject malformed JSON before touching any existing configuration file.
+            // Validate before replacing the existing file.
             val expected = try {
                 JSONObject(json)
                 parseFlags(json)
@@ -289,18 +291,21 @@ object DefaultBootstrapper : Bootstrapper {
 
             val b64 = Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             val dir = targetPath.substringBeforeLast('/', "")
-            val mk = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
-            val writeCmd = "${mk}printf %s ${shq(b64)} | base64 -d > ${shq(targetPath)} && chmod 644 ${shq(targetPath)}"
+            val mkdir = if (dir.isNotEmpty()) "mkdir -p ${shq(dir)} && " else ""
+            val writeCmd = "${mkdir}printf %s ${shq(b64)} | base64 -d > ${shq(targetPath)} && chmod 644 ${shq(targetPath)}"
             val (writeOk, writeOut) = runCmd(writeCmd, root)
             if (!writeOk) {
-                return@withContext "Failed: could not write configured path — ${writeOut.ifBlank { "permission denied or path unavailable" }}"
+                return@withContext "Failed: could not write $targetPath — ${writeOut.ifBlank { "permission denied or path unavailable" }}"
             }
 
-            // Verify the exact configured file before reporting success.
+            // Read back the staging file. This is the deployment path used by
+            // the previous Shizuku workflow; do not require writes into
+            // /data/data/<roblox-package>, which Shizuku's shell cannot access.
             val (readOk, readBack) = runCmd("cat ${shq(targetPath)}", root)
             if (!readOk) {
                 return@withContext "Failed: file was written but could not be read back for verification"
             }
+
             val actual = try {
                 parseFlags(JSONObject(readBack).toString())
             } catch (_: Exception) {
@@ -311,61 +316,14 @@ object DefaultBootstrapper : Bootstrapper {
                 return@withContext "Failed: read-back verification found $mismatches mismatched flags"
             }
 
-            // A verified staging file is not enough: Roblox must have a
-            // ClientSettings file updated before deployment can be reported.
-            val safePkg = pkg.trim().takeIf { it.matches(Regex("[A-Za-z0-9_.]+")) }
-                ?: return@withContext "Failed: invalid Roblox package name"
-
-            val robloxPaths = listOf(
-                "/data/data/$safePkg/files/ClientSettings/ClientAppSettings.json",
-                "/data/data/$safePkg/files/exe/ClientSettings/ClientAppSettings.json"
-            ).distinct()
-
-            val verifiedPaths = mutableListOf<String>()
-            val failures = mutableListOf<String>()
-
-            for (destination in robloxPaths) {
-                if (destination == targetPath) {
-                    verifiedPaths += destination
-                    continue
-                }
-
-                val destinationDir = destination.substringBeforeLast('/')
-                val destinationCmd = "mkdir -p ${shq(destinationDir)} && printf %s ${shq(b64)} | base64 -d > ${shq(destination)} && chmod 644 ${shq(destination)}"
-                val (destinationWriteOk, destinationWriteOut) = runCmd(destinationCmd, root)
-                if (!destinationWriteOk) {
-                    failures += "$destination: ${destinationWriteOut.ifBlank { "write denied" }}"
-                    continue
-                }
-
-                val (destinationReadOk, destinationReadBack) = runCmd("cat ${shq(destination)}", root)
-                val destinationMatches = destinationReadOk && runCatching {
-                    val destinationFlags = parseFlags(JSONObject(destinationReadBack).toString())
-                    destinationFlags.size == expected.size &&
-                        expected.all { (key, value) -> destinationFlags[key] == value }
-                }.getOrDefault(false)
-
-                if (destinationMatches) {
-                    verifiedPaths += destination
-                } else {
-                    failures += "$destination: read-back verification failed"
-                }
-            }
-
-            if (verifiedPaths.isEmpty()) {
-                val detail = failures.firstOrNull()?.let { " — $it" }.orEmpty()
-                return@withContext(
-                    "Failed: staging file was verified, but neither Roblox ClientSettings " +
-                        "location could be updated. Root access may be required$detail"
-                )
-            }
-
+            // A successful staging write must not be turned into a failure by
+            // optional/private Roblox directory mirrors. Roblox's acceptance
+            // of individual FastFlags is separate from this file verification.
             val fpsResult = if (fpsCap) {
                 runCmd("cmd game set --mode 2 --downscale disable --fps 0 ${shq(pkg)}", root)
             } else null
             val fpsNote = if (fpsCap && fpsResult?.first != true) " (FPS system setting was not changed)" else ""
-            "Deployed and verified ${expected.size} flags in ${verifiedPaths.size} " +
-                "Roblox ClientSettings location(s). Roblox acceptance is not confirmed$fpsNote"
+            "Saved and verified ${expected.size} flags at $targetPath. Roblox flag loading is not confirmed$fpsNote"
         }
 
     override suspend fun verify(json: String, path: String, root: Boolean): String =
