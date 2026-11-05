@@ -1,13 +1,22 @@
-
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground services and notifications -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Roblox foreground-app detection -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+
+    <!-- Package visibility -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="moe.shizuku.manager" />
@@ -25,6 +34,7 @@
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
+        <!-- Shizuku provider -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -33,6 +43,7 @@
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
+        <!-- File provider -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
@@ -44,6 +55,7 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Main activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -55,6 +67,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Roblox activity watcher -->
+        <service
+            android:name=".RobloxWatchService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started Roblox foreground activity monitoring with an ongoing notification" />
+        </service>
+
+        <!-- Existing diagnostic VPN service -->
         <service
             android:name=".FlagVpnService"
             android:exported="false"
