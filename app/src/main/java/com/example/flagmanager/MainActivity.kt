@@ -3844,11 +3844,21 @@ class TacoApplication : android.app.Application() {
 
 class MainActivity : ComponentActivity() {
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* User may decline; app remains usable. */ }
+
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(permListener) }
+
+        TacoStrapNotifications.createChannels(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
