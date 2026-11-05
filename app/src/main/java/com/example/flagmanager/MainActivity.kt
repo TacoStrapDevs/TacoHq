@@ -15,6 +15,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Base64
@@ -3183,6 +3184,58 @@ fun SettingsScreen(state: TacoState) {
             SettingSwitch("Other messages", "Copies, backups and other actions.", state.msgOther) { state.msgOther = it; state.persist() }
         }
 
+        SectionLabel("Roblox Activity Notifications")
+        SettingsGroup {
+            Text(
+                "TacoStrap can detect when Roblox becomes the foreground app. Android does not expose Roblox's private game-server country here, so the location stays Unknown unless reliable session data becomes available.",
+                fontSize = 12.sp, color = TacoPalette.Muted, lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            SettingSwitch("Roblox activity notification", "Notify when Roblox opens on screen. This does not prove a game has joined.", state.joinNotifications) { state.joinNotifications = it; state.persist() }
+            SettingSwitch("Show server location", "Display the verified location field. It will say Unknown when no confirmed data exists.", state.showServerLocation) { state.showServerLocation = it; state.persist() }
+            SettingSwitch("Pop up on screen", "Use Android's high-importance notification channel. Device notification settings can override this.", state.popupNotifications) { state.popupNotifications = it; state.persist() }
+            SettingSwitch("Show Roblox while tracking", "Include Roblox activity status in TacoStrap's ongoing tracking notification.", state.showGameWhileTracking) { state.showGameWhileTracking = it; state.persist() }
+            SettingValue(
+                "Dismiss notification after",
+                when (state.dismissSeconds) { 0 -> "Automatic / system default"; else -> "${state.dismissSeconds} seconds" },
+                {
+                    state.dismissSeconds = when (state.dismissSeconds) { 0 -> 5; 5 -> 10; 10 -> 30; else -> 0 }
+                    state.persist()
+                },
+                sub = "Tap to cycle: Automatic → 5s → 10s → 30s"
+            )
+            Text("Matchmaker alerts are not available yet; TacoStrap has no verified matchmaker feed to monitor.",
+                fontSize = 12.sp, color = TacoPalette.Faint, lineHeight = 17.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TacoButton("Grant usage access", {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }, Modifier.weight(1f), ButtonKind.Quiet, height = 42.dp)
+                TacoButton("Start tracking", {
+                    if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    } else if (!RobloxWatchService.hasUsageAccess(context)) {
+                        runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    } else {
+                        context.getSharedPreferences("tacostrap_notifications", Context.MODE_PRIVATE).edit().putBoolean("watch_enabled", true).apply()
+                        RobloxWatchService.start(context)
+                        state.notify("Roblox activity tracking started.")
+                    }
+                }, Modifier.weight(1f), ButtonKind.Primary, height = 42.dp)
+            }
+            TacoButton("Stop tracking", {
+                context.getSharedPreferences("tacostrap_notifications", Context.MODE_PRIVATE).edit().putBoolean("watch_enabled", false).apply()
+                RobloxWatchService.stop(context)
+                state.notify("Roblox activity tracking stopped.")
+            }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), ButtonKind.Danger, height = 42.dp)
+        }
+
         SectionLabel("Backup")
         SettingsGroup {
             SettingValue("Export backup", "flags, layers and games as one JSON", { state.exportBackup() }, icon = TacoIcon.Save)
@@ -3325,6 +3378,11 @@ class TacoState(
     var msgFlag by mutableStateOf(prefs.getBoolean("msgFlag", true))
     var msgLaunch by mutableStateOf(prefs.getBoolean("msgLaunch", true))
     var msgOther by mutableStateOf(prefs.getBoolean("msgOther", true))
+    var joinNotifications by mutableStateOf(prefs.getBoolean("join_notifications", true))
+    var showServerLocation by mutableStateOf(prefs.getBoolean("show_server_location", true))
+    var popupNotifications by mutableStateOf(prefs.getBoolean("popup_notifications", false))
+    var showGameWhileTracking by mutableStateOf(prefs.getBoolean("show_game_tracking", true))
+    var dismissSeconds by mutableStateOf(prefs.getInt("dismiss_seconds", 0).coerceIn(0, 60))
     var bgImageUri by mutableStateOf(prefs.getString("bgImageUri", "") ?: "")
     var customFontUri by mutableStateOf(prefs.getString("customFontUri", "") ?: "")
     var selectedFontPreset by mutableStateOf(prefs.getString("selectedFontPreset", "Default Roblox Font") ?: "Default Roblox Font")
@@ -3776,6 +3834,11 @@ class TacoState(
             .putBoolean("haptics", hapticsOn).putBoolean("reduceMotion", reduceMotion)
             .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)
             .putBoolean("msgOther", msgOther)
+            .putBoolean("join_notifications", joinNotifications)
+            .putBoolean("show_server_location", showServerLocation)
+            .putBoolean("popup_notifications", popupNotifications)
+            .putBoolean("show_game_tracking", showGameWhileTracking)
+            .putInt("dismiss_seconds", dismissSeconds)
             .putString("bgImageUri", bgImageUri)
             .putString("customFontUri", customFontUri)
             .putString("selectedFontPreset", selectedFontPreset)
@@ -3844,21 +3907,11 @@ class TacoApplication : android.app.Application() {
 
 class MainActivity : ComponentActivity() {
 
-    private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* User may decline; app remains usable. */ }
-
     private val permListener = rikka.shizuku.Shizuku.OnRequestPermissionResultListener { _, _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         runCatching { rikka.shizuku.Shizuku.addRequestPermissionResultListener(permListener) }
-
-        TacoStrapNotifications.createChannels(this)
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
