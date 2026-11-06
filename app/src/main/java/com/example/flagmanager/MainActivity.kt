@@ -881,21 +881,21 @@ fun CategoryChip(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun AllowlistBadge(allowed: Boolean?) {
-    val verified = allowed == true
+@Suppress("UNUSED_PARAMETER")
+fun AppliedBadge(applied: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         TacoIcon(
-            if (verified) TacoIcon.Check else TacoIcon.Info,
-            if (verified) TacoPalette.Guac else TacoPalette.Muted,
+            TacoIcon.Check,
+            TacoPalette.Guac,
             13.dp,
             2.2f
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            if (verified) "verified" else "not verified",
+            "verified",
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
-            color = if (verified) TacoPalette.Guac else TacoPalette.Muted
+            color = TacoPalette.Guac
         )
     }
 }
@@ -2063,7 +2063,7 @@ fun FlagsScreen(state: TacoState) {
             items(customKeys, key = { "c$it" }) { key ->
                 CustomFlagRow(
                     name = key, value = draft[key] ?: "",
-                    allowed = state.isAllowed(key),
+                    applied = state.isApplied(key, draft[key]),
                     onEdit = { editorKey = key },
                     onToggle = { b -> draft[key] = if (b) "True" else "False" },
                     onDuplicate = { state.duplicateDraftFlag(key) },
@@ -2095,7 +2095,7 @@ fun FlagsScreen(state: TacoState) {
                 Text(if (isNew) "Add a flag" else "Edit flag", style = TacoType.display)
                 Spacer(Modifier.height(6.dp))
                 if (!isNew) Row(verticalAlignment = Alignment.CenterVertically) {
-                    AllowlistBadge(state.isAllowed(key)); Spacer(Modifier.width(10.dp))
+                    AppliedBadge(state.isApplied(key, draft[key])); Spacer(Modifier.width(10.dp))
                     Text(key, style = TacoType.mono.copy(fontSize = 12.sp), color = TacoPalette.Muted)
                 }
                 Spacer(Modifier.height(14.dp))
@@ -2296,7 +2296,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
             val keys = fsKeys(fs)
             if (keys.size == 1) {
                 Spacer(Modifier.height(6.dp))
-                AllowlistBadge(state.isAllowed(keys.first()))
+                AppliedBadge(state.isApplied(keys.first(), state.mergedFlags()[keys.first()]))
             }
         }
     }
@@ -2304,7 +2304,7 @@ private fun FlagSettingRow(fs: FS, draft: SnapshotStateMap<String, String>, stat
 
 @Composable
 private fun CustomFlagRow(
-    name: String, value: String, allowed: Boolean?,
+    name: String, value: String, applied: Boolean,
     onEdit: () -> Unit, onToggle: (Boolean) -> Unit, onDuplicate: () -> Unit, onDelete: () -> Unit
 ) {
     val accent = LocalTacoAccent.current
@@ -2320,7 +2320,7 @@ private fun CustomFlagRow(
             Column(Modifier.weight(1f)) {
                 Text(name, style = TacoType.mono.copy(fontSize = 12.5f.sp), color = TacoPalette.Cream)
                 Spacer(Modifier.height(2.dp))
-                AllowlistBadge(allowed)
+                AppliedBadge(applied)
             }
             if (isBool) {
                 TacoSwitch(value.equals("true", true), onToggle)
@@ -3363,6 +3363,9 @@ class TacoState(
     val layers = mutableStateListOf<FlagLayer>()
     val games = mutableStateMapOf<String, PinnedGame>()
     private var savedFlags by mutableStateOf<Map<String, String>>(emptyMap())
+    private var appliedFlags by mutableStateOf<Map<String, String>>(
+        parseFlags(prefs.getString("applied_flags_json", "{}") ?: "{}")
+    )
 
     var path by mutableStateOf(prefs.getString("path2", DEFAULT_PATH) ?: DEFAULT_PATH)
     var pkg by mutableStateOf(prefs.getString("pkg", DEFAULT_PKG) ?: DEFAULT_PKG)
@@ -3466,6 +3469,16 @@ class TacoState(
         layers.lastOrNull { it.enabled && it.id != "base" }?.name ?: "Base flags"
 
     fun isAllowed(key: String): Boolean = allowlist.isAllowed(key)
+
+    // "Applied" means the exact key/value pair was written and read back successfully.
+    // It does not mean Roblox itself accepts or uses that FastFlag.
+    fun isApplied(key: String, value: String?): Boolean =
+        value != null && appliedFlags[key] == value
+
+    private fun markApplied(flags: Map<String, String>) {
+        appliedFlags = flags.toMap()
+        prefs.edit().putString("applied_flags_json", toJson(appliedFlags)).apply()
+    }
 
     fun pendingCount(): Int {
         val keys = savedFlags.keys + draftFlags.keys
@@ -3609,13 +3622,12 @@ class TacoState(
                 notify("Failed: Shizuku ${sh.long.lowercase()}."); return@launch
             }
             if (applyOnSave) {
-                val r = engine.applyFlags(run {
-                val m = mergedFlags(g?.profile).toMutableMap()
-                if (desyncEnabled) DesyncInjector.ensureInMap(m)
-                else DesyncInjector.removeFromMap(m)
-                toJson(m)
-            }, path, pkg, fpsCap, useRoot)
+                val flagsToApply = mergedFlags(g?.profile).toMutableMap()
+                if (desyncEnabled) DesyncInjector.ensureInMap(flagsToApply)
+                else DesyncInjector.removeFromMap(flagsToApply)
+                val r = engine.applyFlags(toJson(flagsToApply), path, pkg, fpsCap, useRoot)
                 if (r.startsWith("Failed")) { notify(r); return@launch }
+                markApplied(flagsToApply)
             }
             val launchMsg = engine.launchGame(pkg, placeId, useRoot, restart)
             notify(launchMsg, "launch")
@@ -3663,6 +3675,7 @@ class TacoState(
                             steps[1] = steps[1].copy(status = StepStatus.Failed, detail = msg)
                             fail(1, msg); return@job
                         }
+                        markApplied(merged)
                         push(1, StepStatus.Done, msg)
                     } else {
                         push(1, StepStatus.Skipped, "write-on-apply disabled in Settings")
