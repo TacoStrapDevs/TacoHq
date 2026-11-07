@@ -34,7 +34,14 @@ data class RobloxLogEvent(
 
 class RobloxSessionParser {
 
+    companion object {
+        private const val PENDING_ENDPOINT_MAX_AGE = 15_000L
+    }
+
     private var currentSession = RobloxSession()
+
+    private var pendingEndpointIp: String? = null
+    private var pendingEndpointTimestamp = 0L
 
     private val joinRegex = Regex(
         """Joining game ['"]([^'"]+)['"] place (\d+)(?: at ([0-9a-fA-F:.]+))?""",
@@ -64,6 +71,55 @@ class RobloxSessionParser {
     )
 
     /**
+     * Extracts an endpoint from supported Roblox log formats.
+     */
+    private fun extractEndpoint(line: String): String? {
+        return udmuxRegex.find(line)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
+            ?: rccRegex.find(line)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Saves an endpoint temporarily when it appears before
+     * the corresponding join message.
+     */
+    private fun savePendingEndpoint(ip: String) {
+        pendingEndpointIp = ip
+        pendingEndpointTimestamp = System.currentTimeMillis()
+    }
+
+    /**
+     * Returns a recent pending endpoint, if available.
+     */
+    private fun consumePendingEndpoint(): String? {
+        val now = System.currentTimeMillis()
+
+        val isRecent =
+            pendingEndpointIp != null &&
+            now - pendingEndpointTimestamp in
+                0..PENDING_ENDPOINT_MAX_AGE
+
+        val endpoint = if (isRecent) {
+            pendingEndpointIp
+        } else {
+            null
+        }
+
+        clearPendingEndpoint()
+        return endpoint
+    }
+
+    private fun clearPendingEndpoint() {
+        pendingEndpointIp = null
+        pendingEndpointTimestamp = 0L
+    }
+
+    /**
      * Processes one Roblox log line.
      */
     @Synchronized
@@ -71,7 +127,9 @@ class RobloxSessionParser {
 
         if (line.isBlank()) return null
 
-        // Detect a new Roblox game session.
+        val detectedEndpoint = extractEndpoint(line)
+
+        // Detect a new game session.
         val joinMatch = joinRegex.find(line)
 
         if (joinMatch != null) {
@@ -86,10 +144,18 @@ class RobloxSessionParser {
                 .getOrNull(3)
                 ?.takeIf { it.isNotBlank() }
 
+            // Prefer the endpoint from the join line.
+            // Otherwise use a recently buffered endpoint.
+            val endpoint = initialEndpoint
+                ?: detectedEndpoint
+                ?: consumePendingEndpoint()
+
+            clearPendingEndpoint()
+
             currentSession = RobloxSession(
                 placeId = placeId,
                 jobId = jobId,
-                endpointIp = initialEndpoint,
+                endpointIp = endpoint,
                 joined = true
             )
 
@@ -99,18 +165,47 @@ class RobloxSessionParser {
             )
         }
 
-        if (!currentSession.joined) return null
-
-        // Detect disconnection before processing other updates.
+        // Detect disconnection before processing endpoints.
         if (disconnectPatterns.any { it.containsMatchIn(line) }) {
 
             val endedSession = currentSession.copy()
 
             currentSession = RobloxSession()
+            clearPendingEndpoint()
+
+            return if (endedSession.joined) {
+                RobloxLogEvent(
+                    type = RobloxLogEvent.Type.DISCONNECTED,
+                    session = endedSession
+                )
+            } else {
+                null
+            }
+        }
+
+        // Buffer endpoints that appear before a join.
+        if (!currentSession.joined) {
+
+            if (detectedEndpoint != null) {
+                savePendingEndpoint(detectedEndpoint)
+            }
+
+            return null
+        }
+
+        // Update the active session's endpoint.
+        if (
+            detectedEndpoint != null &&
+            detectedEndpoint != currentSession.endpointIp
+        ) {
+
+            currentSession = currentSession.copy(
+                endpointIp = detectedEndpoint
+            )
 
             return RobloxLogEvent(
-                type = RobloxLogEvent.Type.DISCONNECTED,
-                session = endedSession
+                type = RobloxLogEvent.Type.ENDPOINT_UPDATED,
+                session = currentSession.copy()
             )
         }
 
@@ -124,34 +219,6 @@ class RobloxSessionParser {
         ) {
             currentSession = currentSession.copy(
                 loading = true
-            )
-        }
-
-        // UDMUX is preferred over RCC for location lookup.
-        val udmuxAddress = udmuxRegex
-            .find(line)
-            ?.groupValues
-            ?.getOrNull(1)
-
-        val rccAddress = rccRegex
-            .find(line)
-            ?.groupValues
-            ?.getOrNull(1)
-
-        val detectedEndpoint = udmuxAddress ?: rccAddress
-
-        if (
-            detectedEndpoint != null &&
-            detectedEndpoint != currentSession.endpointIp
-        ) {
-
-            currentSession = currentSession.copy(
-                endpointIp = detectedEndpoint
-            )
-
-            return RobloxLogEvent(
-                type = RobloxLogEvent.Type.ENDPOINT_UPDATED,
-                session = currentSession.copy()
             )
         }
 
@@ -188,5 +255,6 @@ class RobloxSessionParser {
     @Synchronized
     fun reset() {
         currentSession = RobloxSession()
+        clearPendingEndpoint()
     }
 }
