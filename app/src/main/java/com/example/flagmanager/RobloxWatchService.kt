@@ -24,11 +24,8 @@ import androidx.core.app.NotificationCompat
 /**
  * Monitors Roblox foreground activity and game-session logs.
  *
- * RobloxLogHelper detects session events.
- * RobloxServerLocation estimates the country of a public endpoint.
- *
- * IP geolocation is an estimate, not proof of physical
- * game-server location.
+ * Country information is estimated from a detected public
+ * network endpoint. It is not proof of physical server location.
  */
 class RobloxWatchService : Service() {
 
@@ -40,7 +37,8 @@ class RobloxWatchService : Service() {
         private const val CHANNEL_JOIN_POPUP = "tacostrap_join_popup"
 
         private const val TRACKING_ID = 7810
-        private const val JOIN_ID = 7811
+        private const val OPEN_ID = 7811
+        private const val GAME_ID = 7812
 
         private const val WATCH_PREFS = "tacostrap_notifications"
         private const val SETTINGS_PREFS = "fm"
@@ -64,10 +62,7 @@ class RobloxWatchService : Service() {
         }
 
         fun start(context: Context) {
-            val intent = Intent(
-                context,
-                RobloxWatchService::class.java
-            )
+            val intent = Intent(context, RobloxWatchService::class.java)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -92,16 +87,16 @@ class RobloxWatchService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var lastRobloxForegroundAt = 0L
     private var lastEventTimestamp = 0L
     private var lastLogStartAttempt = 0L
+
+    private var robloxInForeground = false
 
     private var currentServerCountry = "Unknown"
     private var currentServerCode: String? = null
     private var activeEndpointIp: String? = null
 
     private var sessionGeneration = 0
-
     private var sessionDetected = false
     private var serviceDestroyed = false
 
@@ -125,10 +120,7 @@ class RobloxWatchService : Service() {
             detectRobloxForeground()
             tryStartLogMonitoring()
 
-            handler.postDelayed(
-                this,
-                POLL_INTERVAL
-            )
+            handler.postDelayed(this, POLL_INTERVAL)
         }
     }
 
@@ -158,12 +150,7 @@ class RobloxWatchService : Service() {
         startId: Int
     ): Int {
 
-        if (!isEnabled(this)) {
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
-
-        if (!hasUsageAccess(this)) {
+        if (!isEnabled(this) || !hasUsageAccess(this)) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -181,10 +168,6 @@ class RobloxWatchService : Service() {
         return START_STICKY
     }
 
-    /**
-     * Starts Shizuku log monitoring.
-     * Retries periodically if Shizuku is unavailable.
-     */
     private fun tryStartLogMonitoring() {
 
         if (serviceDestroyed) return
@@ -195,10 +178,7 @@ class RobloxWatchService : Service() {
 
         val now = System.currentTimeMillis()
 
-        if (
-            now - lastLogStartAttempt <
-            LOG_RETRY_INTERVAL
-        ) {
+        if (now - lastLogStartAttempt < LOG_RETRY_INTERVAL) {
             return
         }
 
@@ -207,22 +187,102 @@ class RobloxWatchService : Service() {
         try {
             helper.start()
         } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "Could not start Roblox log monitoring",
-                e
-            )
+            Log.e(TAG, "Could not start Roblox log monitoring", e)
+        }
+    }
+
+    /**
+     * Updates foreground state and activity notifications.
+     */
+    private fun setRobloxForeground(isForeground: Boolean) {
+
+        if (robloxInForeground == isForeground) return
+
+        robloxInForeground = isForeground
+
+        if (isForeground) {
+
+            if (sessionDetected) {
+                postGameSessionNotification()
+            } else {
+                postRobloxOpenedNotification()
+            }
+
+        } else {
+
+            cancelActivityNotifications()
+        }
+    }
+
+    /**
+     * Detects which application is currently in the foreground
+     * using Android UsageStats events.
+     */
+    private fun detectRobloxForeground() {
+
+        val usage = getSystemService(
+            Context.USAGE_STATS_SERVICE
+        ) as UsageStatsManager
+
+        val now = System.currentTimeMillis()
+
+        val events = usage.queryEvents(
+            (now - 10000L).coerceAtLeast(0L),
+            now
+        )
+
+        val event = UsageEvents.Event()
+
+        while (events.hasNextEvent()) {
+
+            events.getNextEvent(event)
+
+            if (event.timeStamp <= lastEventTimestamp) {
+                continue
+            }
+
+            lastEventTimestamp = event.timeStamp
+
+            val isResumed =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    event.eventType ==
+                        UsageEvents.Event.ACTIVITY_RESUMED
+                } else {
+                    @Suppress("DEPRECATION")
+                    event.eventType ==
+                        UsageEvents.Event.MOVE_TO_FOREGROUND
+                }
+
+            val isPaused =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    event.eventType ==
+                        UsageEvents.Event.ACTIVITY_PAUSED
+                } else {
+                    @Suppress("DEPRECATION")
+                    event.eventType ==
+                        UsageEvents.Event.MOVE_TO_BACKGROUND
+                }
+
+            if (isResumed) {
+
+                setRobloxForeground(
+                    event.packageName == ROBLOX_PACKAGE
+                )
+
+            } else if (
+                isPaused &&
+                event.packageName == ROBLOX_PACKAGE
+            ) {
+
+                setRobloxForeground(false)
+            }
         }
     }
 
     /**
      * Handles parsed Roblox session events.
-     * These callbacks are delivered on the main thread
-     * by RobloxLogHelper.
      */
-    private fun handleSessionEvent(
-        event: RobloxLogEvent
-    ) {
+    private fun handleSessionEvent(event: RobloxLogEvent) {
 
         if (serviceDestroyed) return
 
@@ -239,7 +299,10 @@ class RobloxWatchService : Service() {
                 currentServerCode = null
 
                 updateTrackingNotification()
-                postRobloxActivityNotification()
+
+                if (robloxInForeground) {
+                    postGameSessionNotification()
+                }
 
                 val endpoint = event.session.endpointIp
 
@@ -256,19 +319,16 @@ class RobloxWatchService : Service() {
                     lookupServerCountry(endpoint)
                 }
 
-                // Refresh the activity notification even
-                // while the country lookup is pending.
-                postRobloxActivityNotification()
+                if (robloxInForeground && sessionDetected) {
+                    postGameSessionNotification()
+                }
             }
 
             RobloxLogEvent.Type.SERVER_CONFIRMED -> {
 
                 // serverId is not an IP address.
                 // Never use it to guess a country.
-                Log.d(
-                    TAG,
-                    "Roblox server identifier detected"
-                )
+                Log.d(TAG, "Roblox server identifier detected")
             }
 
             RobloxLogEvent.Type.DISCONNECTED -> {
@@ -281,7 +341,12 @@ class RobloxWatchService : Service() {
                 currentServerCountry = "Unknown"
                 currentServerCode = null
 
+                cancelGameNotification()
                 updateTrackingNotification()
+
+                if (robloxInForeground) {
+                    postRobloxOpenedNotification()
+                }
             }
         }
     }
@@ -291,9 +356,7 @@ class RobloxWatchService : Service() {
      */
     private fun lookupServerCountry(ip: String) {
 
-        if (serviceDestroyed) return
-
-        if (ip == activeEndpointIp) return
+        if (serviceDestroyed || ip == activeEndpointIp) return
 
         activeEndpointIp = ip
 
@@ -303,7 +366,10 @@ class RobloxWatchService : Service() {
         val generation = sessionGeneration
 
         updateTrackingNotification()
-        postRobloxActivityNotification()
+
+        if (robloxInForeground && sessionDetected) {
+            postGameSessionNotification()
+        }
 
         val resolver = locationResolver ?: return
 
@@ -313,12 +379,10 @@ class RobloxWatchService : Service() {
 
                 if (serviceDestroyed) return@post
 
-                // Ignore results belonging to an older session.
                 if (generation != sessionGeneration) {
                     return@post
                 }
 
-                // Ignore results for an outdated endpoint.
                 if (activeEndpointIp != ip) {
                     return@post
                 }
@@ -341,15 +405,14 @@ class RobloxWatchService : Service() {
 
                     Log.d(
                         TAG,
-                        "Server location unavailable: " +
-                            "${result.message}"
+                        "Server location unavailable: ${result.message}"
                     )
                 }
 
                 updateTrackingNotification()
 
-                if (sessionDetected) {
-                    postRobloxActivityNotification()
+                if (robloxInForeground && sessionDetected) {
+                    postGameSessionNotification()
                 }
             }
         }
@@ -367,9 +430,13 @@ class RobloxWatchService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_TRACKING,
-                "TacoStrap tracking",
+                "TacoStrap background monitoring",
                 NotificationManager.IMPORTANCE_LOW
-            )
+            ).apply {
+                description =
+                    "Required while Roblox background monitoring is enabled"
+                setShowBadge(false)
+            }
         )
 
         manager.createNotificationChannel(
@@ -389,39 +456,23 @@ class RobloxWatchService : Service() {
         )
     }
 
+    /**
+     * Minimal persistent notification required by Android
+     * while this foreground service is running.
+     */
     private fun trackingNotification(): Notification {
-
-        val prefs = getSharedPreferences(
-            SETTINGS_PREFS,
-            Context.MODE_PRIVATE
-        )
-
-        val showGame = prefs.getBoolean(
-            "show_game_tracking",
-            true
-        )
-
-        val content = if (showGame) {
-            "Watching Roblox · Server: $currentServerCountry"
-        } else {
-            "Watching for Roblox activity"
-        }
 
         return NotificationCompat.Builder(
             this,
             CHANNEL_TRACKING
         )
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("TacoStrap activity tracking")
+            .setContentTitle("TacoStrap monitoring")
+            .setContentText("Roblox monitoring is active")
             .setColor(Color.rgb(255, 201, 40))
-            .setContentText(content)
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
-                    "$content\n$logMonitoringStatus"
-                )
-            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
             .build()
     }
 
@@ -439,84 +490,39 @@ class RobloxWatchService : Service() {
         )
     }
 
-    private fun detectRobloxForeground() {
-
-        val usage = getSystemService(
-            Context.USAGE_STATS_SERVICE
-        ) as UsageStatsManager
-
-        val now = System.currentTimeMillis()
-
-        val events = usage.queryEvents(
-            (now - 5000L).coerceAtLeast(0L),
-            now
-        )
-
-        val event = UsageEvents.Event()
-
-        var detected = false
-
-        while (events.hasNextEvent()) {
-
-            events.getNextEvent(event)
-
-            if (event.timeStamp <= lastEventTimestamp) {
-                continue
-            }
-
-            lastEventTimestamp = event.timeStamp
-
-            val foregroundEvent =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    event.eventType ==
-                        UsageEvents.Event.ACTIVITY_RESUMED
-                } else {
-                    @Suppress("DEPRECATION")
-                    event.eventType ==
-                        UsageEvents.Event.MOVE_TO_FOREGROUND
-                }
-
-            if (
-                foregroundEvent &&
-                event.packageName == ROBLOX_PACKAGE
-            ) {
-                detected = true
-            }
-        }
-
-        if (
-            detected &&
-            now - lastRobloxForegroundAt > 15000L
-        ) {
-            lastRobloxForegroundAt = now
-            postRobloxActivityNotification()
-        }
-    }
-
-    /**
-     * Posts or updates the Roblox activity notification.
-     */
-    private fun postRobloxActivityNotification() {
+    private fun selectedActivityChannel(): String {
 
         val prefs = getSharedPreferences(
             SETTINGS_PREFS,
             Context.MODE_PRIVATE
         )
 
-        if (!prefs.getBoolean("join_notifications", true)) {
-            return
-        }
-
-        val popup = prefs.getBoolean(
-            "popup_notifications",
-            false
-        )
-
-        val channel = if (popup) {
+        return if (
+            prefs.getBoolean("popup_notifications", false)
+        ) {
             CHANNEL_JOIN_POPUP
         } else {
             CHANNEL_JOIN
         }
+    }
+
+    private fun canPostNotifications(): Boolean {
+
+        return Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * Builds a Roblox activity notification.
+     */
+    private fun buildActivityNotification(
+        notificationId: Int,
+        title: String,
+        content: String,
+        expandedText: String
+    ): Notification {
 
         val launchIntent =
             packageManager.getLaunchIntentForPackage(packageName)
@@ -524,12 +530,88 @@ class RobloxWatchService : Service() {
         val pending = launchIntent?.let {
             PendingIntent.getActivity(
                 this,
-                JOIN_ID,
+                notificationId,
                 it,
                 PendingIntent.FLAG_UPDATE_CURRENT or
                     PendingIntent.FLAG_IMMUTABLE
             )
         }
+
+        val builder = NotificationCompat.Builder(
+            this,
+            selectedActivityChannel()
+        )
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setColor(Color.rgb(255, 201, 40))
+            .setContentText(content)
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(expandedText)
+            )
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+
+        if (pending != null) {
+            builder.setContentIntent(pending)
+        }
+
+        val timeout = getSharedPreferences(
+            SETTINGS_PREFS,
+            Context.MODE_PRIVATE
+        ).getInt("dismiss_seconds", 0)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && timeout > 0) {
+            builder.setTimeoutAfter(timeout * 1000L)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Notification shown when Roblox opens without an active game session.
+     */
+    private fun postRobloxOpenedNotification() {
+
+        if (!robloxInForeground || sessionDetected) return
+
+        val prefs = getSharedPreferences(
+            SETTINGS_PREFS,
+            Context.MODE_PRIVATE
+        )
+
+        if (!prefs.getBoolean("join_notifications", true)) return
+        if (!canPostNotifications()) return
+
+        val notification = buildActivityNotification(
+            notificationId = OPEN_ID,
+            title = "TacoStrap · Roblox detected",
+            content = "Roblox is now open",
+            expandedText = "Roblox is now in the foreground."
+        )
+
+        val manager = getSystemService(
+            Context.NOTIFICATION_SERVICE
+        ) as NotificationManager
+
+        manager.cancel(GAME_ID)
+        manager.notify(OPEN_ID, notification)
+    }
+
+    /**
+     * Notification shown while Roblox is in the foreground
+     * and a game session has been detected.
+     */
+    private fun postGameSessionNotification() {
+
+        if (!robloxInForeground || !sessionDetected) return
+
+        val prefs = getSharedPreferences(
+            SETTINGS_PREFS,
+            Context.MODE_PRIVATE
+        )
+
+        if (!prefs.getBoolean("join_notifications", true)) return
+        if (!canPostNotifications()) return
 
         val showLocation = prefs.getBoolean(
             "show_server_location",
@@ -542,66 +624,42 @@ class RobloxWatchService : Service() {
             "Server location hidden"
         }
 
-        val sessionLine = if (sessionDetected) {
-            "Game session detected"
-        } else {
-            "Game session not verified"
-        }
-
-        val builder = NotificationCompat.Builder(
-            this,
-            channel
-        )
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("TacoStrap · Roblox activity")
-            .setColor(Color.rgb(255, 201, 40))
-            .setContentText(
-                "$locationLine · $sessionLine"
-            )
-            .setStyle(
-                NotificationCompat.BigTextStyle().bigText(
+        val notification = buildActivityNotification(
+            notificationId = GAME_ID,
+            title = "TacoStrap · Game joined",
+            content = locationLine,
+            expandedText =
+                "Game session detected\n" +
                     "$locationLine\n" +
-                        "$sessionLine\n" +
-                        "Country is estimated from the detected " +
-                        "network endpoint and may be unavailable."
-                )
-            )
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-
-        if (pending != null) {
-            builder.setContentIntent(pending)
-        }
-
-        val timeout = prefs.getInt(
-            "dismiss_seconds",
-            0
+                    "Country is estimated from the detected " +
+                    "network endpoint and may be unavailable."
         )
 
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            timeout > 0
-        ) {
-            builder.setTimeoutAfter(
-                timeout * 1000L
-            )
-        }
+        val manager = getSystemService(
+            Context.NOTIFICATION_SERVICE
+        ) as NotificationManager
 
-        if (
-            Build.VERSION.SDK_INT < 33 ||
-            checkSelfPermission(
-                android.Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            val manager = getSystemService(
-                Context.NOTIFICATION_SERVICE
-            ) as NotificationManager
+        manager.cancel(OPEN_ID)
+        manager.notify(GAME_ID, notification)
+    }
 
-            manager.notify(
-                JOIN_ID,
-                builder.build()
-            )
-        }
+    private fun cancelGameNotification() {
+
+        val manager = getSystemService(
+            Context.NOTIFICATION_SERVICE
+        ) as NotificationManager
+
+        manager.cancel(GAME_ID)
+    }
+
+    private fun cancelActivityNotifications() {
+
+        val manager = getSystemService(
+            Context.NOTIFICATION_SERVICE
+        ) as NotificationManager
+
+        manager.cancel(OPEN_ID)
+        manager.cancel(GAME_ID)
     }
 
     override fun onDestroy() {
@@ -610,14 +668,12 @@ class RobloxWatchService : Service() {
 
         handler.removeCallbacks(poll)
 
+        cancelActivityNotifications()
+
         try {
             logHelper?.stop()
         } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "Could not stop Roblox log helper",
-                e
-            )
+            Log.e(TAG, "Could not stop Roblox log helper", e)
         }
 
         logHelper = null
@@ -625,11 +681,7 @@ class RobloxWatchService : Service() {
         try {
             locationResolver?.close()
         } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "Could not close location resolver",
-                e
-            )
+            Log.e(TAG, "Could not close location resolver", e)
         }
 
         locationResolver = null
