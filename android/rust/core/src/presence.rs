@@ -1,11 +1,10 @@
 use crate::java::{self, opt_bool, opt_long, opt_str, regex_space, trim, utf16_len, utf16_prefix, word_boundary};
 use serde_json::{Value, json};
 
-const DOWNLOAD: &str = "https://github.com/KloBraticc/Voidstrap/releases";
-const DISCORD: &str = "https://discord.gg/bzdbHHytFR";
-const GITHUB: &str = "https://github.com/KloBraticc/Voidstrap";
-const LOGO: &str = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/src/Voidstrap.App/Voidstrap.png";
-const LOADING: &str = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/assets/Images/rpc-loading.gif";
+const DOWNLOAD: &str = "https://github.com/TacoStrapDevs/TacoHq/releases";
+const GITHUB: &str = "https://github.com/TacoStrapDevs/TacoHq";
+const LOGO: &str = "https://raw.githubusercontent.com/TacoStrapDevs/TacoHq/main/android/app/src/main/res/drawable-nodpi/vs_logo.png";
+const LOADING: &str = "https://raw.githubusercontent.com/TacoStrapDevs/TacoHq/main/assets/Images/rpc-loading.gif";
 
 const IDLE: [(&str, &str); 3] = [
     ("blue", "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Roblox_%282025%29_%28App_Icon%29.svg/250px-Roblox_%282025%29_%28App_Icon%29.svg.png"),
@@ -457,7 +456,7 @@ pub fn app(a: &Value) -> Value {
             let label = if label.is_empty() { "Open".to_string() } else { utf16_prefix(&label, 32).to_string() };
             vec![[label, url], ["Get TacoStrap".to_string(), DOWNLOAD.to_string()]]
         }
-        None => vec![["Discord".to_string(), DISCORD.to_string()], ["Github".to_string(), GITHUB.to_string()]],
+        None => vec![["Github".to_string(), GITHUB.to_string()], ["Get TacoStrap".to_string(), DOWNLOAD.to_string()]],
     };
     presence(details, state, image, text, small, opt_long(a, "start", 0), true, buttons)
 }

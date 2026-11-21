@@ -914,6 +914,8 @@
     <string name="integrations_discord_account_body">Shows the Roblox account you\'re playing with on your Discord profile.</string>
     <string name="integrations_discord_join">Allow activity joining</string>
     <string name="integrations_discord_join_body">Allows for anybody to join the game you\'re currently in through your Discord profile.</string>
+    <string name="integrations_rpc_app_id">TacoStrap Discord application ID</string>
+    <string name="integrations_rpc_app_id_body">Optional. Paste your own Discord application ID to show TacoStrap under your app. Leave empty for the built-in one. Toggle game activity off and on to apply.</string>
     <string name="integrations_discord_status">Discord</string>
     <string name="integrations_discord_missing_app">Install the Discord app to show your game on your profile.</string>
     <string name="integrations_discord_ready">Ready. Shows while Roblox is open.</string>

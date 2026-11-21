@@ -35,6 +35,7 @@ final class DiscordRpc {
 
     private final long applicationId;
     private final String name;
+    private volatile long connectId;
     private android.app.Application app;
     private HandlerThread thread;
     private Handler handler;
@@ -113,9 +114,23 @@ final class DiscordRpc {
         }
     };
 
+    private long effectiveId(Context c) {
+        if (this != VOIDSTRAP || c == null) return applicationId;
+        try {
+            String raw = Store.get(c).setting(Integrations.RPC_APP_ID, "").trim();
+            if (raw.matches("[0-9]{10,25}")) {
+                long parsed = Long.parseLong(raw);
+                if (parsed > 0) return parsed;
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return applicationId;
+    }
+
     synchronized void start(Context c) {
         if (thread != null) return;
         app = (android.app.Application) c.getApplicationContext();
+        connectId = effectiveId(c);
         status = "";
         thread = new HandlerThread("discord");
         thread.start();
@@ -179,7 +194,7 @@ final class DiscordRpc {
         Parcel reply = Parcel.obtain();
         try {
             data.writeInterfaceToken(SERVICE);
-            data.writeLong(applicationId);
+            data.writeLong(connectId != 0 ? connectId : applicationId);
             data.writeString(VERSION);
             data.writeStrongBinder(callback);
             service.transact(CONNECT, data, reply, 0);

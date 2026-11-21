@@ -27,6 +27,7 @@ public final class Integrations {
     public static final String CUSTOM_NAME = "rpcCustomName";
     public static final String CUSTOM_ICON = "rpcCustomIcon";
     public static final String IDLE_ICON = "rpcIdleIcon";
+    public static final String RPC_APP_ID = "rpcAppId";
     public static final String ACCOUNT = "discordAccount";
     static final String USER_ID = "robloxUserId";
 

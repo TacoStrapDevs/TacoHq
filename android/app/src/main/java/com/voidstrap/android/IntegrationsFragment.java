@@ -113,6 +113,7 @@ public final class IntegrationsFragment extends Page {
         toggle(discord, R.string.integrations_discord_rpc, R.string.integrations_discord_rpc_body, Integrations.RPC, tracking, null);
         toggle(discord, R.string.integrations_discord_account, R.string.integrations_discord_account_body, Integrations.ACCOUNT, rpc, null);
         toggle(discord, R.string.integrations_discord_join, R.string.integrations_discord_join_body, Integrations.JOINING, rpc, null);
+        text(discord, R.string.integrations_rpc_app_id, R.string.integrations_rpc_app_id_body, Integrations.RPC_APP_ID, rpc, false);
 
         LinearLayout custom = SettingRows.section(root, getString(R.string.integrations_custom_rpc));
         custom.addView(preview(c));

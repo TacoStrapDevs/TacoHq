@@ -15,7 +15,7 @@ const OFFLINE_PAUSE_MS: i64 = 30000;
 const MAX_ATTEMPTS: usize = 4;
 const BASE_BACKOFF_MS: i64 = 700;
 const MAX_BACKOFF_MS: i64 = 8000;
-const PROTECTED: [&str; 6] = ["Roblox Studio", "Voidstrap", "Roblox", "Discord", "Bloxstrap", "Chevstrap"];
+const PROTECTED: [&str; 7] = ["Roblox Studio", "TacoStrap", "Voidstrap", "Roblox", "Discord", "Bloxstrap", "Chevstrap"];
 const USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36";
 const CACHE_FILE: &str = "Translations.json";
 
