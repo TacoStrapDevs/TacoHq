@@ -1,0 +1,100 @@
+# The application ships as a single file bundle that keeps its payload appended to
+# the executable. The default post install processing strips that payload away and
+# leaves a binary that aborts with "Failure processing application bundle", so the
+# binary post processing and the debug package are both turned off here.
+%global __os_install_post %{nil}
+%global debug_package %{nil}
+%global __strip /bin/true
+%global _binary_payload w19T.zstdio
+
+Name: voidstrap
+Version: @VERSION@
+Release: 1
+Summary: Customize and launch Roblox through Sober on Linux
+License: GPL-3.0-only AND MIT AND OFL-1.1 AND CC-BY-4.0 AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND Zlib AND Unicode-DFS-2016
+URL: https://github.com/KloBraticc/Voidstrap
+ExclusiveArch: x86_64 aarch64
+Requires: libvulkan.so.1()(64bit)
+Requires: libX11.so.6()(64bit)
+Requires: libXext.so.6()(64bit)
+Requires: libXrender.so.1()(64bit)
+Requires: libXrandr.so.2()(64bit)
+Requires: libXi.so.6()(64bit)
+Requires: libXcursor.so.1()(64bit)
+Requires: libXfixes.so.3()(64bit)
+Requires: libXcomposite.so.1()(64bit)
+Requires: libXdamage.so.1()(64bit)
+Requires: libICE.so.6()(64bit)
+Requires: libSM.so.6()(64bit)
+Requires: libfontconfig.so.1()(64bit)
+Requires: libfreetype.so.6()(64bit)
+Requires: (dejavu-sans-fonts or dejavu-fonts or google-noto-sans-fonts or noto-sans-fonts or adwaita-sans-fonts)
+Requires: libxkbcommon.so.0()(64bit)
+Requires: libxkbcommon-x11.so.0()(64bit)
+Requires: libwayland-client.so.0()(64bit)
+Requires: libdbus-1.so.3()(64bit)
+Requires: libGL.so.1()(64bit)
+Requires: libEGL.so.1()(64bit)
+Requires: libssl.so.3()(64bit)
+Requires: ca-certificates
+Requires: flatpak
+Recommends: (mesa-vulkan-drivers or libvulkan_radeon or libvulkan_intel or libvulkan_lvp)
+Requires: xdg-utils
+Recommends: (zenity or kdialog)
+Recommends: /usr/bin/pkexec
+Requires: /usr/bin/gio
+Requires: /usr/bin/notify-send
+Requires: /usr/bin/secret-tool
+Recommends: /usr/bin/xrandr
+Recommends: /usr/bin/pw-dump
+Recommends: /usr/bin/wpctl
+Requires: /usr/bin/update-desktop-database
+Requires: libgstreamer-1.0.so.0()(64bit)
+Requires: libgstpbutils-1.0.so.0()(64bit)
+Recommends: (gstreamer1-plugins-good or gstreamer-plugins-good)
+Recommends: (gstreamer1-plugins-bad-free or gstreamer-plugins-bad)
+Recommends: (gstreamer1-plugin-libav or gstreamer-plugins-libav)
+Recommends: libwebkit2gtk-4.1.so.0()(64bit)
+Source0: publish
+Source1: io.github.KloBraticc.Voidstrap.desktop
+Source2: io.github.KloBraticc.Voidstrap.png
+Source3: io.github.KloBraticc.Voidstrap.metainfo.xml
+Source4: LICENSE
+
+%description
+Voidstrap is an open source Roblox bootstrapper for Linux that installs and
+launches Roblox through Sober. It brings FastFlags, performance and graphics
+controls, mods, themes, account tools, server tools, Discord Rich Presence,
+and desktop integrations together in one customizable app.
+
+%install
+mkdir -p %{buildroot}%{_libdir}/voidstrap %{buildroot}%{_bindir}
+cp -a %{_sourcedir}/publish/. %{buildroot}%{_libdir}/voidstrap/
+chmod 0755 %{buildroot}%{_libdir}/voidstrap %{buildroot}%{_libdir}/voidstrap/Voidstrap
+ln -s ../%{_lib}/voidstrap/Voidstrap %{buildroot}%{_bindir}/voidstrap
+install -Dm644 %{_sourcedir}/io.github.KloBraticc.Voidstrap.desktop %{buildroot}%{_datadir}/applications/io.github.KloBraticc.Voidstrap.desktop
+install -Dm644 %{_sourcedir}/io.github.KloBraticc.Voidstrap.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/io.github.KloBraticc.Voidstrap.png
+install -Dm644 %{_sourcedir}/io.github.KloBraticc.Voidstrap.metainfo.xml %{buildroot}%{_datadir}/metainfo/io.github.KloBraticc.Voidstrap.metainfo.xml
+install -Dm644 %{_sourcedir}/LICENSE %{buildroot}%{_licensedir}/voidstrap/LICENSE
+
+%post
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database %{_datadir}/applications || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t %{_datadir}/icons/hicolor || true
+
+%postun
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database %{_datadir}/applications || true
+command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t %{_datadir}/icons/hicolor || true
+
+%files
+%dir %{_libdir}/voidstrap
+%{_libdir}/voidstrap/Voidstrap
+%license %{_libdir}/voidstrap/licenses/
+%{_bindir}/voidstrap
+%{_datadir}/applications/io.github.KloBraticc.Voidstrap.desktop
+%{_datadir}/icons/hicolor/256x256/apps/io.github.KloBraticc.Voidstrap.png
+%{_datadir}/metainfo/io.github.KloBraticc.Voidstrap.metainfo.xml
+%license %{_licensedir}/voidstrap/LICENSE
+
+%changelog
+* @DATE@ Voidstrap - @VERSION@-1
+- Voidstrap @VERSION@

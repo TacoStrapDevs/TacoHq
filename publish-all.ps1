@@ -1,0 +1,2509 @@
+[CmdletBinding()]
+param(
+    [string[]]$Only = @('all'),
+
+    [ValidateSet('Debug','Release')]
+    [string]$Configuration = 'Release',
+
+    [switch]$NoClean,
+    [switch]$Clean,
+    [switch]$Parallel,
+    [switch]$Sequential,
+    [ValidateRange(1,32)]
+    [int]$MaxParallel = [Math]::Min(5, [Math]::Max(1, [int][Math]::Floor([Environment]::ProcessorCount / 2))),
+    [switch]$BuildSolution,
+    [switch]$SkipSolutionBuild,
+    [switch]$AppImage,
+    [switch]$SkipAppImage,
+    [switch]$LinuxPackages,
+    [switch]$NoPause,
+    [switch]$NoSign
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$script:WallClockStart = [DateTime]::UtcNow
+$script:ClockWasWrong = $false
+$script:OutputSnapshot = @{}
+$script:PackagingChains = @()
+$script:PackageContext = $null
+
+function Wait-BeforeClose {
+    if ($NoPause -or $env:CI -or [Console]::IsInputRedirected) {
+        return
+    }
+    try {
+        Write-Host ''
+        [void](Read-Host 'Press Enter to close this window')
+    } catch {
+    }
+}
+
+function Exit-Script {
+    param([int]$Code)
+
+    if (Get-Command Stop-AndroidBuild -ErrorAction SilentlyContinue) {
+        Stop-AndroidBuild
+    }
+    foreach ($chain in @($script:PackagingChains)) {
+        try { $chain.Process.WaitForExit() } catch { }
+    }
+    if (Get-Command Remove-PublishManifests -ErrorAction SilentlyContinue) {
+        Remove-PublishManifests
+    }
+    Wait-BeforeClose
+    exit $Code
+}
+
+trap {
+    $failure = $_
+    Write-Host ''
+    Write-Host 'BUILD SCRIPT CRASHED' -ForegroundColor Red
+    Write-Host $failure.Exception.Message -ForegroundColor Red
+    if ($failure.InvocationInfo -and $failure.InvocationInfo.PositionMessage) {
+        Write-Host $failure.InvocationInfo.PositionMessage -ForegroundColor DarkGray
+    }
+    if ($failure.ScriptStackTrace) {
+        Write-Host $failure.ScriptStackTrace -ForegroundColor DarkGray
+    }
+    Exit-Script 1
+}
+
+$validOnly = @('windows', 'linux-x64', 'linux-arm64', 'linux-musl-x64', 'linux-musl-arm64', 'osx-x64', 'osx-arm64', 'android', 'freebsd-x64', 'nix', 'all')
+$Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+$invalidOnly = @($Only | Where-Object { $validOnly -notcontains $_ })
+if ($Only.Count -eq 0 -or $invalidOnly.Count -gt 0) {
+    throw "Unknown -Only value: $($invalidOnly -join ', '). Use one or more of: $($validOnly -join ', ')"
+}
+
+$IsWindowsHost = $env:OS -eq 'Windows_NT'
+$PathComparison = if ($IsWindowsHost) {
+    [System.StringComparison]::OrdinalIgnoreCase
+} else {
+    [System.StringComparison]::Ordinal
+}
+
+$Root      = [System.IO.Path]::GetFullPath($PSScriptRoot)
+$Out       = [System.IO.Path]::GetFullPath((Join-Path $Root 'PublishedBuilds'))
+$Staging   = Join-Path $Out '.staging'
+$LinuxOut  = Join-Path $Out 'Linux'
+$MacOut    = Join-Path $Out 'macOS'
+$FreeBSDOut = Join-Path $Out 'FreeBSD'
+$ArtifactDir = [System.IO.Path]::GetFullPath((Join-Path $Root 'artifacts/publish'))
+$WinProj   = [System.IO.Path]::GetFullPath((Join-Path $Root 'src/Voidstrap.App/Voidstrap.csproj'))
+$CrossProj = [System.IO.Path]::GetFullPath((Join-Path $Root 'src/Voidstrap.Cross/Voidstrap.Cross.csproj'))
+$Sln       = [System.IO.Path]::GetFullPath((Join-Path $Root 'Voidstrap.sln'))
+$IsLinuxHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+$LinuxPackagingTools = @('dpkg-deb', 'rpmbuild', 'flatpak', 'flatpak-builder')
+
+if ($Parallel -and $Sequential) {
+    throw 'Parallel and Sequential cannot be selected together.'
+}
+
+if ($Clean -and $NoClean) {
+    throw 'Clean and NoClean cannot be selected together.'
+}
+
+if ($BuildSolution -and $SkipSolutionBuild) {
+    throw 'BuildSolution and SkipSolutionBuild cannot be selected together.'
+}
+
+if ($AppImage -and $SkipAppImage) {
+    throw 'AppImage and SkipAppImage cannot be selected together.'
+}
+
+function Assert-BuildDirectory {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$ExpectedName
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $parent = [System.IO.Path]::GetDirectoryName($fullPath)
+    $name = [System.IO.Path]::GetFileName($fullPath)
+
+    if (-not [string]::Equals($parent, $Root, $PathComparison) -or
+        -not [string]::Equals($name, $ExpectedName, $PathComparison)) {
+        throw "Refusing to use unsafe build directory: $fullPath"
+    }
+}
+
+function Stop-ProcessesUsingPath {
+    param([Parameter(Mandatory)] [string[]]$Path)
+
+    $prefixes = @($Path | ForEach-Object { $_.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar })
+    $stopped = 0
+    $cimPaths = $null
+
+    foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)) {
+        $exe = $null
+        try { $exe = $proc.Path } catch { $exe = $null }
+        if ([string]::IsNullOrWhiteSpace($exe)) {
+            if ($null -eq $cimPaths) {
+                $cimPaths = @{}
+                try {
+                    foreach ($entry in (Get-CimInstance Win32_Process -Property ProcessId, ExecutablePath -ErrorAction Stop)) {
+                        if ($entry.ExecutablePath) { $cimPaths[[int]$entry.ProcessId] = $entry.ExecutablePath }
+                    }
+                } catch { }
+            }
+            $exe = $cimPaths[$proc.Id]
+        }
+        if ([string]::IsNullOrWhiteSpace($exe)) { continue }
+        $owner = $prefixes | Where-Object { $exe.StartsWith($_, $PathComparison) } | Select-Object -First 1
+        if (-not $owner) { continue }
+
+        Write-Host "  Stopping $($proc.ProcessName) (pid $($proc.Id)) which is running from $owner" -ForegroundColor DarkYellow
+        try {
+            if ($proc.CloseMainWindow()) {
+                $null = $proc.WaitForExit(5000)
+            }
+            if (-not $proc.HasExited) {
+                $proc.Kill()
+                $null = $proc.WaitForExit(5000)
+            }
+            if (-not $proc.HasExited) {
+                throw 'the process did not exit after the forced close'
+            }
+            $stopped++
+        } catch {
+            throw "Could not close $($proc.ProcessName) (pid $($proc.Id)) from the publish output folder: $($_.Exception.Message)"
+        }
+    }
+
+    if ($stopped -gt 0) {
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+function Remove-BuildDirectory {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $safe = $false
+    foreach ($buildRoot in @($Out, $ArtifactDir)) {
+        $prefix = $buildRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+        if ([string]::Equals($fullPath, $buildRoot, $PathComparison) -or $fullPath.StartsWith($prefix, $PathComparison)) {
+            $safe = $true
+            break
+        }
+    }
+    if (-not $safe) {
+        throw "Refusing to remove a path outside the build directories: $fullPath"
+    }
+    $ancestor = [System.IO.Path]::GetDirectoryName($fullPath)
+    while ($ancestor -and -not [string]::Equals($ancestor, $Root, $PathComparison)) {
+        $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove a path through a linked directory: $fullPath"
+        }
+        $ancestor = [System.IO.Path]::GetDirectoryName($ancestor)
+    }
+    $Path = $fullPath
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $item = Get-Item -LiteralPath $Path -Force
+
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Remove-Item -LiteralPath $Path -Force
+            } else {
+                Remove-Item -LiteralPath $Path -Recurse -Force
+            }
+            return
+        }
+        catch {
+            if ($attempt -eq 3) {
+                throw
+            }
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
+}
+
+function Assert-FileExists {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$Label
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Label was not found: $Path"
+    }
+}
+
+function Resolve-AndroidJdk {
+    $javaLeaf = if ($IsWindowsHost) { 'bin/java.exe' } else { 'bin/java' }
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { $candidates.Add($env:JAVA_HOME) }
+
+    $jdksRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) '.jdks'
+    if (Test-Path -LiteralPath $jdksRoot -PathType Container) {
+        Get-ChildItem -LiteralPath $jdksRoot -Directory -Filter 'jdk-17*' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { $candidates.Add($_.FullName) }
+    }
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $java = Join-Path $candidate $javaLeaf
+        if (Test-Path -LiteralPath $java -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
+    throw 'A Java 17 JDK is required for the Android build. Set JAVA_HOME to it, or install one under ~/.jdks.'
+}
+
+function Resolve-AndroidSdk {
+    $candidates = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)
+    if ($IsWindowsHost) {
+        $candidates += (Join-Path $env:LOCALAPPDATA 'Android/Sdk')
+    } else {
+        $candidates += (Join-Path $env:HOME 'Android/Sdk')
+    }
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        if (Test-Path -LiteralPath (Join-Path $candidate 'platform-tools') -PathType Container) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+    throw 'The Android SDK is required for the Android build. Set ANDROID_HOME to it.'
+}
+
+function Resolve-ApkSigner {
+    param([Parameter(Mandatory)] [string]$SdkRoot)
+
+    $buildTools = Join-Path $SdkRoot 'build-tools'
+    if (-not (Test-Path -LiteralPath $buildTools -PathType Container)) {
+        throw "The Android SDK has no build-tools folder: $buildTools"
+    }
+    $name = if ($IsWindowsHost) { 'apksigner.bat' } else { 'apksigner' }
+    $found = Get-ChildItem -LiteralPath $buildTools -Directory |
+        Sort-Object Name |
+        ForEach-Object { Join-Path $_.FullName $name } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -Last 1
+    if (-not $found) {
+        throw 'apksigner was not found in the Android SDK build-tools.'
+    }
+    return $found
+}
+
+function Assert-ApkIsReleaseSigned {
+    param(
+        [Parameter(Mandatory)] [string]$ApkSigner,
+        [Parameter(Mandatory)] [string]$ApkPath,
+        [Parameter(Mandatory)] [string]$Label
+    )
+
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $ApkSigner 'verify' '--verbose' '--print-certs' $ApkPath 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0 -or $output -notmatch '(?m)^Verifies\s*$') {
+        throw "$Label is not correctly signed. apksigner said: $($output.Trim())"
+    }
+    if ($output -match 'CN=Android Debug') {
+        throw "$Label is signed with the Android debug certificate and must never be published."
+    }
+}
+
+function Get-AndroidGradlePropertiesPath {
+    $gradleHome = if ([string]::IsNullOrWhiteSpace($env:GRADLE_USER_HOME)) {
+        Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) '.gradle'
+    } else {
+        $env:GRADLE_USER_HOME
+    }
+    return (Join-Path $gradleHome 'gradle.properties')
+}
+
+function Get-MissingAndroidSigningProperties {
+    param([Parameter(Mandatory)] [string]$GradlePropertiesPath)
+
+    $signingProperties = @(
+        'voidstrap.storeFile',
+        'voidstrap.storePassword',
+        'voidstrap.keyAlias',
+        'voidstrap.keyPassword'
+    )
+    $declared = if (Test-Path -LiteralPath $GradlePropertiesPath -PathType Leaf) {
+        Get-Content -LiteralPath $GradlePropertiesPath
+    } else {
+        @()
+    }
+    return @($signingProperties | Where-Object { $name = $_; -not ($declared | Where-Object { $_ -match ('^\s*' + [regex]::Escape($name) + '\s*=') }) })
+}
+
+function Test-AndroidToolchain {
+    if (-not (Test-Path -LiteralPath (Join-Path $Root 'android') -PathType Container)) { return $false }
+    try {
+        $null = Resolve-AndroidJdk
+        $sdk = Resolve-AndroidSdk
+        $null = Resolve-ApkSigner $sdk
+    } catch {
+        return $false
+    }
+    return @(Get-MissingAndroidSigningProperties (Get-AndroidGradlePropertiesPath)).Count -eq 0
+}
+
+$script:AndroidBuild = $null
+
+function Start-AndroidBuild {
+    $androidRoot = Join-Path $Root 'android'
+    if (-not (Test-Path -LiteralPath $androidRoot -PathType Container)) {
+        throw "The Android project folder is missing: $androidRoot"
+    }
+
+    $gradlew = Join-Path $androidRoot $(if ($IsWindowsHost) { 'gradlew.bat' } else { 'gradlew' })
+    Assert-FileExists $gradlew 'The Gradle wrapper'
+
+    $jdk = Resolve-AndroidJdk
+    $sdk = Resolve-AndroidSdk
+    $apkSigner = Resolve-ApkSigner $sdk
+
+    $gradleProperties = Get-AndroidGradlePropertiesPath
+    $missing = @(Get-MissingAndroidSigningProperties $gradleProperties)
+    if ($missing.Count -gt 0) {
+        throw @"
+The Android release keystore is not configured, so the build would produce
+unsigned APKs that cannot be installed.
+
+Add these to $gradleProperties :
+  $($missing -join "`n  ")
+"@
+    }
+
+    [System.IO.Directory]::CreateDirectory($ArtifactDir) | Out-Null
+    $log = Join-Path $ArtifactDir 'android.log'
+    $errorLog = Join-Path $ArtifactDir 'android.errors.log'
+    $gradleArgs = @('assemblePlayRelease', 'assembleDirectRelease', 'bundlePlayRelease', '--console=plain', '--build-cache')
+    Write-Host '  Starting Android...' -ForegroundColor DarkGray
+    $previousJavaHome = $env:JAVA_HOME
+    $previousAndroidHome = $env:ANDROID_HOME
+    try {
+        $env:JAVA_HOME = $jdk
+        $env:ANDROID_HOME = $sdk
+        if ($IsWindowsHost) {
+            $process = Start-Process -FilePath $gradlew -ArgumentList $gradleArgs -WorkingDirectory $androidRoot -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $errorLog
+        } else {
+            $process = Start-Process -FilePath 'sh' -ArgumentList (@($gradlew) + $gradleArgs) -WorkingDirectory $androidRoot -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $errorLog
+        }
+        $null = $process.Handle
+    } finally {
+        $env:JAVA_HOME = $previousJavaHome
+        $env:ANDROID_HOME = $previousAndroidHome
+    }
+
+    $script:AndroidBuild = [pscustomobject]@{
+        Process          = $process
+        StartTime        = Get-Date
+        Root             = $androidRoot
+        ApkSigner        = $apkSigner
+        GradleProperties = $gradleProperties
+        Log              = $log
+        ErrorLog         = $errorLog
+    }
+}
+
+function Stop-AndroidBuild {
+    $build = $script:AndroidBuild
+    if (-not $build -or $build.Process.HasExited) {
+        return
+    }
+    if ($IsWindowsHost) {
+        & taskkill.exe /T /F /PID $build.Process.Id 2>$null | Out-Null
+    } else {
+        try { $build.Process.Kill() } catch { }
+    }
+}
+
+function Complete-AndroidPublish {
+    param([Parameter(Mandatory)] [string]$Version)
+
+    $build = $script:AndroidBuild
+    while (-not $build.Process.WaitForExit(1000)) {
+        Write-Heartbeat
+    }
+    $elapsed = [int](New-TimeSpan -Start $build.StartTime).TotalSeconds
+    if ($build.Process.ExitCode -ne 0) {
+        Write-Host "  Android: Failed (${elapsed}s)" -ForegroundColor Red
+        foreach ($logPath in @($build.ErrorLog, $build.Log)) {
+            if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+                Get-Content -LiteralPath $logPath -Tail 25 | ForEach-Object { Write-Host "    $_" }
+            }
+        }
+        throw "The Android build failed with exit code $($build.Process.ExitCode). Full log: $($build.Log)"
+    }
+    Write-Host "  Android: Done (${elapsed}s)" -ForegroundColor Green
+
+    $androidRoot = $build.Root
+    $apkSigner = $build.ApkSigner
+    $gradleProperties = $build.GradleProperties
+    $androidOutput = Join-Path $Out 'Android'
+    Reset-OutputDirectory $androidOutput
+
+    foreach ($flavour in @('play', 'direct')) {
+        $built = Join-Path $androidRoot "app/build/outputs/apk/$flavour/release/app-$flavour-release.apk"
+        $unsigned = Join-Path $androidRoot "app/build/outputs/apk/$flavour/release/app-$flavour-release-unsigned.apk"
+        if ((-not (Test-Path -LiteralPath $built -PathType Leaf)) -and (Test-Path -LiteralPath $unsigned -PathType Leaf)) {
+            throw "The $flavour build produced an unsigned APK. Check the keystore properties in $gradleProperties."
+        }
+        Assert-FileExists $built "The $flavour release APK"
+        Assert-ApkIsReleaseSigned $apkSigner $built "The $flavour release APK"
+        if ((Get-Item -LiteralPath $built).Length -lt 1048576) {
+            throw "The $flavour release APK is unexpectedly small."
+        }
+        $published = Join-Path $androidOutput "Voidstrap-Android-$flavour-$Version.apk"
+        Copy-Item -LiteralPath $built -Destination $published -Force
+        Write-Host "  $([System.IO.Path]::GetFileName($published))" -ForegroundColor Green
+    }
+
+    $builtBundle = Join-Path $androidRoot "app/build/outputs/bundle/playRelease/app-play-release.aab"
+    if (Test-Path -LiteralPath $builtBundle -PathType Leaf) {
+        $publishedBundle = Join-Path $androidOutput "Voidstrap-Android-play-$Version.aab"
+        Copy-Item -LiteralPath $builtBundle -Destination $publishedBundle -Force
+        Write-Host "  $([System.IO.Path]::GetFileName($publishedBundle))" -ForegroundColor Green
+    }
+
+    Assert-AndroidFlavourSplit (Join-Path $androidOutput "Voidstrap-Android-play-$Version.apk")
+}
+
+function Assert-AndroidFlavourSplit {
+    param([Parameter(Mandatory)] [string]$PlayApk)
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($PlayApk)
+    try {
+        $manifestEntry = $archive.GetEntry('AndroidManifest.xml')
+        if (-not $manifestEntry) {
+            throw 'The play manifest was not found.'
+        }
+        $reader = New-Object System.IO.StreamReader($manifestEntry.Open(), [System.Text.Encoding]::Unicode)
+        try {
+            $manifestText = $reader.ReadToEnd()
+        } finally {
+            $reader.Dispose()
+        }
+        if ($manifestText -match 'REQUEST_INSTALL_PACKAGES') {
+            throw 'The play APK asks for REQUEST_INSTALL_PACKAGES, which only the direct flavour may declare.'
+        }
+
+        $dexEntries = @($archive.Entries | Where-Object { $_.FullName -match '^classes\d*\.dex$' })
+        foreach ($dex in $dexEntries) {
+            $stream = $dex.Open()
+            try {
+                $buffer = New-Object byte[] $dex.Length
+                $offset = 0
+                while ($offset -lt $buffer.Length) {
+                    $read = $stream.Read($buffer, $offset, $buffer.Length - $offset)
+                    if ($read -le 0) { break }
+                    $offset += $read
+                }
+            } finally {
+                $stream.Dispose()
+            }
+            $dexText = [System.Text.Encoding]::ASCII.GetString($buffer)
+            foreach ($term in @('Matchmaker', 'RobloxLogin', 'SignInActivity', 'Reroute', 'ROBLOSECURITY')) {
+                if ($dexText.Contains($term)) {
+                    throw "The play APK contains $term in $($dex.Name), which belongs to the direct flavour only."
+                }
+            }
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
+$script:ManifestsRemoved = $false
+
+function Remove-PublishManifests {
+    if ($script:ManifestsRemoved) {
+        return
+    }
+    $script:ManifestsRemoved = $true
+    Get-ChildItem -LiteralPath $Root -Recurse -File -Force -Filter 'PublishOutputs.*.txt' -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
+function Resolve-AppImageTool {
+    $provided = $env:APPIMAGETOOL
+    if (-not [string]::IsNullOrWhiteSpace($provided) -and (Test-Path -LiteralPath $provided -PathType Leaf)) {
+        return [System.IO.Path]::GetFullPath($provided)
+    }
+
+    $command = Get-Command appimagetool -ErrorAction SilentlyContinue
+    if ($command -and (Test-Path -LiteralPath $command.Source -PathType Leaf)) {
+        return [System.IO.Path]::GetFullPath($command.Source)
+    }
+
+    $toolVersion = '1.9.1'
+    $toolArchitecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+        ([System.Runtime.InteropServices.Architecture]::X64) { 'x86_64' }
+        ([System.Runtime.InteropServices.Architecture]::Arm64) { 'aarch64' }
+        default { throw 'Automatic AppImage tooling supports x64 and arm64 Linux hosts.' }
+    }
+    $expectedHash = switch ($toolArchitecture) {
+        'x86_64' { 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0' }
+        'aarch64' { 'f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158' }
+    }
+    $cacheBase = if (-not [string]::IsNullOrWhiteSpace($env:XDG_CACHE_HOME)) {
+        $env:XDG_CACHE_HOME
+    } else {
+        Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) '.cache'
+    }
+    $toolDirectory = Join-Path $cacheBase "voidstrap/build-tools/appimagetool/$toolVersion"
+    $toolPath = Join-Path $toolDirectory "appimagetool-$toolArchitecture.AppImage"
+    $toolValid = (Test-Path -LiteralPath $toolPath -PathType Leaf) -and
+        [string]::Equals((Get-FileHash -LiteralPath $toolPath -Algorithm SHA256).Hash, $expectedHash, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $toolValid) {
+        [System.IO.Directory]::CreateDirectory($toolDirectory) | Out-Null
+        $downloadPath = "$toolPath.download.$PID"
+        $downloadUrl = "https://github.com/AppImage/appimagetool/releases/download/$toolVersion/appimagetool-$toolArchitecture.AppImage"
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing -TimeoutSec 120
+            $actualHash = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash
+            if (-not [string]::Equals($actualHash, $expectedHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw 'The downloaded AppImage packaging tool failed verification.'
+            }
+            Move-Item -LiteralPath $downloadPath -Destination $toolPath -Force
+        }
+        finally {
+            if (Test-Path -LiteralPath $downloadPath) {
+                Remove-Item -LiteralPath $downloadPath -Force
+            }
+        }
+    }
+    if (-not $IsWindowsHost) {
+        & chmod 0755 $toolPath
+        if ($LASTEXITCODE -ne 0) {
+            throw 'The AppImage packaging tool could not be made executable.'
+        }
+    }
+    return $toolPath
+}
+
+function Resolve-GitBashPath {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git -and -not [string]::IsNullOrWhiteSpace($git.Source)) {
+        $gitRoot = Split-Path -Parent (Split-Path -Parent $git.Source)
+        if (-not [string]::IsNullOrWhiteSpace($gitRoot)) {
+            $candidates.Add((Join-Path $gitRoot 'bin/bash.exe'))
+            $candidates.Add((Join-Path $gitRoot 'usr/bin/bash.exe'))
+        }
+    }
+    foreach ($base in @($env:ProgramFiles, $env:ProgramW6432, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        if ([string]::IsNullOrWhiteSpace($base)) { continue }
+        $candidates.Add((Join-Path $base 'Git/bin/bash.exe'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs/Git/bin/bash.exe'))
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [System.IO.Path]::GetFullPath($candidate) }
+    }
+
+    $system32 = if ([string]::IsNullOrWhiteSpace($env:WINDIR)) { '' } else { [System.IO.Path]::GetFullPath((Join-Path $env:WINDIR 'System32')) }
+    foreach ($cmd in @(Get-Command bash -All -ErrorAction SilentlyContinue)) {
+        $src = $cmd.Source
+        if ([string]::IsNullOrWhiteSpace($src)) { continue }
+        if ($system32 -and $src.StartsWith($system32, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        if ($src -match '[\\/]WindowsApps[\\/]') { continue }
+        if (Test-Path -LiteralPath $src -PathType Leaf) { return [System.IO.Path]::GetFullPath($src) }
+    }
+    return $null
+}
+
+function Invoke-NativeWithTimeout {
+    param(
+        [Parameter(Mandatory)] [string]$FilePath,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory)] [int]$TimeoutSeconds
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = (($Arguments | ForEach-Object { ConvertTo-CommandLineArgument ([string]$_) }) -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $null = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch { }
+            return $null
+        }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = [string]$output.GetAwaiter().GetResult() }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function New-PackagingShell {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Command,
+        [string[]]$Prefix = @(),
+        [switch]$Linux,
+        [switch]$Wsl
+    )
+
+    $tools = @()
+    if ($Linux) {
+        $probe = 'for t in ' + ($LinuxPackagingTools -join ' ') + '; do command -v $t >/dev/null 2>&1 && echo $t; done; true'
+        $result = Invoke-NativeWithTimeout -FilePath $Command -Arguments (@($Prefix) + @('-c', $probe)) -TimeoutSeconds 30
+        if (-not $result) {
+            Write-Host "  $Name did not answer within 30 seconds, skipping it." -ForegroundColor DarkYellow
+            return $null
+        }
+        if ($result.ExitCode -ne 0) { return $null }
+        $tools = @(($result.Output -split '\r?\n') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    }
+
+    return [pscustomobject]@{
+        Name    = $Name
+        Command = $Command
+        Prefix  = @($Prefix)
+        Linux   = [bool]$Linux
+        Wsl     = [bool]$Wsl
+        Tools   = $tools
+    }
+}
+
+function Resolve-PackagingShell {
+    if (-not $IsWindowsHost) {
+        $bash = Get-Command bash -ErrorAction SilentlyContinue
+        if (-not $bash) { return $null }
+        return New-PackagingShell -Name 'bash' -Command $bash.Source -Linux:$IsLinuxHost
+    }
+
+    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($wsl) {
+        Write-Host 'Checking WSL for Linux packaging...' -ForegroundColor DarkGray
+        $listed = Invoke-NativeWithTimeout -FilePath $wsl.Source -Arguments @('--list', '--quiet') -TimeoutSeconds 15
+        if (-not $listed) {
+            Write-Host '  WSL did not answer within 15 seconds. Run "wsl --shutdown" and try again to get Linux packages.' -ForegroundColor DarkYellow
+            $PackageNotes.Add('WSL did not answer. Run "wsl --shutdown", then publish again to build the Linux packages.')
+        }
+        elseif ($listed.ExitCode -eq 0) {
+            $distros = @(($listed.Output.Replace([string][char]0, '') -split '\r?\n') |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -and $_ -notmatch '^docker-desktop' })
+            $fallback = $null
+            foreach ($distro in $distros) {
+                $shell = New-PackagingShell -Name "WSL $distro" -Command $wsl.Source -Prefix @('-d', $distro, '-e', 'bash') -Linux -Wsl
+                if (-not $shell) { continue }
+                if (@($LinuxPackagingTools | Where-Object { $shell.Tools -notcontains $_ }).Count -eq 0) { return $shell }
+                if (-not $fallback) { $fallback = $shell }
+            }
+            if ($fallback) { return $fallback }
+        }
+    }
+
+    $gitBash = Resolve-GitBashPath
+    if ($gitBash) {
+        return New-PackagingShell -Name 'Git Bash' -Command $gitBash
+    }
+    return $null
+}
+
+function Get-RootRelativePath {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $prefix = $Root.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $full.StartsWith($prefix, $PathComparison)) {
+        throw "Refusing to package a path outside the repository: $full"
+    }
+    return $full.Substring($prefix.Length).Replace('\', '/')
+}
+
+function Reset-OutputDirectory {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (Test-Path -LiteralPath $Path) {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Remove-BuildDirectory $Path
+        } else {
+            Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                Remove-BuildDirectory $_.FullName
+            }
+        }
+    }
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Repair-FutureTimestamps {
+    $now = Get-Date
+    $limit = $now.AddMinutes(1)
+    $past = $now.AddHours(-2)
+    $outputs = 0
+    $sources = 0
+    foreach ($name in @('src', 'external', 'artifacts', 'android')) {
+        $dir = Join-Path $Root $name
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $files = $null
+        try {
+            $files = [System.IO.DirectoryInfo]::new($dir).EnumerateFiles('*', [System.IO.SearchOption]::AllDirectories)
+            foreach ($info in $files) {
+                if ($info.LastWriteTime -le $limit) { continue }
+                $file = $info.FullName
+                $isOutput = $name -eq 'artifacts' -or $file -match '[\\/](bin|obj)([-_][^\\/]*)?[\\/]' -or
+                    ($name -eq 'android' -and $file -match '[\\/]android[\\/]((app[\\/])?(build|\.cxx)|\.gradle|rust[\\/]target)[\\/]')
+                try {
+                    if ($isOutput) {
+                        [System.IO.File]::SetLastWriteTime($file, $past)
+                        $outputs++
+                    } else {
+                        [System.IO.File]::SetLastWriteTime($file, $now)
+                        $sources++
+                    }
+                } catch {
+                }
+            }
+        } catch {
+            Write-Host "  Could not check file dates under ${name}: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+    }
+    if ($outputs -gt 0 -or $sources -gt 0) {
+        Write-Host "  Found $outputs build files and $sources source files dated in the future, left over from a build made while the clock was ahead (usually right after booting Linux). Reset them so everything rebuilds correctly." -ForegroundColor DarkYellow
+    }
+}
+
+function Get-ClockJumpSeconds {
+    return (([DateTime]::UtcNow - $script:WallClockStart) - $sw.Elapsed).TotalSeconds
+}
+
+function Get-NetworkClockOffsetSeconds {
+    foreach ($url in @('https://www.google.com', 'https://www.cloudflare.com', 'https://github.com')) {
+        try {
+            $sent = [DateTime]::UtcNow
+            $response = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            $received = [DateTime]::UtcNow
+            $header = $response.Headers['Date']
+            if ($header -is [array]) { $header = $header[0] }
+            if (-not $header) { continue }
+            $server = [DateTime]::Parse($header, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal)
+            $local = $sent.AddTicks(($received - $sent).Ticks / 2)
+            return ($local - $server).TotalSeconds
+        } catch {
+        }
+    }
+    return $null
+}
+
+function Test-SystemClock {
+    $offset = Get-NetworkClockOffsetSeconds
+    if ($null -eq $offset -or [Math]::Abs($offset) -le 120) { return }
+    $direction = if ($offset -gt 0) { 'ahead of' } else { 'behind' }
+    $minutes = [Math]::Round([Math]::Abs($offset) / 60)
+    Write-Host "  The system clock is about $minutes minutes $direction internet time (often after booting Linux). Asking Windows to resync it..." -ForegroundColor DarkYellow
+    if ($IsWindowsHost) {
+        try { & w32tm /resync /force 2>&1 | Out-Null } catch { }
+    }
+    $after = Get-NetworkClockOffsetSeconds
+    if ($null -ne $after -and [Math]::Abs($after) -le 120) {
+        Write-Host '  The clock is correct again.' -ForegroundColor DarkYellow
+        $script:WallClockStart = [DateTime]::UtcNow - $sw.Elapsed
+        return
+    }
+    Write-Host '  The clock could not be resynced from here, so the build continues anyway. Every file is still rebuilt correctly, and if Windows fixes the clock during the build, the affected targets rebuild automatically.' -ForegroundColor DarkYellow
+    $script:ClockWasWrong = $true
+}
+
+function Get-OutputSnapshot {
+    $snapshot = @{}
+    if (-not (Test-Path -LiteralPath $Out)) { return $snapshot }
+    foreach ($file in @(Get-ChildItem -LiteralPath $Out -File -Recurse -ErrorAction SilentlyContinue)) {
+        $snapshot[$file.FullName] = '{0}|{1}' -f $file.LastWriteTimeUtc.Ticks, $file.Length
+    }
+    return $snapshot
+}
+
+function Get-PlatformOutput {
+    param([Parameter(Mandatory)] [string]$Rid)
+
+    if ($Rid.StartsWith('osx-', [System.StringComparison]::Ordinal)) { return $MacOut }
+    if ($Rid.StartsWith('freebsd-', [System.StringComparison]::Ordinal)) { return $FreeBSDOut }
+    return $LinuxOut
+}
+
+function Get-PackageFiles {
+    param([Parameter(Mandatory)] $Job)
+
+    $rid = $Job.Target.Rid
+    $directory = Get-PlatformOutput $rid
+    $tokens = switch ($rid) {
+        'linux-x64' { @('linux-x64', '_amd64.deb', '_x86_64.') }
+        'linux-arm64' { @('linux-arm64', '_arm64.deb', '_aarch64.') }
+        default { @($rid) }
+    }
+    return @(Get-ChildItem -LiteralPath $directory -File -ErrorAction SilentlyContinue | Where-Object {
+        $name = $_.Name
+        @($tokens | Where-Object { $name.Contains($_) }).Count -gt 0
+    })
+}
+
+function Test-PackageCache {
+    param([Parameter(Mandatory)] $Job)
+
+    if ($Clean -or $env:MACOS_SIGN_IDENTITY -or $env:MACOS_NOTARY_PROFILE -or $env:VOIDSTRAP_APPIMAGE_SYSROOT -or $env:VOIDSTRAP_APPIMAGE_SYSROOT_DIR) {
+        return $false
+    }
+    $stampPath = Join-Path (Join-Path $ArtifactDir $Job.Target.Key) 'packages.json'
+    if (-not (Test-Path -LiteralPath $stampPath -PathType Leaf)) { return $false }
+    try {
+        $stamp = Get-Content -LiteralPath $stampPath -Raw | ConvertFrom-Json
+        if ($stamp.InputHash -ne $Job.PackageInputHash -or @($stamp.Files).Count -eq 0) { return $false }
+        $files = @(Get-PackageFiles $Job)
+        foreach ($expected in $stamp.Files) {
+            $file = $files | Where-Object { $_.Name -eq $expected.Name } | Select-Object -First 1
+            if (-not $file -or (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $expected.Hash) { return $false }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Save-PackageCache {
+    param([Parameter(Mandatory)] $Job)
+
+    $files = @(Get-PackageFiles $Job | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Name; Hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+    })
+    if ($files.Count -eq 0) { return }
+    $stamp = [pscustomobject]@{ InputHash = $Job.PackageInputHash; Files = $files }
+    $stamp | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path (Join-Path $ArtifactDir $Job.Target.Key) 'packages.json') -Encoding UTF8
+}
+
+function Invoke-PackagingScript {
+    param(
+        [Parameter(Mandatory)] $Shell,
+        [Parameter(Mandatory)] [string]$Label,
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [switch]$BestEffort
+    )
+
+    Write-Host "Packaging $Label..." -ForegroundColor Cyan
+    $allArgs = @($Shell.Prefix) + $Arguments
+    Push-Location -LiteralPath $Root
+    try {
+        & $Shell.Command @allArgs | Out-Host
+        $exitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    if ($exitCode -eq 0) {
+        return
+    }
+    $message = "$Label packaging failed with exit code $exitCode."
+    if (-not $BestEffort) {
+        throw $message
+    }
+    Write-Host "  $message" -ForegroundColor DarkYellow
+    $PackageNotes.Add($message)
+}
+
+function ConvertTo-ShellArgument {
+    param([AllowEmptyString()] [string]$Argument)
+
+    return "'" + $Argument.Replace("'", "'\''") + "'"
+}
+
+function Start-PackagingChain {
+    param(
+        [Parameter(Mandatory)] $Shell,
+        [Parameter(Mandatory)] [string]$Label,
+        [Parameter(Mandatory)] [object[]]$Steps
+    )
+
+    $name = ($Label -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLowerInvariant()
+    New-Item -ItemType Directory -Path $Staging -Force | Out-Null
+    $script = Join-Path $Staging "package-$name.sh"
+    $lines = @('set -e')
+    foreach ($step in $Steps) {
+        $lines += 'echo ' + (ConvertTo-ShellArgument "Packaging $($step.Label)")
+        $lines += 'bash ' + (($step.Arguments | ForEach-Object { ConvertTo-ShellArgument ([string]$_) }) -join ' ')
+    }
+    [System.IO.File]::WriteAllText($script, ($lines -join "`n") + "`n")
+    New-Item -ItemType Directory -Path $ArtifactDir -Force | Out-Null
+    $log = Join-Path $ArtifactDir "package-$name.log"
+    $arguments = (@($Shell.Prefix) + @(Get-RootRelativePath $script) | ForEach-Object { ConvertTo-CommandLineArgument ([string]$_) }) -join ' '
+    Write-Host "  Packaging $Label..." -ForegroundColor DarkGray
+    $process = Start-Process -FilePath $Shell.Command -ArgumentList $arguments -WorkingDirectory $Root -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    $null = $process.Handle
+    return [pscustomobject]@{ Label = $Label; Process = $process; Log = $log; StartTime = Get-Date; Done = $false }
+}
+
+function Update-PackagingChains {
+    foreach ($chain in @($script:PackagingChains | Where-Object { -not $_.Done -and $_.Process.HasExited })) {
+        $chain.Done = $true
+        Get-Content -LiteralPath "$($chain.Log).err" -ErrorAction SilentlyContinue | Add-Content -LiteralPath $chain.Log
+        Remove-Item -LiteralPath "$($chain.Log).err" -Force -ErrorAction SilentlyContinue
+        $seconds = [int](New-TimeSpan -Start $chain.StartTime).TotalSeconds
+        if ($chain.Process.ExitCode -eq 0) {
+            Write-Host "  $($chain.Label): packaged ($($seconds)s)" -ForegroundColor Green
+        } else {
+            Write-Host "  $($chain.Label): packaging failed with exit code $($chain.Process.ExitCode) ($($seconds)s)" -ForegroundColor Red
+        }
+    }
+}
+
+function Wait-PackagingChains {
+    if ($script:PackagingChains.Count -eq 0) { return }
+    $heartbeat = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        Update-PackagingChains
+        $running = @($script:PackagingChains | Where-Object { -not $_.Done })
+        if ($running.Count -eq 0) { break }
+        if ($heartbeat.Elapsed.TotalSeconds -ge 15) {
+            $heartbeat.Restart()
+            Write-Host "  Still packaging: $(($running | ForEach-Object { "$($_.Label) $([int](New-TimeSpan -Start $_.StartTime).TotalSeconds)s" }) -join ', ')" -ForegroundColor DarkGray
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    $failed = @($script:PackagingChains | Where-Object { $_.Process.ExitCode -ne 0 })
+    foreach ($chain in $failed) {
+        Write-Host ''
+        Write-Host "$($chain.Label) packaging output (last 40 lines, full log: $($chain.Log)):" -ForegroundColor Red
+        Get-Content -LiteralPath $chain.Log -Tail 40 -ErrorAction SilentlyContinue | Out-Host
+    }
+    if ($failed.Count -gt 0) {
+        throw "$(($failed | ForEach-Object { $_.Label }) -join ', ') packaging failed."
+    }
+}
+
+function Start-TargetPackaging {
+    param([Parameter(Mandatory)] $Job)
+
+    $context = $script:PackageContext
+    if (-not $context -or $Job.Status -ne 'Done' -or $Job.PackagingStarted) { return }
+    $rid = $Job.Target.Rid
+    $linuxTarget = $rid.StartsWith('linux-', [System.StringComparison]::Ordinal)
+    $macTarget = $rid.StartsWith('osx-', [System.StringComparison]::Ordinal)
+    $freeBsdTarget = $rid.StartsWith('freebsd-', [System.StringComparison]::Ordinal)
+    if (-not ($linuxTarget -or $macTarget -or $freeBsdTarget)) { return }
+    $Job.PackagingStarted = $true
+
+    $inputText = ($context.Sources + (Get-FileHash -LiteralPath $Job.Expected -Algorithm SHA256).Hash) -join "`n"
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $Job.PackageInputHash = [BitConverter]::ToString($hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($inputText))).Replace('-', '')
+    } finally {
+        $hasher.Dispose()
+    }
+    $Job.PackagesCached = Test-PackageCache $Job
+    if ($Job.PackagesCached) {
+        Write-Host "  $($Job.Target.Name): verified existing packages." -ForegroundColor Green
+        return
+    }
+    Get-PackageFiles $Job | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+
+    $shell = $context.Shell
+    $version = $context.Version
+    if ($linuxTarget -and $wantLinuxPackages) {
+        New-Item -ItemType Directory -Path $LinuxOut -Force | Out-Null
+        $outputPath = Get-RootRelativePath $LinuxOut
+        $executablePath = Get-RootRelativePath $Job.Expected
+        $glibc = -not $rid.StartsWith('linux-musl-', [System.StringComparison]::Ordinal)
+        $formats = @('tar')
+        if ($glibc) {
+            $formats += 'deb', 'rpm'
+            if ($appImageTool) { $formats += 'appimage' }
+        }
+        $steps = @($formats | ForEach-Object { [pscustomobject]@{ Label = "$($Job.Target.Name) $_"; Arguments = @($context.LinuxScript, $rid, $version, $_, $outputPath, $executablePath) } })
+        $script:PackagingChains += Start-PackagingChain $shell $Job.Target.Name $steps
+        if ($glibc) {
+            $script:PackagingChains += Start-PackagingChain $shell "$($Job.Target.Name) Flatpak" @([pscustomobject]@{ Label = "$($Job.Target.Name) Flatpak"; Arguments = @($context.FlatpakScript, $rid, $version, $outputPath, $executablePath) })
+        }
+    }
+    elseif ($macTarget) {
+        if (-not $shell) {
+            if (-not $PackageNotes.Contains($context.MacShellNote)) { $PackageNotes.Add($context.MacShellNote) }
+            return
+        }
+        if ($IsWindowsHost -and -not $shell.Wsl -and -not $PackageNotes.Contains($context.MacImageNote)) {
+            $PackageNotes.Add($context.MacImageNote)
+        }
+        New-Item -ItemType Directory -Path $MacOut -Force | Out-Null
+        $script:PackagingChains += Start-PackagingChain $shell $Job.Target.Name @([pscustomobject]@{ Label = "$($Job.Target.Name) app"; Arguments = @($context.MacScript, $rid, $version, (Get-RootRelativePath $MacOut), (Get-RootRelativePath $Job.Expected)) })
+    }
+    elseif ($freeBsdTarget -and $shell) {
+        New-Item -ItemType Directory -Path $FreeBSDOut -Force | Out-Null
+        $kitNative = Get-RootRelativePath (Join-Path $script:FreeBSDKit.Path 'native')
+        $script:PackagingChains += Start-PackagingChain $shell $Job.Target.Name @([pscustomobject]@{ Label = "$($Job.Target.Name) tar"; Arguments = @($context.FreeBSDScript, $version, (Get-RootRelativePath $FreeBSDOut), (Get-RootRelativePath $Job.Expected), $kitNative) })
+    }
+}
+
+function Test-TransientPublishFailure {
+    param([Parameter(Mandatory)] $Job)
+
+    $text = [string]$Job.CapturedOutput
+    return $text -match '(?i)NU1301|NU1302|timed out|temporar(?:y|ily)|connection (?:reset|closed)|resource (?:busy|unavailable)|text file busy|being used by another process|MSB3021|MSB3026|MSB3027|IOException'
+}
+
+function ConvertTo-CommandLineArgument {
+    param([AllowEmptyString()] [string]$Argument)
+
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+
+    if ($Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $slashes = 0
+
+    foreach ($ch in $Argument.ToCharArray()) {
+        if ($ch -eq '\') {
+            $slashes++
+            continue
+        }
+
+        if ($ch -eq '"') {
+            if ($slashes -gt 0) {
+                [void]$builder.Append(('\' * ($slashes * 2)))
+            }
+            [void]$builder.Append('\"')
+            $slashes = 0
+            continue
+        }
+
+        if ($slashes -gt 0) {
+            [void]$builder.Append(('\' * $slashes))
+            $slashes = 0
+        }
+
+        [void]$builder.Append($ch)
+    }
+
+    if ($slashes -gt 0) {
+        [void]$builder.Append(('\' * ($slashes * 2)))
+    }
+
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Start-DotNetProcess {
+    param(
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [Parameter(Mandatory)] [string]$WorkingDirectory
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $script:DotNetPath
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+
+    if ($psi.PSObject.Properties.Name -contains 'ArgumentList') {
+        foreach ($arg in $Arguments) {
+            [void]$psi.ArgumentList.Add([string]$arg)
+        }
+    } else {
+        $psi.Arguments = (($Arguments | ForEach-Object {
+            ConvertTo-CommandLineArgument ([string]$_)
+        }) -join ' ')
+    }
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
+    if (-not $process.Start()) {
+        $process.Dispose()
+        throw 'Failed to start dotnet.'
+    }
+
+    return [pscustomobject]@{
+        Process    = $process
+        StdOutTask = $process.StandardOutput.ReadToEndAsync()
+        StdErrTask = $process.StandardError.ReadToEndAsync()
+    }
+}
+
+function Invoke-WindowsLauncherBuild {
+    param([Parameter(Mandatory)] $Job)
+
+    $cargo = Join-Path $env:USERPROFILE '.cargo/bin/cargo.exe'
+    if (-not (Test-Path -LiteralPath $cargo -PathType Leaf)) { $cargo = 'cargo' }
+    $launcherRoot = Join-Path $ArtifactDir 'voidlauncher'
+    $payloadDir = Join-Path $launcherRoot 'payload'
+    $targetDir = Join-Path $launcherRoot 'target'
+    [System.IO.Directory]::CreateDirectory($payloadDir) | Out-Null
+    $payload = Join-Path $payloadDir 'Voidstrap.exe'
+    Move-Item -LiteralPath $Job.Expected -Destination $payload -Force
+
+    $env:VOIDSTRAP_LAUNCHER_PAYLOAD = $payload
+    $env:VOIDSTRAP_VERSION = Get-VoidstrapVersion
+    try {
+        & $cargo build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path (Join-Path $Root 'native/voidlauncher/Cargo.toml') --target-dir $targetDir
+        if ($LASTEXITCODE -ne 0) { throw "cargo exited with code $LASTEXITCODE" }
+    } finally {
+        Remove-Item Env:VOIDSTRAP_LAUNCHER_PAYLOAD -ErrorAction SilentlyContinue
+        Remove-Item Env:VOIDSTRAP_VERSION -ErrorAction SilentlyContinue
+    }
+
+    $built = Join-Path $targetDir 'x86_64-pc-windows-msvc/release/Voidstrap.exe'
+    if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw 'cargo did not produce the launcher' }
+    Copy-Item -LiteralPath $built -Destination $Job.Expected -Force
+    Get-ChildItem -LiteralPath $Job.Target.OutDir -Filter '*.lib' -File -ErrorAction SilentlyContinue | Remove-Item -Force
+}
+
+function Finish-PublishJob {
+    param([Parameter(Mandatory)] $Job)
+
+    if ($Job.Status -ne 'Building') {
+        return
+    }
+
+    while (-not $Job.Process.WaitForExit(1000)) {
+        Write-Heartbeat @($Job)
+    }
+    $Job.Process.WaitForExit()
+
+    $Job.StdOut = [string]$Job.StdOutTask.GetAwaiter().GetResult()
+    $Job.StdErr = [string]$Job.StdErrTask.GetAwaiter().GetResult()
+    $Job.CapturedOutput = $Job.StdOut + [Environment]::NewLine + $Job.StdErr
+
+    $Job.EndTime = Get-Date
+    $exitCode = $Job.Process.ExitCode
+
+    if ($exitCode -ne 0) {
+        $Job.Failure = "dotnet publish exited with code $exitCode"
+        $Job.Status = 'Failed'
+    }
+    elseif (-not (Test-Path -LiteralPath $Job.Expected -PathType Leaf)) {
+        $Job.Failure = "Publish completed, but the expected executable was not created: $($Job.Expected)"
+        $Job.Status = 'Failed'
+    }
+    else {
+        $Job.Status = 'Done'
+        if ($Job.Target.Kind -eq 'windows') {
+            try {
+                Invoke-WindowsLauncherBuild $Job
+            } catch {
+                $Job.Failure = "The Windows launcher could not be built: $($_.Exception.Message)"
+                $Job.Status = 'Failed'
+            }
+        }
+    }
+
+    $elapsed = [int](New-TimeSpan -Start $Job.StartTime -End $Job.EndTime).TotalSeconds
+    $color = if ($Job.Status -eq 'Done') { 'Green' } else { 'Red' }
+    Write-Host "  $($Job.Target.Name): $($Job.Status) (${elapsed}s)" -ForegroundColor $color
+}
+
+function Restart-PublishJob {
+    param([Parameter(Mandatory)] $Job)
+
+    try { $Job.Process.Dispose() } catch { }
+    Reset-OutputDirectory $Job.Target.OutDir
+    $started = Start-DotNetProcess -Arguments $Job.Arguments -WorkingDirectory $Root
+    $Job.Retried = $true
+    $Job.Process = $started.Process
+    $Job.StdOutTask = $started.StdOutTask
+    $Job.StdErrTask = $started.StdErrTask
+    $Job.StartTime = Get-Date
+    $Job.EndTime = $null
+    $Job.Failure = $null
+    $Job.CapturedOutput = ''
+    $Job.StdOut = ''
+    $Job.StdErr = ''
+    $Job.Status = 'Building'
+}
+
+function Show-PublishFailure {
+    param([Parameter(Mandatory)] $Job)
+
+    Write-Host "$($Job.Target.Name) errors:" -ForegroundColor Red
+
+    if ($Job.Failure) {
+        Write-Host $Job.Failure
+    }
+
+    $errorLines = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($Job.StdErr)) {
+        $errorLines += @(($Job.StdErr -split '\r?\n') | Select-Object -Last 30)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Job.StdOut)) {
+        $errorLines += @(($Job.StdOut -split '\r?\n' | Select-Object -Last 80) |
+            Where-Object { $_ -match '(?i)\berror\b|NETSDK\d+|MSB\d+' })
+    }
+
+    if ($errorLines.Count -gt 0) {
+        $errorLines | Select-Object -Unique | ForEach-Object { Write-Host $_ }
+    } else {
+        Write-Host 'No additional error text was written by dotnet.' -ForegroundColor DarkGray
+    }
+
+    Write-Host ''
+}
+
+function Get-VoidstrapVersion {
+    $props = Join-Path $Root 'Directory.Build.props'
+    if (-not (Test-Path -LiteralPath $props -PathType Leaf)) {
+        throw "Directory.Build.props was not found: $props"
+    }
+    $match = [regex]::Match((Get-Content -Raw -LiteralPath $props), '<VoidstrapVersion>([^<]+)</VoidstrapVersion>')
+    if (-not $match.Success) {
+        throw 'The Voidstrap package version is unavailable.'
+    }
+    return $match.Groups[1].Value
+}
+
+function Resolve-SignPathSource {
+    param(
+        [Parameter(Mandatory)] [string]$Version
+    )
+
+    if ($Version -notmatch '\A\d+\.\d+\.\d+\.\d+\z') {
+        throw 'SignPath requires a four-part release version.'
+    }
+
+    $origin = (& git -C $Root remote get-url origin 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $origin -notmatch '(?i)github\.com[:/]KloBraticc/Voidstrap(?:\.git)?\z') {
+        throw 'SignPath requires the repository origin to be KloBraticc/Voidstrap on GitHub.'
+    }
+
+    $status = @(& git -C $Root status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Git could not verify the local source state for signing.'
+    }
+    if ($status.Count -gt 0) {
+        throw 'SignPath signing requires a clean working tree so the signed GitHub build matches this local build.'
+    }
+
+    $branch = (& git -C $Root symbolic-ref --quiet --short HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -cne 'main') {
+        throw 'SignPath signing requires a checkout of the main branch.'
+    }
+
+    $head = (& git -C $Root rev-parse HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '\A[0-9a-f]{40}\z') {
+        throw 'Git could not resolve the current commit for signing.'
+    }
+
+    $remoteMainLines = @(& git -C $Root ls-remote origin refs/heads/main 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Git could not verify the main branch on origin.'
+    }
+    $remoteMain = if ($remoteMainLines.Count -eq 1) { (([string]$remoteMainLines[0]) -split '\s+', 2)[0] } else { $null }
+    if (-not $remoteMain -or $remoteMain -notmatch '\A[0-9a-f]{40}\z') {
+        throw 'Git could not resolve the main branch commit on origin.'
+    }
+    if ($remoteMain -ne $head) {
+        throw 'SignPath signing requires the current origin/main commit so the trusted build matches this local build.'
+    }
+
+    $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $gh) {
+        throw 'GitHub CLI (gh) is required to request trusted SignPath signing.'
+    }
+    & $gh.Source auth status --hostname github.com 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'SignPath signing requires an authenticated GitHub CLI session.'
+    }
+
+    return [pscustomobject]@{ Version = $Version; Head = $head; GhPath = $gh.Source }
+}
+
+function Invoke-SignPathWindows {
+    param(
+        [Parameter(Mandatory)] $Context,
+        [Parameter(Mandatory)] [string]$OutputPath
+    )
+
+    $Version = $Context.Version
+    $head = $Context.Head
+    $ghPath = $Context.GhPath
+
+    $requestId = [guid]::NewGuid().ToString('N')
+    $runName = "Sign Voidstrap $Version $requestId"
+    Write-Host "  Requesting trusted GitHub signing for commit $head..." -ForegroundColor DarkGray
+    & $ghPath workflow run windows-release-signing.yml --repo KloBraticc/Voidstrap --ref main -f "commit=$head" -f "version=$Version" -f "request-id=$requestId" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'GitHub Actions could not start the SignPath signing workflow. Check GitHub CLI authentication and workflow availability.'
+    }
+
+    $runId = $null
+    $findDeadline = [DateTime]::UtcNow.AddMinutes(2)
+    while (-not $runId -and [DateTime]::UtcNow -lt $findDeadline) {
+        $runsJson = & $ghPath run list --repo KloBraticc/Voidstrap --workflow windows-release-signing.yml --event workflow_dispatch --limit 20 --json databaseId,name 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub Actions did not return the signing workflow run.'
+        }
+        $runs = ConvertFrom-Json -InputObject $runsJson
+        $matchingRun = $runs | Where-Object { $_.name -ceq $runName } | Select-Object -First 1
+        if ($matchingRun) { $runId = [string]$matchingRun.databaseId }
+        if (-not $runId) { Start-Sleep -Seconds 3 }
+    }
+    if (-not $runId) {
+        throw 'GitHub accepted the signing request, but its unique workflow run could not be found.'
+    }
+
+    $signingRun = $null
+    $signingDeadline = [DateTime]::UtcNow.AddHours(1)
+    $lastProgressAt = [DateTime]::UtcNow
+    Write-Host "  Waiting for the GitHub build and SignPath signature: https://github.com/KloBraticc/Voidstrap/actions/runs/$runId" -ForegroundColor DarkGray
+    while ([DateTime]::UtcNow -lt $signingDeadline) {
+        $runJson = & $ghPath run view $runId --repo KloBraticc/Voidstrap --json status,conclusion 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub Actions did not return the status of the signing run.'
+        }
+        $signingRun = ConvertFrom-Json -InputObject $runJson
+        if ($signingRun.status -eq 'completed') { break }
+        if (([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 60) {
+            Write-Host '  SignPath is still processing the trusted build...' -ForegroundColor DarkGray
+            $lastProgressAt = [DateTime]::UtcNow
+        }
+        Start-Sleep -Seconds 10
+    }
+    $runUrl = "https://github.com/KloBraticc/Voidstrap/actions/runs/$runId"
+    if (-not $signingRun -or $signingRun.status -ne 'completed') {
+        throw "SignPath signing run did not finish within one hour: $runUrl"
+    }
+    if ($signingRun.conclusion -ne 'success') {
+        throw "SignPath signing run finished with status '$($signingRun.conclusion)': $runUrl"
+    }
+
+    $downloadDir = Join-Path $ArtifactDir "signpath-$requestId"
+    if (Test-Path -LiteralPath $downloadDir) {
+        throw 'The private SignPath download directory already exists.'
+    }
+    New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+    try {
+        & $ghPath run download $runId --repo KloBraticc/Voidstrap --name "voidstrap-windows-signed-$Version" --dir $downloadDir
+        if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub Actions could not download the signed Windows executable.'
+        }
+
+        $downloadedFiles = @(Get-ChildItem -LiteralPath $downloadDir -File -Force)
+        $downloadedDirectories = @(Get-ChildItem -LiteralPath $downloadDir -Directory -Force)
+        if ($downloadedDirectories.Count -ne 0 -or $downloadedFiles.Count -ne 1 -or $downloadedFiles[0].Name -cne 'Voidstrap.exe') {
+            throw 'The signing run did not return exactly one Voidstrap.exe file.'
+        }
+
+        $signedExe = $downloadedFiles[0].FullName
+        $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($signedExe)
+        if ($info.ProductName -ne 'Voidstrap' -or $info.ProductVersion -ne $Version -or $info.CompanyName -ne 'Voidstrap' -or $info.OriginalFilename -ne 'Voidstrap.dll' -or $info.FileVersion -ne $Version) {
+            throw "Unexpected signed Voidstrap metadata: ProductName='$($info.ProductName)', CompanyName='$($info.CompanyName)', OriginalFilename='$($info.OriginalFilename)', ProductVersion='$($info.ProductVersion)', FileVersion='$($info.FileVersion)'."
+        }
+        $signature = Get-AuthenticodeSignature -LiteralPath $signedExe
+        if ($null -eq $signature.SignerCertificate) {
+            throw "The signed executable has no Authenticode signature: $($signature.Status) $($signature.StatusMessage)"
+        }
+        $pinnedTestCertificate = $signature.SignerCertificate.Thumbprint -eq '84913A32E5DBC03EDC416B4FD3B499DCBD52145E'
+        if ($signature.Status -ne 'Valid' -and -not ($pinnedTestCertificate -and $signature.Status -in @('UnknownError', 'NotTrusted'))) {
+            throw "The signed executable signature is not accepted: $($signature.Status) $($signature.StatusMessage) signer $($signature.SignerCertificate.Thumbprint)"
+        }
+
+        $signedHash = (Get-FileHash -LiteralPath $signedExe -Algorithm SHA256).Hash
+        Copy-Item -LiteralPath $signedExe -Destination $OutputPath -Force
+        if ((Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash -ne $signedHash) {
+            throw 'The signed executable changed while being copied into the publish output.'
+        }
+        Write-Host '  Voidstrap.exe: signed by the trusted GitHub Actions build.' -ForegroundColor Green
+    }
+    finally {
+        Remove-BuildDirectory -Path $downloadDir
+    }
+}
+
+function Get-FreeBSDKitInputs {
+    return @(
+        'native',
+        'global.json',
+        'build/Packaging/FreeBSD/native-kit.sh',
+        'build/Packaging/FreeBSD/remote-build.yml',
+        'build/Packaging/Linux/build-wgpu-native.sh',
+        'build/Packaging/Linux/build-glfw-native.sh',
+        'build/Packaging/Linux/build-native-compat.sh',
+        'build/Packaging/Linux/editor-compat.c',
+        'build/Packaging/build-voidimage.sh',
+        'build/Packaging/build-voidclip.sh',
+        'build/Packaging/build-voidrpc.sh',
+        'build/Packaging/build-voidlog.sh',
+        'build/Packaging/build-voidstate.sh'
+    )
+}
+
+function Test-FreeBSDKit {
+    param([Parameter(Mandatory)] [string]$Path, [Parameter(Mandatory)] [string]$Key)
+
+    $keyFile = Join-Path $Path 'key.txt'
+    if (-not (Test-Path -LiteralPath $keyFile -PathType Leaf)) { return $false }
+    if ((Get-Content -LiteralPath $keyFile -Raw).Trim() -cne $Key) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $Path 'runtime-version.txt') -PathType Leaf)) { return $false }
+    foreach ($library in @('libwgpu_native.so', 'libglfw.so.3', 'libvoidimage.so', 'libvoidclip.so', 'libvoidrpc.so', 'libvoidlog.so', 'libvoidstate.so', 'libvoidstrapeditorcompat.so', 'libwin32compat.so')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Path "native/$library") -PathType Leaf)) { return $false }
+    }
+    return @(Get-ChildItem -LiteralPath (Join-Path $Path 'feed') -File -Filter '*.nupkg' -ErrorAction SilentlyContinue).Count -eq 3
+}
+
+function Start-FreeBSDKit {
+    $ErrorActionPreference = 'Continue'
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $git) {
+        throw 'FreeBSD packages need Git installed.'
+    }
+    $commit = (& $git.Source -C $Root stash create 2>$null | Out-String).Trim()
+    if (-not $commit) {
+        $commit = (& $git.Source -C $Root rev-parse HEAD 2>$null | Out-String).Trim()
+    }
+    if (-not $commit) {
+        throw 'Git could not resolve the commit to build for FreeBSD.'
+    }
+    $objects = (& $git.Source -C $Root rev-parse (Get-FreeBSDKitInputs | ForEach-Object { "${commit}:$_" }) 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $objects) {
+        throw 'Git could not hash the FreeBSD native sources.'
+    }
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $key = [BitConverter]::ToString($hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($objects))).Replace('-', '').Substring(0, 16).ToLowerInvariant()
+    }
+    finally {
+        $hasher.Dispose()
+    }
+    $kitPath = Join-Path $ArtifactDir 'freebsd-kit'
+    $context = [pscustomobject]@{ Path = $kitPath; Key = $key; GhPath = $null; Repo = $null; Request = $null; RuntimeVersion = $null }
+    if (Test-FreeBSDKit -Path $kitPath -Key $key) {
+        $context.RuntimeVersion = (Get-Content -LiteralPath (Join-Path $kitPath 'runtime-version.txt') -Raw).Trim()
+        Write-Host '  FreeBSD native libraries are up to date' -ForegroundColor DarkGray
+        return $context
+    }
+
+    $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $gh) {
+        throw 'The FreeBSD native libraries changed and need the GitHub CLI (gh) to rebuild them.'
+    }
+    $ghPath = $gh.Source
+    $owner = (& $ghPath api user --jq .login 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $owner) {
+        throw 'The FreeBSD native libraries need a signed in GitHub CLI, run: gh auth login'
+    }
+    $repo = "$owner/voidstrap-freebsd"
+
+    & $ghPath repo view $repo --json name 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  Creating $repo for FreeBSD builds..." -ForegroundColor DarkGray
+        & $ghPath repo create $repo --public --description 'FreeBSD builds of Voidstrap' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "GitHub could not create $repo."
+        }
+    }
+
+    $workflowPath = '.github/workflows/build.yml'
+    $workflowContent = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $Root 'build/Packaging/FreeBSD/remote-build.yml')))
+    $body = @{ message = 'build: update the FreeBSD build workflow'; content = $workflowContent }
+    $existingJson = & $ghPath api "repos/$repo/contents/$workflowPath" 2>$null | Out-String
+    if ($LASTEXITCODE -eq 0) {
+        $existing = ConvertFrom-Json -InputObject $existingJson
+        if (($existing.content -replace '\s', '') -ceq $workflowContent) {
+            $body = $null
+        }
+        else {
+            $body.sha = $existing.sha
+        }
+    }
+    if ($body) {
+        $body | ConvertTo-Json -Compress | & $ghPath api -X PUT "repos/$repo/contents/$workflowPath" --input - 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "GitHub could not update the FreeBSD workflow in $repo."
+        }
+    }
+
+    Write-Host "  FreeBSD native libraries changed, sending the source to $repo..." -ForegroundColor DarkGray
+    & $git.Source -C $Root -c credential.helper= -c 'credential.https://github.com.helper=!gh auth git-credential' push --force --quiet "https://github.com/$repo.git" "${commit}:refs/voidstrap/build" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git could not push the source to $repo."
+    }
+
+    $request = "Voidstrap FreeBSD $([guid]::NewGuid().ToString('N'))"
+    $dispatchDeadline = [DateTime]::UtcNow.AddMinutes(1)
+    while ($true) {
+        & $ghPath workflow run build.yml --repo $repo -f "commit=$commit" -f "request=$request" 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
+        if ([DateTime]::UtcNow -ge $dispatchDeadline) {
+            throw "GitHub Actions could not start the FreeBSD native build in $repo."
+        }
+        Start-Sleep -Seconds 3
+    }
+    Write-Host "  FreeBSD native libraries are building on GitHub Actions in $repo" -ForegroundColor DarkGray
+    $context.GhPath = $ghPath
+    $context.Repo = $repo
+    $context.Request = $request
+    return $context
+}
+
+function Complete-FreeBSDKit {
+    param([Parameter(Mandatory)] $Context)
+    $ErrorActionPreference = 'Continue'
+
+    if ($Context.RuntimeVersion) { return }
+    $ghPath = $Context.GhPath
+    $repo = $Context.Repo
+    $runId = $null
+    $findDeadline = [DateTime]::UtcNow.AddMinutes(2)
+    while (-not $runId -and [DateTime]::UtcNow -lt $findDeadline) {
+        $runsJson = & $ghPath run list --repo $repo --workflow build.yml --event workflow_dispatch --limit 20 --json databaseId,displayTitle 2>$null | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($candidate in (ConvertFrom-Json -InputObject $runsJson | ForEach-Object { $_ })) {
+                if ($candidate.displayTitle -ceq $Context.Request) { $runId = [string]$candidate.databaseId }
+            }
+        }
+        if (-not $runId) { Start-Sleep -Seconds 3 }
+    }
+    if (-not $runId) {
+        throw 'GitHub accepted the FreeBSD native build, but its workflow run could not be found.'
+    }
+
+    $runUrl = "https://github.com/$repo/actions/runs/$runId"
+    Write-Host "  Waiting for the FreeBSD native libraries: $runUrl" -ForegroundColor DarkGray
+    $run = $null
+    $deadline = [DateTime]::UtcNow.AddMinutes(100)
+    $lastProgressAt = [DateTime]::UtcNow
+    $viewFailures = 0
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $runJson = & $ghPath run view $runId --repo $repo --json status,conclusion 2>$null | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            $viewFailures = 0
+            $run = ConvertFrom-Json -InputObject $runJson
+            if ($run.status -eq 'completed') { break }
+        }
+        elseif (++$viewFailures -ge 12) {
+            throw "GitHub Actions stopped returning the FreeBSD native build status: $runUrl"
+        }
+        if (([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 60) {
+            Write-Host '  FreeBSD native libraries are still building...' -ForegroundColor DarkGray
+            $lastProgressAt = [DateTime]::UtcNow
+        }
+        Start-Sleep -Seconds 3
+    }
+    if (-not $run -or $run.status -ne 'completed') {
+        throw "The FreeBSD native build did not finish in time: $runUrl"
+    }
+    if ($run.conclusion -ne 'success') {
+        $failedLog = & $ghPath run view $runId --repo $repo --log-failed 2>$null
+        if ($failedLog) {
+            @($failedLog) | Select-Object -Last 40 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+        throw "The FreeBSD native build finished with status '$($run.conclusion)': $runUrl"
+    }
+
+    $downloadDir = Join-Path $ArtifactDir "freebsd-kit-$runId"
+    Remove-BuildDirectory -Path $downloadDir
+    New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+    & $ghPath run download $runId --repo $repo --name voidstrap-freebsd-kit --dir $downloadDir
+    if ($LASTEXITCODE -ne 0) {
+        Remove-BuildDirectory -Path $downloadDir
+        throw "GitHub Actions could not download the FreeBSD native libraries: $runUrl"
+    }
+    Set-Content -LiteralPath (Join-Path $downloadDir 'key.txt') -Value $Context.Key -Encoding ASCII
+    if (-not (Test-FreeBSDKit -Path $downloadDir -Key $Context.Key)) {
+        Remove-BuildDirectory -Path $downloadDir
+        throw "The FreeBSD native build returned an incomplete kit: $runUrl"
+    }
+    Remove-BuildDirectory -Path $Context.Path
+    Move-Item -LiteralPath $downloadDir -Destination $Context.Path
+    $Context.RuntimeVersion = (Get-Content -LiteralPath (Join-Path $Context.Path 'runtime-version.txt') -Raw).Trim()
+    Write-Host '  FreeBSD native libraries downloaded' -ForegroundColor DarkGray
+}
+
+function Get-LatestReleaseVersion {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/KloBraticc/Voidstrap/releases/latest' -TimeoutSec 20 -UseBasicParsing
+        return ([string]$release.tag_name) -replace '^v', ''
+    } catch {
+        return $null
+    }
+}
+
+function Update-NixPackage {
+    $packageFile = Join-Path $Root 'nix/package.nix'
+    $match = [regex]::Match((Get-Content -Raw -LiteralPath $packageFile), 'version = "([0-9.]+)";')
+    if (-not $match.Success) {
+        throw "The package version is unavailable in $packageFile"
+    }
+    $current = $match.Groups[1].Value
+    $latest = Get-LatestReleaseVersion
+    if (-not $latest) {
+        $PackageNotes.Add('Nix package: the latest GitHub release could not be read, the package stays on ' + $current + '.')
+        return
+    }
+    if ($latest -eq $current -and -not ($Only -contains 'nix')) {
+        Write-Host "Nix package: already on the latest release $latest" -ForegroundColor DarkGray
+        return
+    }
+
+    $docker = Get-Command docker -ErrorAction SilentlyContinue
+    $dockerInfo = if ($docker) { Invoke-NativeWithTimeout -FilePath $docker.Source -Arguments @('info', '--format', '{{.ServerVersion}}') -TimeoutSeconds 20 } else { $null }
+    if (-not $dockerInfo -or $dockerInfo.ExitCode -ne 0) {
+        $PackageNotes.Add("Nix package: start Docker Desktop and run with -Only nix to move it from $current to $latest.")
+        return
+    }
+
+    Write-Host "Nix package: updating $current to $latest, this builds the release in Docker" -ForegroundColor Cyan
+    $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ('voidstrap-nix-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+    $log = Join-Path $ArtifactDir 'nix.log'
+    New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
+    $updateScript = @(
+        'set -e',
+        'export NIX_CONFIG="experimental-features = nix-command flakes"',
+        "git config --global --add safe.directory '*'",
+        'mkdir -p /work',
+        'git -C /src archive HEAD | tar -x -C /work',
+        'cd /work',
+        'sed -i "s/version = \"[^\"]*\";/version = \"0\";/" nix/package.nix',
+        'git init -q && git add -A && git -c user.name=nix -c user.email=nix@localhost commit -qm work',
+        'nix run nixpkgs#nix-update -- --flake voidstrap --version "$1" --subpackage voidimage',
+        'nix build .#voidstrap -o /tmp/result',
+        'test -x /tmp/result/bin/voidstrap',
+        'test -e /tmp/result/lib/voidstrap/libvoidimage.so',
+        'cp nix/package.nix nix/deps.json /out/'
+    ) -join "`n"
+    [System.IO.File]::WriteAllText((Join-Path $workDir 'update.sh'), $updateScript + "`n")
+    try {
+        $arguments = "run --rm --privileged -v voidstrap-nix:/nix -v `"${Root}:/src:ro`" -v `"${workDir}:/out`" nixos/nix:latest sh /out/update.sh $latest"
+        $process = Start-Process -FilePath $docker.Source -ArgumentList $arguments -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+        $null = $process.Handle
+        while (-not $process.WaitForExit(15000)) {
+            Write-Host "Nix package: still building $latest" -ForegroundColor DarkGray
+        }
+        Get-Content -LiteralPath "$log.err" -ErrorAction SilentlyContinue | Add-Content -LiteralPath $log
+        Remove-Item -LiteralPath "$log.err" -Force -ErrorAction SilentlyContinue
+        $updated = Join-Path $workDir 'package.nix'
+        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $updated)) {
+            $PackageNotes.Add("Nix package: updating to $latest failed, see $log")
+            return
+        }
+        Copy-Item -LiteralPath $updated -Destination $packageFile -Force
+        Copy-Item -LiteralPath (Join-Path $workDir 'deps.json') -Destination (Join-Path $Root 'nix/deps.json') -Force
+        Write-Host "Nix package: updated to $latest, commit nix/package.nix and nix/deps.json" -ForegroundColor Green
+    } finally {
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$script:HeartbeatClock = [System.Diagnostics.Stopwatch]::StartNew()
+
+function Write-Heartbeat {
+    param([object[]]$Jobs = @())
+
+    if ($script:HeartbeatClock.Elapsed.TotalSeconds -lt 15) {
+        return
+    }
+    $script:HeartbeatClock.Restart()
+    $running = @($Jobs | Where-Object { $_.Status -eq 'Building' } | ForEach-Object {
+        "$($_.Target.Name) $([int](New-TimeSpan -Start $_.StartTime).TotalSeconds)s"
+    })
+    $android = $script:AndroidBuild
+    if ($android -and -not $android.Process.HasExited) {
+        $running += "Android $([int](New-TimeSpan -Start $android.StartTime).TotalSeconds)s"
+    }
+    if ($running.Count -gt 0) {
+        Write-Host "  Still building: $($running -join ', ')" -ForegroundColor DarkGray
+    }
+}
+
+function Wait-ForPublishJobs {
+    param(
+        [Parameter(Mandatory)] [object[]]$Jobs,
+        [int]$PollMilliseconds = 250,
+        [switch]$WaitForSlot
+    )
+
+    while (@($Jobs | Where-Object { $_.Status -eq 'Building' }).Count -gt 0) {
+        foreach ($job in $Jobs) {
+            if ($job.Status -eq 'Building' -and $job.Process.HasExited) {
+                Finish-PublishJob $job
+                Start-TargetPackaging $job
+            }
+        }
+        Update-PackagingChains
+        if ($WaitForSlot -and @($Jobs | Where-Object { $_.Status -eq 'Building' }).Count -lt $MaxParallel) {
+            return
+        }
+        if (@($Jobs | Where-Object { $_.Status -eq 'Building' }).Count -gt 0) {
+            Write-Heartbeat $Jobs
+            Start-Sleep -Milliseconds $PollMilliseconds
+        }
+    }
+}
+
+function Write-BuildOutcome {
+    param(
+        [Parameter(Mandatory)] [string]$Title,
+        [Parameter(Mandatory)] [string]$Color,
+        [string]$Detail,
+        [switch]$IncludeArtifacts
+    )
+
+    Write-Host $Title -ForegroundColor $Color
+    if ($Detail) {
+        Write-Host $Detail -ForegroundColor $Color
+    }
+    Write-Host "Output: $Out"
+    if ($IncludeArtifacts) {
+        Write-Host "Artifacts: $ArtifactDir"
+    }
+    Write-Host "Time:   $($sw.Elapsed.ToString('mm\:ss'))"
+}
+
+Assert-BuildDirectory $Out 'PublishedBuilds'
+
+[System.IO.Directory]::CreateDirectory((Split-Path -Parent $ArtifactDir)) | Out-Null
+$publishLock = $null
+try {
+    $publishLock = [System.IO.File]::Open((Join-Path (Split-Path -Parent $ArtifactDir) 'publish.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+} catch {
+    throw 'Another publish is already running for this repository, or its build directory is inaccessible.'
+}
+$originalDotnetRoot = $env:DOTNET_ROOT
+$originalFastCli = @{}
+$originalPath = $env:PATH
+$originalAppImageTool = $env:APPIMAGETOOL
+$originalWslEnv = $env:WSLENV
+try {
+
+$requiredSdkVersion = $null
+$globalJsonPath = Join-Path $Root 'global.json'
+if (Test-Path -LiteralPath $globalJsonPath -PathType Leaf) {
+    try {
+        $requiredSdkVersion = (Get-Content -Raw -LiteralPath $globalJsonPath | ConvertFrom-Json).sdk.version
+    } catch {
+        $requiredSdkVersion = $null
+    }
+}
+
+function Test-DotNetSatisfiesSdk {
+    param(
+        [Parameter(Mandatory)][string]$Candidate
+    )
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    Push-Location -LiteralPath $Root
+    try {
+        $selected = & $Candidate --version 2>$null
+        $exitCode = $LASTEXITCODE
+    } catch {
+        return $false
+    } finally {
+        Pop-Location
+        $ErrorActionPreference = $previousPreference
+    }
+    $script:DotNetVersion = ([string]$selected).Trim()
+    return $exitCode -eq 0 -and $script:DotNetVersion -match '^\d+\.\d+\.\d+(?:-.+)?$'
+}
+
+$dotnetCandidates = [System.Collections.Generic.List[string]]::new()
+if (-not [string]::IsNullOrWhiteSpace($env:DOTNET_ROOT)) {
+    $dotnetCandidates.Add((Join-Path $env:DOTNET_ROOT $(if ($IsWindowsHost) { 'dotnet.exe' } else { 'dotnet' })))
+}
+$homeDirectory = if ($IsWindowsHost) { $env:USERPROFILE } else { $env:HOME }
+if (-not [string]::IsNullOrWhiteSpace($homeDirectory)) {
+    $dotnetCandidates.Add((Join-Path (Join-Path $homeDirectory '.dotnet') $(if ($IsWindowsHost) { 'dotnet.exe' } else { 'dotnet' })))
+}
+$dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+if ($dotnetCommand) {
+    $dotnetCandidates.Add($dotnetCommand.Source)
+}
+foreach ($fallback in @('/usr/lib/dotnet/dotnet', '/usr/share/dotnet/dotnet', '/usr/local/share/dotnet/dotnet')) {
+    $dotnetCandidates.Add($fallback)
+}
+
+$dotnetPath = $null
+$dotnetComparer = if ($IsWindowsHost) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+$seenDotNet = [System.Collections.Generic.HashSet[string]]::new($dotnetComparer)
+foreach ($candidate in $dotnetCandidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+    $resolved = [System.IO.Path]::GetFullPath($candidate)
+    if (-not $seenDotNet.Add($resolved)) { continue }
+    if (Test-DotNetSatisfiesSdk -Candidate $resolved) {
+        $dotnetPath = $resolved
+        break
+    }
+}
+if (-not $dotnetPath) {
+    if ([string]::IsNullOrWhiteSpace($requiredSdkVersion)) {
+        throw 'The .NET SDK was not found. Install the .NET SDK and make sure dotnet is in PATH.'
+    }
+    throw "The required .NET SDK $requiredSdkVersion was not found."
+}
+
+$dotnetDirectory = Split-Path -Parent $dotnetPath
+$env:DOTNET_ROOT = $dotnetDirectory
+$fastCliNames = @('DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_NOLOGO', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE')
+foreach ($name in $fastCliNames) {
+    $originalFastCli[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+$env:DOTNET_NOLOGO = '1'
+$env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+$env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+$env:DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE = '1'
+$pathSeparator = [System.IO.Path]::PathSeparator
+if (($env:PATH -split [regex]::Escape($pathSeparator)) -notcontains $dotnetDirectory) {
+    $env:PATH = $dotnetDirectory + $pathSeparator + $env:PATH
+}
+
+$script:DotNetPath = $dotnetPath
+
+Write-Host 'Voidstrap Build' -ForegroundColor Cyan
+Write-Host "Root:   $Root"
+Write-Host "Output: $Out"
+Write-Host "SDK:    $script:DotNetVersion"
+Write-Host ''
+
+Assert-FileExists $Sln 'Solution'
+Assert-FileExists $WinProj 'Windows project'
+Assert-FileExists $CrossProj 'Cross platform project'
+
+$PubOpts = @(
+    '-p:PublishSingleFile=true',
+    '-p:UseAppHost=true',
+    '-p:IncludeNativeLibrariesForSelfExtract=true',
+    '-p:DebugType=none',
+    '-p:DebugSymbols=false',
+    '-p:TreatWarningsAsErrors=true',
+    '-p:ContinuousIntegrationBuild=true',
+    '-p:IncludeSourceRevisionInInformationalVersion=false',
+    '-p:RestoreUseStaticGraphEvaluation=true',
+    '-nr:false',
+    '-clp:ErrorsOnly'
+)
+
+$AllTargets = @(
+    [pscustomobject]@{ Name='Windows-x64';       Key='windows';          Kind='windows'; Rid='win-x64';          OutDir=(Join-Path $Out 'Windows');          Executable='Voidstrap.exe' }
+    [pscustomobject]@{ Name='Linux-x64';         Key='linux-x64';        Kind='cross';   Rid='linux-x64';        OutDir=(Join-Path $Staging 'Linux-x64');    Executable='Voidstrap' }
+    [pscustomobject]@{ Name='Linux-arm64';       Key='linux-arm64';      Kind='cross';   Rid='linux-arm64';      OutDir=(Join-Path $Staging 'Linux-arm64');  Executable='Voidstrap' }
+    [pscustomobject]@{ Name='Linux-musl-x64';    Key='linux-musl-x64';   Kind='cross';   Rid='linux-musl-x64';   OutDir=(Join-Path $Staging 'Linux-musl-x64'); Executable='Voidstrap' }
+    [pscustomobject]@{ Name='Linux-musl-arm64';  Key='linux-musl-arm64'; Kind='cross';   Rid='linux-musl-arm64'; OutDir=(Join-Path $Staging 'Linux-musl-arm64'); Executable='Voidstrap' }
+    [pscustomobject]@{ Name='macOS-x64';         Key='osx-x64';          Kind='cross';   Rid='osx-x64';          OutDir=(Join-Path $Staging 'macOS-x64');    Executable='Voidstrap' }
+    [pscustomobject]@{ Name='macOS-arm64';       Key='osx-arm64';        Kind='cross';   Rid='osx-arm64';        OutDir=(Join-Path $Staging 'macOS-arm64');  Executable='Voidstrap' }
+    [pscustomobject]@{ Name='FreeBSD-x64';       Key='freebsd-x64';      Kind='cross';   Rid='freebsd-x64';      OutDir=(Join-Path $Staging 'FreeBSD-x64');  Executable='Voidstrap' }
+)
+
+$RequestedAll = $Only -contains 'all'
+
+if ($RequestedAll) {
+    $Targets = @($AllTargets)
+} else {
+    $Targets = @($AllTargets | Where-Object { $Only -contains $_.Key })
+}
+
+$SignPathContext = $null
+if ($IsWindowsHost -and $Configuration -eq 'Release' -and (@($Targets | Where-Object { $_.Key -eq 'windows' }).Count -gt 0)) {
+    $useSignPath = -not $NoSign -and -not [Console]::IsInputRedirected
+    if ($useSignPath -and -not $env:CI) {
+        while ($true) {
+            $answer = (Read-Host 'Use SignPath code signing? [y/n]').Trim().ToLowerInvariant()
+            if ($answer -in @('y', 'yes')) { break }
+            if ($answer -in @('n', 'no')) {
+                $useSignPath = $false
+                break
+            }
+            Write-Host 'Please answer yes or no.' -ForegroundColor Yellow
+        }
+    }
+    if ($useSignPath) {
+        $SignPathContext = Resolve-SignPathSource -Version (Get-VoidstrapVersion)
+    }
+}
+
+$AndroidExplicit = $Only -contains 'android'
+$BuildAndroid = $AndroidExplicit -or $RequestedAll
+$FreeBSDExplicit = $Only -contains 'freebsd-x64'
+$script:FreeBSDKit = $null
+$PackageNotes = [System.Collections.Generic.List[string]]::new()
+
+if (@($Only | Where-Object { $_ -ne 'nix' }).Count -eq 0) {
+    Update-NixPackage
+    foreach ($note in $PackageNotes) {
+        Write-Host $note -ForegroundColor Yellow
+    }
+    Exit-Script ([int]($PackageNotes.Count -gt 0))
+}
+
+if ($Targets.Count -eq 0 -and -not $BuildAndroid) {
+    throw "Nothing matches -Only $($Only -join ', ')"
+}
+
+$SkippedHostTargets = @()
+if (-not $IsWindowsHost -and @($Targets | Where-Object { $_.Key -eq 'windows' }).Count -gt 0) {
+    $SkippedHostTargets = @($Targets | Where-Object { $_.Key -eq 'windows' })
+    $Targets = @($Targets | Where-Object { $_.Key -ne 'windows' })
+
+    if ($Targets.Count -eq 0 -and -not $BuildAndroid) {
+        throw @"
+The Windows Voidstrap project cannot be built on this host.
+Microsoft.Windows.CsWinRT invokes cswinrt.exe during the WPF build, and that
+Windows executable cannot run natively on Linux/macOS (exit code 126).
+
+Build the Windows target from Windows, or run this script for a Linux/macOS target.
+"@
+    }
+}
+
+$appImageTargets = @($Targets | Where-Object { $_.Rid -in @('linux-x64', 'linux-arm64') })
+if ($AppImage -and -not $IsLinuxHost -and -not $IsWindowsHost) {
+    throw 'AppImage packaging requires a Linux host, or Windows with a WSL distro.'
+}
+if ($AppImage -and $appImageTargets.Count -eq 0) {
+    throw 'AppImage packaging requires a linux x64 or linux arm64 target.'
+}
+$ShouldBuildAppImage = ($IsLinuxHost -or $AppImage) -and -not $SkipAppImage -and $appImageTargets.Count -gt 0
+$selectedLinuxTargets = @($Targets | Where-Object { $_.Rid.StartsWith('linux-', [System.StringComparison]::Ordinal) })
+$glibcLinuxTargets = @($selectedLinuxTargets | Where-Object { -not $_.Rid.StartsWith('linux-musl-', [System.StringComparison]::Ordinal) })
+$wantLinuxPackages = $LinuxPackages -or ($selectedLinuxTargets.Count -gt 0 -and -not $AppImage)
+if ($LinuxPackages -and $selectedLinuxTargets.Count -eq 0) {
+    throw 'Select at least one Linux target when requesting Linux packages.'
+}
+$packagingShell = $null
+if ($wantLinuxPackages -or $ShouldBuildAppImage -or @($Targets | Where-Object { $_.Rid.StartsWith('osx-', [System.StringComparison]::Ordinal) }).Count -gt 0) {
+    $packagingShell = Resolve-PackagingShell
+}
+elseif (@($Targets | Where-Object { $_.Rid.StartsWith('freebsd-', [System.StringComparison]::Ordinal) }).Count -gt 0) {
+    $gitBash = if ($IsWindowsHost) { Resolve-GitBashPath } else { $null }
+    $packagingShell = if ($gitBash) { New-PackagingShell -Name 'Git Bash' -Command $gitBash } else { Resolve-PackagingShell }
+}
+if ($wantLinuxPackages) {
+    $packageRequirement = $null
+    if (-not $packagingShell) {
+        $packageRequirement = 'Linux packages require bash on this host.'
+    } elseif ($glibcLinuxTargets.Count -gt 0 -and -not $packagingShell.Linux) {
+        $packageRequirement = 'Linux packages require a Linux host, or Windows with a WSL distro.'
+    } elseif ($glibcLinuxTargets.Count -gt 0) {
+        $missingTools = @($LinuxPackagingTools | Where-Object { $packagingShell.Tools -notcontains $_ })
+        if ($missingTools.Count -gt 0) {
+            $packageRequirement = "Linux packaging needs these tools in $($packagingShell.Name): $($missingTools -join ', ')."
+        }
+    }
+    if ($packageRequirement) {
+        if ($LinuxPackages) { throw $packageRequirement }
+        $PackageNotes.Add($packageRequirement + ' Plain Linux executables will be published instead.')
+        $wantLinuxPackages = $false
+    }
+}
+if ($ShouldBuildAppImage -and -not ($packagingShell -and $packagingShell.Linux)) {
+    throw 'AppImage packaging requires a Linux host, or Windows with a WSL distro.'
+}
+$appImageTool = $null
+if ($packagingShell -and $packagingShell.Linux -and -not $SkipAppImage -and $appImageTargets.Count -gt 0 -and ($wantLinuxPackages -or $ShouldBuildAppImage)) {
+    $appImageTool = Resolve-AppImageTool
+}
+$UseParallel = -not $Sequential -and ($Parallel -or $Targets.Count -gt 1)
+if ($UseParallel) {
+    $PubOpts += '-m:1'
+} else {
+    $PubOpts += '-m'
+}
+
+if ($SkippedHostTargets.Count -gt 0) {
+    foreach ($skipped in $SkippedHostTargets) {
+        Write-Host "Skipping $($skipped.Name): Windows WPF/CsWinRT publishing requires a Windows host." -ForegroundColor DarkYellow
+    }
+    Write-Host ''
+}
+
+if ($Clean -and $RequestedAll -and (Test-Path -LiteralPath $Out)) {
+    Write-Host 'Cleaning previous published output...' -ForegroundColor DarkGray
+    Stop-ProcessesUsingPath $Out
+    Remove-BuildDirectory $Out
+}
+New-Item -ItemType Directory -Path $Out -Force | Out-Null
+
+if ($Targets.Count -gt 0) {
+    if ($Clean) {
+        foreach ($target in $Targets) {
+            Remove-BuildDirectory (Join-Path $ArtifactDir $target.Key)
+        }
+    }
+    New-Item -ItemType Directory -Path $ArtifactDir -Force | Out-Null
+}
+
+if ($BuildSolution -and $Targets.Count -gt 0) {
+    if ($IsWindowsHost) {
+        Write-Host "[1/2] Building solution ($Configuration)..." -ForegroundColor Cyan
+
+        $buildArgs = @(
+            'build', $Sln,
+            '-c', $Configuration,
+            '-clp:ErrorsOnly'
+        )
+
+        & $script:DotNetPath @buildArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Solution build failed with exit code $LASTEXITCODE."
+        }
+
+        Write-Host '    done' -ForegroundColor Green
+        Write-Host ''
+    } else {
+        Write-Host '[1/2] Full solution prebuild skipped: this host is not Windows.' -ForegroundColor DarkYellow
+        Write-Host '      The solution contains a WPF/CsWinRT project that requires Windows.' -ForegroundColor DarkGray
+        Write-Host '      Each selected cross platform publish will restore and build what it needs.' -ForegroundColor DarkGray
+        Write-Host ''
+    }
+}
+
+$buildNames = @($Targets | ForEach-Object { $_.Name })
+if ($BuildAndroid) { $buildNames += 'Android' }
+if ($UseParallel) {
+    Write-Host "Building $($buildNames -join ', '), up to $MaxParallel at once" -ForegroundColor Cyan
+} else {
+    Write-Host "Building $($buildNames -join ', ')" -ForegroundColor Cyan
+}
+$plannedPackages = [System.Collections.Generic.List[string]]::new()
+if (@($Targets | Where-Object { $_.Kind -eq 'windows' }).Count -gt 0) { $plannedPackages.Add('Windows: Voidstrap.exe') }
+if ($selectedLinuxTargets.Count -gt 0) {
+    if ($wantLinuxPackages) {
+        $plannedFormats = @('tar.gz')
+        if ($glibcLinuxTargets.Count -gt 0) {
+            $plannedFormats += 'deb', 'rpm'
+            if ($appImageTool) { $plannedFormats += 'AppImage' }
+            $plannedFormats += 'Flatpak'
+        }
+        if ($glibcLinuxTargets.Count -eq 2) { $plannedFormats += 'AUR metadata' }
+        $plannedPackages.Add("Linux: $($plannedFormats -join ', ')")
+    } elseif ($ShouldBuildAppImage) {
+        $plannedPackages.Add('Linux: AppImage')
+    } else {
+        $plannedPackages.Add('Linux: plain executables')
+    }
+}
+if (@($Targets | Where-Object { $_.Rid.StartsWith('osx-', [System.StringComparison]::Ordinal) }).Count -gt 0) {
+    $macDiskImagesAvailable = $packagingShell -and ($packagingShell.Wsl -or $IsLinuxHost)
+    $plannedPackages.Add($(if ($macDiskImagesAvailable) { 'macOS: Voidstrap.app disk images and archives' } elseif ($packagingShell) { 'macOS: Voidstrap.app archives' } else { 'macOS: plain executables' }))
+}
+if ($BuildAndroid) { $plannedPackages.Add('Android: play and direct APKs') }
+if (@($Targets | Where-Object { $_.Rid.StartsWith('freebsd-', [System.StringComparison]::Ordinal) }).Count -gt 0) {
+    $plannedPackages.Add($(if ($packagingShell) { 'FreeBSD: tar.gz' } else { 'FreeBSD: plain executable' }))
+}
+Write-Host 'Packages:' -ForegroundColor Cyan
+foreach ($planned in $plannedPackages) {
+    Write-Host "  $planned" -ForegroundColor Cyan
+}
+foreach ($note in $PackageNotes) {
+    Write-Host "  Skipping: $note" -ForegroundColor DarkYellow
+}
+Write-Host ''
+
+Test-SystemClock
+Repair-FutureTimestamps
+$script:OutputSnapshot = Get-OutputSnapshot
+
+$wantAppImageOnly = $ShouldBuildAppImage -and -not $wantLinuxPackages
+if ($packagingShell) {
+    Write-Host "Packaging with $($packagingShell.Name) as each build finishes" -ForegroundColor DarkGray
+}
+if ($appImageTool) {
+    $env:APPIMAGETOOL = $appImageTool
+    if ($packagingShell.Wsl -and $env:WSLENV -notmatch '(^|:)APPIMAGETOOL/') {
+        $env:WSLENV = (@($env:WSLENV, 'APPIMAGETOOL/p') | Where-Object { $_ }) -join ':'
+    }
+}
+$packageSources = @(Get-ChildItem -LiteralPath (Join-Path $Root 'build/Packaging') -Recurse -File |
+    Sort-Object FullName | ForEach-Object { $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash })
+foreach ($sourcePath in @('publish-all.ps1', 'Directory.Build.props', 'LICENSE', 'THIRD-PARTY-NOTICES.txt', 'legal/sources/Bibata-Cursor-v2.0.7.tar.gz', 'src/Voidstrap.App/Voidstrap.png')) {
+    $packageSources += (Get-FileHash -LiteralPath (Join-Path $Root $sourcePath) -Algorithm SHA256).Hash
+}
+if ($appImageTool) { $packageSources += (Get-FileHash -LiteralPath $appImageTool -Algorithm SHA256).Hash }
+$shellName = if ($packagingShell) { $packagingShell.Name } else { '' }
+$packageSources += "$wantLinuxPackages,$wantAppImageOnly,$shellName,$IsWindowsHost,$($env:VOIDSTRAP_APPIMAGE_GLIBC_CEILING),$($env:SOURCE_DATE_EPOCH),$($env:MACOS_DEPLOYMENT_TARGET)"
+$script:PackageContext = [pscustomobject]@{
+    Shell         = $packagingShell
+    Version       = if ($packagingShell) { Get-VoidstrapVersion } else { $null }
+    Sources       = $packageSources
+    NoteCount     = $PackageNotes.Count
+    LinuxScript   = 'build/Packaging/Linux/package.sh'
+    FlatpakScript = 'build/Packaging/Flatpak/package.sh'
+    MacScript     = 'build/Packaging/MacOS/package.sh'
+    FreeBSDScript = 'build/Packaging/FreeBSD/archive.sh'
+    MacShellNote  = 'macOS app bundles were skipped: they need bash, which Git for Windows provides.'
+    MacImageNote  = 'macOS disk images were skipped; use WSL 2 with genisoimage to create them.'
+}
+
+$jobs = @()
+$unexpectedFailure = $null
+
+try {
+    if (@($Targets | Where-Object { $_.Key -eq 'freebsd-x64' }).Count -gt 0) {
+        try {
+            $script:FreeBSDKit = Start-FreeBSDKit
+        }
+        catch {
+            if ($FreeBSDExplicit) { throw }
+            Write-Host "  Skipping FreeBSD: $($_.Exception.Message)" -ForegroundColor DarkYellow
+            $PackageNotes.Add("FreeBSD package: $($_.Exception.Message)")
+            $Targets = @($Targets | Where-Object { $_.Key -ne 'freebsd-x64' })
+        }
+    }
+    if ($BuildAndroid) {
+        if ($AndroidExplicit -or (Test-AndroidToolchain)) {
+            Start-AndroidBuild
+        } else {
+            Write-Host '  Skipping Android APKs: no Android JDK, SDK, or signing keystore is configured on this host.' -ForegroundColor DarkYellow
+            $PackageNotes.Add('Android APKs: configure the JDK, SDK and signing keystore, or run with -Only android to see the exact error.')
+        }
+    }
+    if ($Targets.Count -gt 0) {
+        Stop-ProcessesUsingPath @($Targets | ForEach-Object { $_.OutDir })
+    }
+    $script:HeartbeatClock.Restart()
+    foreach ($t in $Targets) {
+        if ($UseParallel -and @($jobs | Where-Object { $_.Status -eq 'Building' }).Count -ge $MaxParallel) {
+            Wait-ForPublishJobs -Jobs $jobs -WaitForSlot
+        }
+        if ($t.Key -eq 'freebsd-x64') {
+            try {
+                Complete-FreeBSDKit -Context $script:FreeBSDKit
+            }
+            catch {
+                if ($FreeBSDExplicit) { throw }
+                Write-Host "  Skipping FreeBSD: $($_.Exception.Message)" -ForegroundColor DarkYellow
+                $PackageNotes.Add("FreeBSD package: $($_.Exception.Message)")
+                continue
+            }
+        }
+        Reset-OutputDirectory $t.OutDir
+
+        $targetArtifacts = Join-Path $ArtifactDir $t.Key
+
+        if ($t.Kind -eq 'windows') {
+            $argList = @(
+                'publish', $WinProj,
+                '-c', $Configuration,
+                '-r', $t.Rid,
+                '-o', $t.OutDir,
+                '--artifacts-path', $targetArtifacts,
+                '--self-contained', 'false',
+                '-p:PublishProfile=FolderProfile',
+                '-p:PublishReadyToRun=false',
+                '-p:IncludeAllContentForSelfExtract=false',
+                '-p:EnableWindowsTargeting=true'
+            ) + $PubOpts
+        } else {
+            $compressBundle = if ($t.Rid -like 'linux-*' -or $t.Rid -like 'freebsd-*') { 'false' } else { 'true' }
+            $argList = @(
+                'publish', $CrossProj,
+                '-c', $Configuration,
+                '-r', $t.Rid,
+                '-o', $t.OutDir,
+                '--artifacts-path', $targetArtifacts,
+                "-p:VoidstrapLinuxPackagingRoot=$targetArtifacts/",
+                '--self-contained', 'true',
+                '-p:IncludeAllContentForSelfExtract=true',
+                "-p:EnableCompressionInSingleFile=$compressBundle"
+            ) + $PubOpts
+            if ($t.Key -eq 'freebsd-x64') {
+                $argList += @(
+                    "-p:VoidstrapFreeBSDNativeDirectory=$(Join-Path $script:FreeBSDKit.Path 'native')/",
+                    "-p:RestoreAdditionalProjectSources=$(Join-Path $script:FreeBSDKit.Path 'feed')",
+                    "-p:RuntimeFrameworkVersion=$($script:FreeBSDKit.RuntimeVersion)"
+                )
+            }
+        }
+
+        Write-Host "  Starting $($t.Name)..." -ForegroundColor DarkGray
+        $started = Start-DotNetProcess -Arguments $argList -WorkingDirectory $Root
+
+        $job = [pscustomobject]@{
+            Target     = $t
+            Process    = $started.Process
+            StdOutTask = $started.StdOutTask
+            StdErrTask = $started.StdErrTask
+            Expected   = Join-Path $t.OutDir $t.Executable
+            Arguments  = $argList
+            StartTime  = Get-Date
+            EndTime    = $null
+            Failure    = $null
+            CapturedOutput = ''
+            StdOut     = ''
+            StdErr     = ''
+            Status     = 'Building'
+            Retried    = $false
+            PackagingStarted = $false
+            PackageInputHash = $null
+            PackagesCached = $false
+        }
+
+        $jobs += $job
+
+        if (-not $UseParallel) {
+            Finish-PublishJob $job
+
+            if ($job.Status -eq 'Failed' -and -not $job.Retried -and (Test-TransientPublishFailure $job)) {
+                Write-Host "  $($t.Name) failed, retrying once..." -ForegroundColor DarkYellow
+                Restart-PublishJob $job
+                Finish-PublishJob $job
+            }
+            Start-TargetPackaging $job
+        }
+    }
+
+    if ($UseParallel) {
+        Wait-ForPublishJobs -Jobs $jobs
+        $retryJobs = @($jobs | Where-Object { $_.Status -eq 'Failed' -and -not $_.Retried -and (Test-TransientPublishFailure $_) })
+        foreach ($job in $retryJobs) {
+            if (@($jobs | Where-Object { $_.Status -eq 'Building' }).Count -ge $MaxParallel) {
+                Wait-ForPublishJobs -Jobs $jobs -WaitForSlot
+            }
+            Write-Host "  $($job.Target.Name) failed, retrying once..." -ForegroundColor DarkYellow
+            Restart-PublishJob $job
+        }
+        Wait-ForPublishJobs -Jobs $jobs
+    }
+
+    $jump = Get-ClockJumpSeconds
+    if ($jobs.Count -gt 0 -and [Math]::Abs($jump) -gt 120) {
+        $minutes = [Math]::Round([Math]::Abs($jump) / 60)
+        Write-Host "  The system clock changed by about $minutes minutes during the build, so files from before and after the change could mix. Rebuilding every target once so nothing stale ships..." -ForegroundColor DarkYellow
+        Repair-FutureTimestamps
+        $script:WallClockStart = [DateTime]::UtcNow - $sw.Elapsed
+        Wait-PackagingChains
+        $script:PackagingChains = @()
+        foreach ($job in $jobs) {
+            $job.PackagingStarted = $false
+        }
+        foreach ($job in $jobs) {
+            if ($UseParallel -and @($jobs | Where-Object { $_.Status -eq 'Building' }).Count -ge $MaxParallel) {
+                Wait-ForPublishJobs -Jobs $jobs -WaitForSlot
+            }
+            Restart-PublishJob $job
+            if (-not $UseParallel) {
+                Finish-PublishJob $job
+                Start-TargetPackaging $job
+            }
+        }
+        if ($UseParallel) {
+            Wait-ForPublishJobs -Jobs $jobs
+        }
+    }
+}
+catch {
+    $unexpectedFailure = $_
+}
+finally {
+    foreach ($job in $jobs) {
+        if ($job.Status -eq 'Building' -and -not $job.Process.HasExited) {
+            try {
+                if ($job.Process.PSObject.Methods.Name -contains 'Kill') {
+                    try {
+                        $job.Process.Kill($true)
+                    } catch {
+                        $job.Process.Kill()
+                    }
+                }
+            } catch {
+            }
+        }
+    }
+    foreach ($job in $jobs) {
+        try {
+            if ($job.Status -eq 'Building') {
+                $job.Process.WaitForExit()
+                $null = $job.StdOutTask.GetAwaiter().GetResult()
+                $null = $job.StdErrTask.GetAwaiter().GetResult()
+            }
+        } catch { }
+        try { $job.Process.Dispose() } catch { }
+    }
+}
+
+if ($unexpectedFailure) {
+    $sw.Stop()
+    Write-Host ''
+    Write-BuildOutcome -Title 'BUILD SCRIPT FAILED' -Color Red -Detail $unexpectedFailure.Exception.Message
+    Exit-Script 1
+}
+
+Write-Host ''
+$Failed = @($jobs | Where-Object { $_.Status -eq 'Failed' })
+
+foreach ($job in $Failed) {
+    Show-PublishFailure $job
+}
+
+Get-ChildItem -LiteralPath $Out -Recurse -File -Filter '*.pdb' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
+if ($Failed.Count -gt 0) {
+    $sw.Stop()
+    Write-Host ''
+    Write-BuildOutcome -Title "FAILED: $(($Failed | ForEach-Object { $_.Target.Name }) -join ', ')" -Color Red -IncludeArtifacts
+    Exit-Script 1
+}
+
+$packageFailure = $null
+try {
+    if ($script:AndroidBuild) {
+        Complete-AndroidPublish (Get-VoidstrapVersion)
+    }
+
+    foreach ($job in $jobs) {
+        Start-TargetPackaging $job
+    }
+    $packagingJobs = @($jobs | Where-Object { $_.PackagingStarted -and -not $_.PackagesCached })
+    $linuxPackageJobs = @($packagingJobs | Where-Object { $_.Target.Rid.StartsWith('linux-', [System.StringComparison]::Ordinal) })
+    $macPackageJobs = @($packagingJobs | Where-Object { $_.Target.Rid.StartsWith('osx-', [System.StringComparison]::Ordinal) })
+    $freeBsdPackageJobs = @($packagingJobs | Where-Object { $_.Target.Rid.StartsWith('freebsd-', [System.StringComparison]::Ordinal) })
+    Wait-PackagingChains
+
+    $shell = $script:PackageContext.Shell
+    $packageVersion = $script:PackageContext.Version
+    $initialPackageNoteCount = $script:PackageContext.NoteCount
+    if ($wantLinuxPackages) {
+        $packageOutput = $LinuxOut
+        $x64Archive = Join-Path $packageOutput "Voidstrap_${packageVersion}_linux-x64.tar.gz"
+        $arm64Archive = Join-Path $packageOutput "Voidstrap_${packageVersion}_linux-arm64.tar.gz"
+        $aurMetadata = Join-Path $packageOutput 'Voidstrap_AUR_metadata.tar.gz'
+        if ((Test-Path -LiteralPath $x64Archive -PathType Leaf) -and (Test-Path -LiteralPath $arm64Archive -PathType Leaf) -and ($linuxPackageJobs.Count -gt 0 -or -not (Test-Path -LiteralPath $aurMetadata -PathType Leaf))) {
+            if (Test-Path -LiteralPath $aurMetadata -PathType Leaf) { Remove-Item -LiteralPath $aurMetadata -Force }
+            $aurStage = Join-Path $Staging 'AUR'
+            Reset-OutputDirectory $aurStage
+            $aurArgs = @('build/Packaging/Arch/pkgbuild.sh', $packageVersion, (Get-RootRelativePath $aurStage), (Get-RootRelativePath $x64Archive), (Get-RootRelativePath $arm64Archive), (Get-RootRelativePath (Join-Path $packageOutput 'Voidstrap_AUR_metadata.tar.gz')))
+            Invoke-PackagingScript $shell 'AUR metadata' $aurArgs
+        }
+    }
+    elseif ($wantAppImageOnly) {
+        $appImageOutput = $LinuxOut
+        New-Item -ItemType Directory -Path $appImageOutput -Force | Out-Null
+        foreach ($job in @($linuxPackageJobs | Where-Object { $_.Target.Rid -in @('linux-x64', 'linux-arm64') })) {
+            Invoke-PackagingScript $shell "$($job.Target.Name) AppImage" @($script:PackageContext.LinuxScript, $job.Target.Rid, $packageVersion, 'appimage', (Get-RootRelativePath $appImageOutput), (Get-RootRelativePath $job.Expected))
+            $packageArchitecture = if ($job.Target.Rid -eq 'linux-x64') { 'x86_64' } else { 'aarch64' }
+            $appImagePath = Join-Path $appImageOutput "Voidstrap_${packageVersion}_${packageArchitecture}.AppImage"
+            Assert-FileExists $appImagePath 'AppImage output'
+            Assert-FileExists ($appImagePath + '.zsync') 'AppImage update information'
+            if ((Get-Item -LiteralPath $appImagePath).Length -lt 1048576) {
+                throw 'The AppImage output is unexpectedly small.'
+            }
+        }
+    }
+
+    foreach ($job in @($linuxPackageJobs) + @($macPackageJobs) + @($freeBsdPackageJobs)) {
+        $platformOutput = Get-PlatformOutput $job.Target.Rid
+        New-Item -ItemType Directory -Path $platformOutput -Force | Out-Null
+        $tokens = switch ($job.Target.Rid) {
+            'linux-x64' { @('linux-x64', '_x86_64.') }
+            'linux-arm64' { @('linux-arm64', '_aarch64.') }
+            default { @($job.Target.Rid) }
+        }
+        $packaged = @(Get-ChildItem -LiteralPath $platformOutput -File | Where-Object { $name = $_.Name; @($tokens | Where-Object { $name.Contains($_) }).Count -gt 0 })
+        if ($packaged.Count -eq 0) {
+            Copy-Item -LiteralPath $job.Expected -Destination (Join-Path $platformOutput "Voidstrap_$(Get-VoidstrapVersion)_$($job.Target.Rid)") -Force
+            $licenseOutput = Join-Path $platformOutput 'licenses'
+            New-Item -ItemType Directory -Path $licenseOutput -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $Root 'THIRD-PARTY-NOTICES.txt'), (Join-Path $Root 'legal/sources/Bibata-Cursor-v2.0.7.tar.gz') -Destination $licenseOutput -Force
+            $PackageNotes.Add("$($job.Target.Name): no package could be built, so the plain executable was copied instead.")
+        }
+        if ($packaged.Count -gt 0 -and $PackageNotes.Count -eq $initialPackageNoteCount) {
+            Save-PackageCache $job
+        }
+    }
+}
+catch {
+    $packageFailure = $_
+}
+finally {
+    if (-not $packageFailure -and -not $NoClean -and (Test-Path -LiteralPath $Staging)) {
+        try {
+            Remove-BuildDirectory $Staging
+        } catch {
+            Write-Host "Warning: could not remove the staging folder: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+    }
+}
+
+if ($RequestedAll -or $Only -contains 'nix') {
+    Update-NixPackage
+}
+
+$sw.Stop()
+Write-Host ''
+
+if ($PackageNotes.Count -gt 0) {
+    Write-Host 'Not published on this host:' -ForegroundColor DarkYellow
+    foreach ($note in $PackageNotes) {
+        Write-Host "  $note" -ForegroundColor DarkYellow
+    }
+    Write-Host ''
+}
+if ($packageFailure) {
+    Write-BuildOutcome -Title 'PACKAGE CREATION FAILED' -Color Red -Detail $packageFailure.Exception.Message -IncludeArtifacts
+    Exit-Script 1
+}
+
+if ($SignPathContext) {
+    Invoke-SignPathWindows -Context $SignPathContext -OutputPath (Join-Path $Out 'Windows/Voidstrap.exe')
+}
+
+
+if ($PackageNotes.Count -gt 0) {
+    Write-Host 'Published everything this host can build.' -ForegroundColor Green
+} else {
+    Write-Host 'All builds published successfully.' -ForegroundColor Green
+}
+Write-Host "Output: $Out"
+Write-Host "Time:   $($sw.Elapsed.ToString('mm\:ss'))"
+if ($script:ClockWasWrong) {
+    Write-Host 'Note:   this build ran while the clock was wrong, so its files carry wrong dates. The builds themselves are correct, and the next run fixes the dates automatically.' -ForegroundColor DarkYellow
+}
+Write-Host ''
+$previousOutputs = if ($script:OutputSnapshot) { $script:OutputSnapshot } else { @{} }
+foreach ($folder in @(Get-ChildItem -LiteralPath $Out -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
+    $files = @(Get-ChildItem -LiteralPath $folder.FullName -File -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)
+    if ($files.Count -eq 0) { continue }
+    Write-Host "  $($folder.Name)" -ForegroundColor Cyan
+    foreach ($file in $files) {
+        $size = if ($file.Length -ge 1MB) { '{0:0.0} MB' -f ($file.Length / 1MB) } else { '{0:0} KB' -f [Math]::Max(1, $file.Length / 1KB) }
+        $line = '    {0,-48} {1,9}' -f $file.Name, $size
+        $before = $previousOutputs[$file.FullName]
+        if ($null -eq $before -or $before -ne ('{0}|{1}' -f $file.LastWriteTimeUtc.Ticks, $file.Length)) {
+            Write-Host $line
+        } else {
+            Write-Host "$line  (from an earlier run)" -ForegroundColor DarkGray
+        }
+    }
+}
+
+Exit-Script 0
+} finally {
+    Remove-PublishManifests
+    $env:DOTNET_ROOT = $originalDotnetRoot
+    if ($originalFastCli) {
+        foreach ($name in $originalFastCli.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $originalFastCli[$name], 'Process')
+        }
+    }
+    $env:PATH = $originalPath
+    $env:APPIMAGETOOL = $originalAppImageTool
+    $env:WSLENV = $originalWslEnv
+    $publishLock.Dispose()
+}
+

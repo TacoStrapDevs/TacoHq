@@ -1,0 +1,300 @@
+<UserControl xmlns:resources="clr-namespace:Voidstrap.Resources" x:Class="Voidstrap.UI.Elements.Settings.Pages.ModGeneratorSection"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             Loaded="Section_Loaded"
+             Unloaded="Section_Unloaded">
+  <UserControl.Resources>
+    <Style x:Key="ColorSwatch" TargetType="Border">
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="ToolTip" Value="{resources:Loc Ui_ModGen_PickColour}" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="OptionLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+  </UserControl.Resources>
+
+  <StackPanel>
+    <TextBlock Margin="2,24,0,0" FontSize="12.5" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="{resources:Loc Ui_ModGen_RecolourRobloxSMenuAndTop}" />
+
+    <ui:CardControl Margin="0,10,0,0" Focusable="False" ui:RinControlMotion.Enabled="True">
+      <ui:CardControl.Header>
+        <StackPanel>
+          <Border CornerRadius="10" Background="#FF15171C" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" ClipToBounds="True">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <Grid Height="190">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="1" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Image x:Name="BeforeImage" Margin="18,34,18,14" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" Opacity="0.85" />
+                <Border Margin="12,10,0,0" Padding="8,2" HorizontalAlignment="Left" VerticalAlignment="Top" CornerRadius="9" Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                  <TextBlock FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="{resources:Loc Ui_ModGen_Original}" />
+                </Border>
+                <Border Grid.Column="1" Margin="0,14" Background="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                <Image x:Name="AfterImage" Grid.Column="2" Margin="18,34,18,14" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                <Border Grid.Column="2" Margin="12,10,0,0" Padding="8,2" HorizontalAlignment="Left" VerticalAlignment="Top" CornerRadius="9" Background="{DynamicResource SystemAccentColorPrimaryBrush}">
+                  <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}" Text="{resources:Loc Ui_ModGen_YourMod}" />
+                </Border>
+                <ui:ProgressRing x:Name="PreviewRing" Grid.Column="2" Width="22" Height="22" IsIndeterminate="True" Visibility="Collapsed" />
+              </Grid>
+              <Border x:Name="FontPreviewCard" Grid.Row="1" Height="44" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Visibility="Collapsed">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Margin="14,0,12,0" VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="{resources:Loc Ui_ModGen_IconFont}" />
+                  <Image x:Name="FontPreviewImage" Grid.Column="1" Margin="0,10,14,10" Stretch="Uniform" HorizontalAlignment="Left" RenderOptions.BitmapScalingMode="HighQuality" />
+                </Grid>
+              </Border>
+            </Grid>
+          </Border>
+          <WrapPanel Margin="2,8,0,0">
+            <TextBlock x:Name="PreviewCaption" Margin="0,0,6,0" FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Ui_ModGen_RealIconsFromYourRobloxBuild}" />
+            <TextBlock x:Name="PreviewNote" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+          </WrapPanel>
+
+          <Grid Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Style="{StaticResource OptionLabel}" FontWeight="SemiBold" Text="{resources:Loc Ui_ModGen_Colour}" />
+            <ComboBox x:Name="FillPicker" Grid.Column="1" MinWidth="160" SelectionChanged="Input_Changed">
+              <ComboBoxItem Content="{resources:Loc Ui_ModGen_FillSolid}" />
+              <ComboBoxItem Content="{resources:Loc Ui_ModGen_FillGradient}" />
+              <ComboBoxItem Content="{resources:Loc Ui_ModGen_FillImage}" />
+            </ComboBox>
+          </Grid>
+
+          <StackPanel x:Name="SolidPanel" Margin="0,10,0,0">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border x:Name="SolidSwatch" Width="34" Height="34" Margin="0,0,8,0" Style="{StaticResource ColorSwatch}" MouseLeftButtonDown="Swatch_Click" />
+              <ui:TextBox x:Name="SolidColorBox" Grid.Column="1" PlaceholderText="#FF3B5C" TextChanged="Input_Changed" />
+            </Grid>
+          </StackPanel>
+
+          <StackPanel x:Name="GradientPanel" Margin="0,10,0,0" Visibility="Collapsed">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Grid Grid.Column="0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="GradientStartSwatch" Width="30" Height="30" Margin="0,0,6,0" Style="{StaticResource ColorSwatch}" MouseLeftButtonDown="Swatch_Click" />
+                <ui:TextBox x:Name="GradientStartBox" Grid.Column="1" PlaceholderText="{resources:Loc Ui_ModGen_Start}" TextChanged="Input_Changed" />
+              </Grid>
+              <Grid Grid.Column="2">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="GradientMiddleSwatch" Width="30" Height="30" Margin="0,0,6,0" Style="{StaticResource ColorSwatch}" MouseLeftButtonDown="Swatch_Click" />
+                <ui:TextBox x:Name="GradientMiddleBox" Grid.Column="1" PlaceholderText="{resources:Loc Ui_ModGen_MiddleOptional}" TextChanged="Input_Changed" />
+              </Grid>
+              <Grid Grid.Column="4">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="GradientEndSwatch" Width="30" Height="30" Margin="0,0,6,0" Style="{StaticResource ColorSwatch}" MouseLeftButtonDown="Swatch_Click" />
+                <ui:TextBox x:Name="GradientEndBox" Grid.Column="1" PlaceholderText="{resources:Loc Ui_ModGen_End}" TextChanged="Input_Changed" />
+              </Grid>
+            </Grid>
+            <Grid Margin="0,10,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock VerticalAlignment="Center" FontSize="12.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="{resources:Loc Ui_ModGen_Angle}" />
+              <Slider x:Name="AngleSlider" Grid.Column="1" Margin="10,0" Minimum="0" Maximum="360" TickFrequency="15" IsSnapToTickEnabled="True" VerticalAlignment="Center" ValueChanged="Angle_Changed" />
+              <TextBlock x:Name="AngleText" Grid.Column="2" MinWidth="36" VerticalAlignment="Center" TextAlignment="Right" Text="90°" />
+            </Grid>
+          </StackPanel>
+
+          <StackPanel x:Name="ImagePanel" Margin="0,10,0,0" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+              <ui:Button Content="{resources:Loc Ui_Appearance_ChooseImage}" Icon="Image24" Appearance="Secondary" Click="ChooseFill_Click" />
+              <TextBlock x:Name="FillImageText" Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="320" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Ui_ModGen_NoImageChosen}" />
+            </StackPanel>
+            <TextBlock Margin="0,6,0,0" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Ui_ModGen_EveryIconIsFilledWithThis}" />
+          </StackPanel>
+        </StackPanel>
+      </ui:CardControl.Header>
+    </ui:CardControl>
+
+    <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+      <HeaderedContentControl.Header>
+        <StackPanel>
+          <TextBlock FontSize="14" Text="{resources:Loc Ui_ModGen_MoreOptions}" />
+          <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_ModGen_IconSizesShadingWhichIconsChange}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+        </StackPanel>
+      </HeaderedContentControl.Header>
+      <StackPanel>
+        <Grid ToolTip="{resources:Loc Ui_ModGen_RobloxPicksASizeForYour}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_IconSizes}" />
+          <ComboBox x:Name="ScalePicker" Grid.Column="1" MinWidth="120" VerticalAlignment="Center" SelectionChanged="Input_Changed">
+            <ComboBoxItem Content="{resources:Loc Ui_ModGen_AllSizes}" />
+            <ComboBoxItem Content="{resources:Loc Ui_ModGen_Size1x}" />
+            <ComboBoxItem Content="{resources:Loc Ui_ModGen_Size2x}" />
+            <ComboBoxItem Content="{resources:Loc Ui_ModGen_Size3x}" />
+          </ComboBox>
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_IconOpacityHelp}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="180" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_IconOpacity}" />
+          <Slider x:Name="OpacitySlider" Grid.Column="1" Margin="10,0" Minimum="10" Maximum="100" Value="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" ValueChanged="Opacity_Changed" />
+          <TextBlock x:Name="OpacityText" Grid.Column="2" MinWidth="40" VerticalAlignment="Center" TextAlignment="Right" Text="100%" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_RobloxDrawsMostNewMenuAnd}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_RecolourTheIconFont}" />
+          <ui:ToggleSwitch x:Name="IconFontToggle" Grid.Column="1" VerticalAlignment="Center" Checked="Input_Changed" Unchecked="Input_Changed" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_TwoToneIconsKeepTheirDarker}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_KeepIconShading}" />
+          <ui:ToggleSwitch x:Name="KeepShadingToggle" Grid.Column="1" VerticalAlignment="Center" Checked="Input_Changed" Unchecked="Input_Changed" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_LeavesBadgesCurrencyReactionsLogosAnd}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_KeepColouredIconsAsTheyAre}" />
+          <ui:ToggleSwitch x:Name="KeepColoredToggle" Grid.Column="1" VerticalAlignment="Center" Checked="Input_Changed" Unchecked="Input_Changed" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_RobloxNormallyTintsTheseShapesWhile}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_RecolourButtonsBubblesAndBackgrounds}" />
+          <ui:ToggleSwitch x:Name="RecolorShapesToggle" Grid.Column="1" VerticalAlignment="Center" Checked="Input_Changed" Unchecked="Input_Changed" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_IncludesLooseInGameAndApp}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_RecolourOtherUITextures}" />
+          <ui:ToggleSwitch x:Name="UiTexturesToggle" Grid.Column="1" VerticalAlignment="Center" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0" ToolTip="{resources:Loc Ui_ModGen_RecolourCursorsHelp}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Style="{StaticResource OptionLabel}" Text="{resources:Loc Ui_ModGen_RecolourCursors}" />
+          <ui:ToggleSwitch x:Name="CursorsToggle" Grid.Column="1" VerticalAlignment="Center" />
+        </Grid>
+
+        <Grid Margin="0,12,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock FontSize="13" Text="{resources:Loc Ui_ModGen_CustomRobloxLogo}" />
+            <TextBlock x:Name="LogoText" FontSize="11.5" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Ui_ModGen_ReplacesTheRobloxLogoInMenus}" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+            <ui:Button x:Name="ClearLogoButton" Margin="0,0,8,0" Content="{resources:Loc Ui_Mods_Remove}" Icon="Delete24" Appearance="Secondary" Visibility="Collapsed" Click="ClearLogo_Click" />
+            <ui:Button Content="{resources:Loc Ui_Mods_Choose}" Icon="Add24" Appearance="Secondary" Click="ChooseLogo_Click" />
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+    </ui:CardExpander>
+
+    <ui:CardControl Margin="0,8,0,0" Focusable="False" Icon="Image24">
+      <ui:CardControl.Header>
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock FontSize="13" FontWeight="SemiBold" Text="{resources:Loc Ui_ModGen_SwapIcons}" />
+          <TextBlock x:Name="SwapSummary" FontSize="11.5" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Ui_ModGen_NoSwaps}" />
+        </StackPanel>
+      </ui:CardControl.Header>
+      <ui:Button x:Name="SwapButton" Content="{resources:Loc Ui_ModGen_ChooseIcons}" Icon="ArrowSwap24" Appearance="Secondary" Click="SwapIcons_Click" />
+    </ui:CardControl>
+
+    <ui:CardControl Margin="0,8,0,0" Focusable="False" Icon="Color24">
+      <ui:CardControl.Header>
+        <TextBlock FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Text="{resources:Loc Ui_ModGen_SavedThemes}" />
+      </ui:CardControl.Header>
+      <StackPanel Orientation="Horizontal">
+        <ComboBox x:Name="ThemePicker" MinWidth="180" Margin="0,0,8,0" SelectionChanged="ThemePicker_SelectionChanged" />
+        <ui:Button x:Name="DeleteThemeButton" Margin="0,0,8,0" Content="{resources:Loc Ui_ModGen_DeleteTheme}" Icon="Delete24" Appearance="Secondary" IsEnabled="False" Click="DeleteTheme_Click" />
+        <ui:Button x:Name="SaveThemeButton" Content="{resources:Loc Ui_ModGen_SaveTheme}" Icon="Save24" Appearance="Secondary" Click="SaveTheme_Click" />
+      </StackPanel>
+    </ui:CardControl>
+
+    <WrapPanel Margin="0,8,0,0">
+      <ui:Button x:Name="RandomizeButton" Margin="0,0,8,8" Content="{resources:Loc Ui_ModGen_Randomize}" Icon="ArrowShuffle24" Appearance="Secondary" Click="Randomize_Click" />
+      <ui:Button x:Name="ResetButton" Margin="0,0,8,8" Content="{resources:Loc Ui_ModGen_Reset}" Icon="ArrowReset24" Appearance="Secondary" Click="Reset_Click" />
+      <ui:Button x:Name="ImportButton" Margin="0,0,8,8" Content="{resources:Loc Ui_ModGen_ImportTheme}" Icon="ArrowDownload24" Appearance="Secondary" Click="Import_Click" />
+      <ui:Button Margin="0,0,8,8" Content="{resources:Loc Ui_ModGen_ExportTheme}" Icon="ArrowUpload24" Appearance="Secondary" Click="Export_Click" />
+    </WrapPanel>
+
+    <ui:CardControl Margin="0,0,0,0" Focusable="False" ui:RinControlMotion.Enabled="True">
+      <ui:CardControl.Header>
+        <StackPanel Margin="0,0,12,0">
+          <ui:TextBox x:Name="ModNameBox" PlaceholderText="{resources:Loc Ui_ModGen_ModNameGeneratedUITheme}" />
+          <TextBlock x:Name="StatusText" Margin="2,8,0,0" FontSize="12.5" TextWrapping="Wrap" Text="{resources:Loc Ui_ModGen_ReadyToGenerate}" />
+          <ProgressBar x:Name="GenerateProgress" Margin="0,8,0,0" Height="4" Minimum="0" Maximum="1" Visibility="Collapsed" />
+        </StackPanel>
+      </ui:CardControl.Header>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <ui:Button x:Name="CancelButton" Margin="0,0,8,0" Content="{resources:Loc Common_Cancel}" Icon="Dismiss24" Appearance="Secondary" Visibility="Collapsed" Click="Cancel_Click" />
+        <ui:Button x:Name="GenerateButton" Content="{resources:Loc Ui_ModGen_GenerateMod}" Icon="Wand24" Appearance="Primary" Background="{DynamicResource SystemAccentColorSecondaryBrush}" Click="Generate_Click" />
+      </StackPanel>
+    </ui:CardControl>
+  </StackPanel>
+</UserControl>

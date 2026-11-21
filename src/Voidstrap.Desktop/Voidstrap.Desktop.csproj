@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<LangVersion>latest</LangVersion>
+		<RootNamespace>Voidstrap.Desktop</RootNamespace>
+		<AssemblyName>Voidstrap.Desktop</AssemblyName>
+		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Avalonia" Version="12.1.6" />
+		<PackageReference Include="Avalonia.Controls.WebView" Version="12.1.2" />
+		<PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+	</ItemGroup>
+	<ItemGroup>
+		<Content Include="..\Voidstrap.Core\ExtensionManifests\*.json" Link="ExtensionManifests\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\Voidstrap.Core\Voidstrap.Core.csproj" />
+		<ProjectReference Include="..\Voidstrap.Platform.Abstractions\Voidstrap.Platform.Abstractions.csproj" />
+	</ItemGroup>
+</Project>

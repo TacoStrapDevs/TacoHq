@@ -1,0 +1,2200 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.Win32;
+using Voidstrap.AppData;
+using Voidstrap.Enums;
+using Voidstrap.Resources;
+using Voidstrap.RobloxInterfaces;
+using Voidstrap.UI;
+using Voidstrap.Utility;
+using CoreBootstrapper = Voidstrap.Bootstrapper;
+
+namespace Voidstrap.UI.ViewModels.Settings
+{
+    public class DownloadsViewModel : NotifyPropertyChangedViewModel
+    {
+        private static DownloadsViewModel? _shared;
+
+        public static DownloadsViewModel Shared => _shared ??= new DownloadsViewModel();
+
+        public class DownloadItem : NotifyPropertyChangedViewModel
+        {
+            private readonly DownloadsViewModel _parent;
+            private readonly IAppData _appData;
+            private readonly string _binaryType;
+            private readonly LaunchMode _launchMode;
+            private readonly string _processName;
+
+            private string _latestVersion = "";
+            private CoreBootstrapper? _activeBootstrapper;
+
+            public string Title { get; }
+            public string Subtitle { get; private set; }
+            public bool CanChangeLocation => !Voidstrap.Utility.Platform.UsesLinuxHost;
+            public ImageSource? IconImage { get; }
+            public LaunchMode LaunchMode => _launchMode;
+            public string RuntimeKey => _processName;
+            public bool IsRosemary => string.Equals(_processName, Voidstrap.Utility.LinuxRuntimeChoice.Rosemary, StringComparison.Ordinal);
+            private Voidstrap.Platform.Linux.RosemaryApplication RosemaryApplication =>
+                _launchMode == LaunchMode.Studio
+                    ? Voidstrap.Platform.Linux.RosemaryApplication.Studio
+                    : Voidstrap.Platform.Linux.RosemaryApplication.Player;
+            public bool ShowFleasionAddon { get; }
+            public bool ShowStudioAddons => _launchMode == LaunchMode.Studio;
+            public bool HasAddons => ShowFleasionAddon || ShowStudioAddons;
+            public bool ShowFleasion => ShowFleasionAddon;
+            public bool ShowSwiftTunnel => Voidstrap.Utility.Platform.IsWindows && ShowFleasionAddon;
+            public bool ShowCommunityContent => false;
+            public bool HasPoster => false;
+            public ImageSource? LogoImage => null;
+
+            public bool IsVng => _appData is RobloxPlayerData { UseVng: true };
+
+            public bool UseVng
+            {
+                get => App.Settings.Prop.UseVng;
+                set
+                {
+                    if (!IsVng || IsBusy || App.Settings.Prop.UseVng == value)
+                        return;
+                    if (value && !Frontend.ConfirmVng())
+                    {
+                        OnPropertyChanged(nameof(UseVng));
+                        return;
+                    }
+                    App.Settings.Prop.UseVng = value;
+                    App.Settings.Save();
+                    WindowsRegistry.RegisterPlayer();
+                    OnPropertyChanged(nameof(UseVng));
+                }
+            }
+
+            public ICommand SelectCommand { get; }
+
+            public bool IsInstalled { get; private set; }
+            public bool IsBusy { get; private set; }
+            public bool UpdateAvailable { get; private set; }
+            public string StatusText { get; private set; } = "";
+            public string VersionText { get; private set; } = "";
+            public string SizeText { get; private set; } = "";
+            public string LocationText { get; private set; } = "";
+            public string PrimaryButtonText { get; private set; } = "Install";
+
+            public Wpf.Ui.Common.SymbolRegular PrimaryIcon => Wpf.Ui.Common.SymbolRegular.ArrowDownload24;
+            public bool CanUninstall => IsInstalled && !IsBusy;
+            public bool CanPrimary => !IsBusy;
+
+            public double Progress { get; private set; }
+            public string ProgressDetail { get; private set; } = "";
+
+            private void SelectSelf()
+            {
+                _parent.SelectedItem = this;
+            }
+
+            private bool _isSelected;
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected == value)
+                        return;
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+
+            public ICommand InstallCommand { get; }
+            public ICommand UninstallCommand { get; }
+            public ICommand OpenFolderCommand { get; }
+            public ICommand CancelCommand { get; }
+            public ICommand ChangeLocationCommand { get; }
+            public ICommand VerifyCommand { get; }
+
+            public string VerifyText { get; private set; } = "";
+            public bool HasVerifyText => VerifyText.Length > 0;
+            public bool CanVerify => IsInstalled && !IsBusy;
+
+            private CancellationTokenSource? _verifyCts;
+
+            internal DownloadItem(
+                DownloadsViewModel parent,
+                IAppData appData,
+                string title,
+                string subtitle,
+                string iconSource,
+                string binaryType,
+                LaunchMode launchMode,
+                string processName,
+                bool showFleasionAddon
+            )
+            {
+                _parent = parent;
+                _appData = appData;
+                Title = title;
+                Subtitle = subtitle;
+                IconImage = LoadIcon(iconSource);
+                ShowFleasionAddon = showFleasionAddon;
+                _binaryType = binaryType;
+                _launchMode = launchMode;
+                _processName = processName;
+                InstallCommand = new AsyncRelayCommand(InstallOrUpdateAsync);
+                UninstallCommand = new AsyncRelayCommand(UninstallAsync);
+                OpenFolderCommand = new RelayCommand(OpenFolder);
+                SelectCommand = new RelayCommand(SelectSelf);
+                CancelCommand = new RelayCommand(Cancel);
+                ChangeLocationCommand = new AsyncRelayCommand(ChangeLocationAsync);
+                VerifyCommand = new AsyncRelayCommand(() => VerifyAsync(true));
+                Refresh();
+            }
+
+            private async Task VerifyAsync(bool interactive)
+            {
+                if (!IsInstalled || IsBusy)
+                    return;
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return;
+                }
+                string root = _appData.Directory;
+                HashSet<string> modified = new(StringComparer.OrdinalIgnoreCase);
+                foreach (string file in _appData.State.ModManifest ?? [])
+                    modified.Add(file);
+                foreach (List<string> files in (_appData.State.ManagedModManifest ?? []).Values)
+                    foreach (string file in files)
+                        modified.Add(file);
+                IsBusy = true;
+                Progress = 0;
+                StatusText = "Verifying";
+                ProgressDetail = "Reading the install record";
+                RaiseAll();
+                _verifyCts = new CancellationTokenSource();
+                CancellationToken token = _verifyCts.Token;
+                InstallManifest.Result? result = null;
+                bool canceled = false;
+                try
+                {
+                    result = await Task.Run(
+                            () =>
+                            {
+                                List<InstallManifest.Entry>? entries = InstallManifest.Read(root);
+                                return entries == null || entries.Count == 0
+                                    ? null
+                                    : InstallManifest.Verify(root, entries, modified, OnVerifyProgress, token);
+                            },
+                            token
+                        )
+                        .ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    canceled = true;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::Verify", $"{Title} verification failed: {ex.Message}");
+                    result = new InstallManifest.Result(0, 0, [], [ex.Message], true);
+                }
+                finally
+                {
+                    _verifyCts.Dispose();
+                    _verifyCts = null;
+                    IsBusy = false;
+                    Progress = 0;
+                    ProgressDetail = "";
+                    _parent.EndOperation();
+                    Refresh();
+                }
+                if (canceled)
+                {
+                    SetVerifyText("Verification canceled");
+                    return;
+                }
+                bool repair = PresentVerifyResult(Title, result, [], interactive, out string summary);
+                SetVerifyText(summary);
+                if (repair)
+                    await RepairAsync().ConfigureAwait(true);
+            }
+
+            private async Task RepairAsync()
+            {
+                bool previous = App.Settings.Prop.ForceRobloxReinstall;
+                App.Settings.Prop.ForceRobloxReinstall = true;
+                App.Settings.Save();
+                App.Logger?.WriteLine("DownloadsViewModel::Repair", $"Repairing {Title}");
+                if (await InstallOrUpdateAsync().ConfigureAwait(true))
+                    await VerifyAsync(false).ConfigureAwait(true);
+                else
+                {
+                    App.Settings.Prop.ForceRobloxReinstall = previous;
+                    App.Settings.Save();
+                }
+            }
+
+            private void OnVerifyProgress(int done, int total)
+            {
+                Application.Current?.Dispatcher.BeginInvoke(
+                    (Action)
+                        delegate
+                        {
+                            Progress = total == 0 ? 100 : done * 100.0 / total;
+                            ProgressDetail = $"Checked {done:N0} of {total:N0} files";
+                            StatusText = $"Verifying {Progress:0}%";
+                            OnPropertyChanged(nameof(Progress));
+                            OnPropertyChanged(nameof(ProgressDetail));
+                            OnPropertyChanged(nameof(StatusText));
+                        }
+                );
+            }
+
+            private void SetVerifyText(string text)
+            {
+                VerifyText = text;
+                OnPropertyChanged(nameof(VerifyText));
+                OnPropertyChanged(nameof(HasVerifyText));
+            }
+
+            internal void RefreshInstallState()
+            {
+                if (IsBusy)
+                    return;
+                if (Voidstrap.Utility.Platform.UsesLinuxHost)
+                {
+                    Refresh();
+                    return;
+                }
+                bool exeExists =
+                    !string.IsNullOrEmpty(_appData.State.VersionGuid)
+                    && (File.Exists(_appData.ExecutablePath) || Voidstrap.Utility.RobloxInstallCompression.IsCompressed(_appData));
+                string location = exeExists ? _appData.Directory : _appData.VersionsRoot;
+                if (exeExists != IsInstalled || !string.Equals(location, LocationText, StringComparison.OrdinalIgnoreCase))
+                    Refresh();
+            }
+
+            public void Refresh()
+            {
+                if (Voidstrap.Utility.Platform.UsesLinuxHost)
+                {
+                    RefreshLinuxRuntime();
+                    return;
+                }
+                bool exeExists =
+                    !string.IsNullOrEmpty(_appData.State.VersionGuid)
+                    && (File.Exists(_appData.ExecutablePath) || Voidstrap.Utility.RobloxInstallCompression.IsCompressed(_appData));
+                if (!exeExists)
+                {
+                    string? detectedGuid = ScanForExistingInstall();
+                    if (!string.IsNullOrEmpty(detectedGuid))
+                    {
+                        try
+                        {
+                            _appData.State.VersionGuid = detectedGuid;
+                            App.State.Save();
+                            App.Logger?.WriteLine("DownloadsViewModel::Detect", $"Adopted an existing {Title} install ({detectedGuid})");
+                        }
+                        catch { }
+                        exeExists = File.Exists(_appData.ExecutablePath);
+                    }
+                }
+                IsInstalled = exeExists;
+
+                if (exeExists)
+                {
+                    VersionText = _appData.State.VersionGuid;
+                    LocationText = _appData.Directory;
+                    string sizeDir = _appData.Directory;
+                    _ = Task.Run(
+                        delegate
+                        {
+                            string size = ComputeSize(sizeDir);
+                            Application.Current?.Dispatcher.BeginInvoke(
+                                (Action)
+                                    delegate
+                                    {
+                                        SizeText = size;
+                                        OnPropertyChanged(nameof(SizeText));
+                                    }
+                            );
+                        }
+                    );
+                }
+                else
+                {
+                    VersionText = "Not installed yet";
+                    LocationText = _appData.VersionsRoot;
+                    SizeText = "";
+                }
+
+                if (!IsBusy)
+                {
+                    if (!exeExists)
+                    {
+                        StatusText = "Not installed";
+                        PrimaryButtonText = "Install";
+                    }
+                    else if (UpdateAvailable)
+                    {
+                        StatusText = "Update available";
+                        PrimaryButtonText = "Update";
+                    }
+                    else
+                    {
+                        StatusText = "Up to date";
+                        PrimaryButtonText = "Reinstall";
+                    }
+                }
+
+                RaiseAll();
+            }
+
+            private void RefreshRosemaryRuntime()
+            {
+                bool runtime = Voidstrap.Platform.Linux.LinuxRosemary.IsRuntimeInstalled;
+                bool app = Voidstrap.Platform.Linux.LinuxRosemary.IsApplicationInstalled(RosemaryApplication);
+                string? robloxVersion = app ? Voidstrap.Platform.Linux.LinuxRosemary.InstalledRobloxVersion(RosemaryApplication) : null;
+                IsInstalled = runtime && app;
+                LocationText = Voidstrap.Platform.Linux.LinuxRosemary.Root;
+                bool player = _launchMode == LaunchMode.Player;
+                if (!Voidstrap.Platform.Linux.LinuxRosemary.IsSupportedHost)
+                    Subtitle = "Rosemary only runs on x86_64 Linux";
+                else if (!runtime && Voidstrap.Utility.Platform.IsFreeBSD)
+                    Subtitle = Strings.Menu_Rosemary_NotInstalledFreeBSD;
+                else if (!IsInstalled)
+                    Subtitle = player
+                        ? "Not installed yet, Voidstrap installs Rosemary and macOS Roblox when you launch"
+                        : "Not installed yet, Voidstrap installs Rosemary and macOS Roblox Studio when you launch Studio";
+                else
+                    Subtitle =
+                        (player ? "macOS Roblox " : "macOS Roblox Studio ")
+                        + (robloxVersion ?? "")
+                        + " through Rosemary "
+                        + Voidstrap.Platform.Linux.LinuxRosemary.InstalledRuntimeVersion;
+                VersionText = robloxVersion ?? (IsInstalled ? "Installed" : "Not installed yet");
+                StatusText = IsInstalled ? "Installed" : "Not installed";
+                PrimaryButtonText = IsInstalled ? "Update" : "Install";
+                SizeText = "";
+                OnPropertyChanged(nameof(Subtitle));
+                RaiseAll();
+            }
+
+            private void RefreshLinuxRuntime()
+            {
+                if (IsRosemary)
+                {
+                    RefreshRosemaryRuntime();
+                    return;
+                }
+                bool player = _launchMode == LaunchMode.Player;
+                IsInstalled = player
+                    ? Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.IsInstalled()
+                    : Voidstrap.Platform.Linux.LinuxVinegarStudioRuntimeProvider.IsInstalled();
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                LocationText = Path.Combine(home, ".var", "app", player ? "org.vinegarhq.Sober" : "org.vinegarhq.Vinegar");
+                string? robloxVersion =
+                    player && IsInstalled ? Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.GetInstalledRobloxVersion() : null;
+                if (!IsInstalled)
+                    Subtitle = player
+                        ? "Not installed yet, Voidstrap installs Sober when you launch"
+                        : "Not installed yet, Voidstrap installs Vinegar when you launch Studio";
+                else if (player)
+                    Subtitle = robloxVersion is null
+                        ? "Roblox is not downloaded yet, it downloads on your first launch"
+                        : "Roblox " + robloxVersion + " is ready to play";
+                else
+                    Subtitle = "Runs Roblox Studio on Linux";
+                VersionText = robloxVersion ?? (IsInstalled ? "Installed" : "Not installed yet");
+                StatusText = IsInstalled ? "Installed" : "Not installed";
+                PrimaryButtonText = IsInstalled ? "Installed" : "Install";
+                SizeText = "";
+                OnPropertyChanged(nameof(Subtitle));
+                RaiseAll();
+            }
+
+            private void RaiseAll()
+            {
+                OnPropertyChanged(nameof(IsInstalled));
+                OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(UpdateAvailable));
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(VersionText));
+                OnPropertyChanged(nameof(SizeText));
+                OnPropertyChanged(nameof(LocationText));
+                OnPropertyChanged(nameof(PrimaryButtonText));
+                OnPropertyChanged(nameof(CanUninstall));
+                OnPropertyChanged(nameof(CanPrimary));
+                OnPropertyChanged(nameof(CanVerify));
+                OnPropertyChanged(nameof(Progress));
+                OnPropertyChanged(nameof(ProgressDetail));
+            }
+
+            public async Task CheckUpdateAsync()
+            {
+                if (!IsInstalled)
+                    return;
+                try
+                {
+                    string latest = IsVng
+                        ? (await Deployment.GetInfo("production", binaryType: _binaryType).ConfigureAwait(true)).VersionGuid
+                        : await FetchLatestVersionAsync(_binaryType).ConfigureAwait(true);
+                    if (!string.IsNullOrEmpty(latest))
+                    {
+                        _latestVersion = latest;
+                        UpdateAvailable = !string.Equals(latest, _appData.State.VersionGuid, StringComparison.OrdinalIgnoreCase);
+                        Refresh();
+                    }
+                }
+                catch { }
+            }
+
+            private async Task<bool> InstallOrUpdateAsync()
+            {
+                if (IsBusy)
+                    return false;
+                if (IsRosemary)
+                    return await InstallRosemaryAsync();
+                if (IsProcessRunning(_processName))
+                {
+                    Frontend.ShowMessageBox($"Close {Title} before installing or updating it.", MessageBoxImage.Warning);
+                    return false;
+                }
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return false;
+                }
+
+                _parent.SelectedItem = this;
+                IsBusy = true;
+                Progress = 0;
+                ProgressDetail = "Preparing...";
+                StatusText = "Preparing...";
+                _parent.BeginActiveDownload(this, _binaryType);
+                RaiseAll();
+
+                CoreBootstrapper.DownloadProgressChanged += OnProgress;
+                bool ok = false;
+                try
+                {
+                    var bootstrapper = new CoreBootstrapper(_launchMode, _appData is RobloxPlayerData player ? player.UseVng : null)
+                    {
+                        InstallOnly = true,
+                        ForceReinstall = IsInstalled && !UpdateAvailable,
+                        SkipUpdateHold = true,
+                    };
+                    _activeBootstrapper = bootstrapper;
+                    await Task.Run(() => bootstrapper.Run()).ConfigureAwait(true);
+                    ok = bootstrapper.InstallationSucceeded;
+                    if (!ok && !bootstrapper.IsCancelled)
+                        Frontend.ShowMessageBox(
+                            $"{Title} did not finish installing. Check the latest log for the reason.",
+                            MessageBoxImage.Warning
+                        );
+                }
+                catch (Exception ex)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::Install", $"{Title} install failed: {ex.Message}");
+                    Frontend.ShowMessageBox($"{Title} could not be installed: {ex.Message}", MessageBoxImage.Error);
+                }
+                finally
+                {
+                    CoreBootstrapper.DownloadProgressChanged -= OnProgress;
+                    _activeBootstrapper = null;
+                    IsBusy = false;
+                    UpdateAvailable = false;
+                    Progress = 0;
+                    ProgressDetail = "";
+                    _parent.EndActiveDownload();
+                    _parent.EndOperation();
+                    Refresh();
+                    if (ok)
+                        await CheckUpdateAsync().ConfigureAwait(true);
+                }
+                return ok;
+            }
+
+            private void OnProgress(DownloadProgressInfo info)
+            {
+                if (info == null || !string.Equals(info.BinaryType, _binaryType, StringComparison.OrdinalIgnoreCase))
+                    return;
+                Application.Current?.Dispatcher.BeginInvoke(
+                    (Action)
+                        delegate
+                        {
+                            Progress = info.Percent;
+                            ProgressDetail =
+                                $"{FormatBytes(info.BytesDone)} of {FormatBytes(info.TotalBytes)}, {FormatSpeed(info.SpeedBytesPerSec)}, {info.PackagesDone}/{info.TotalPackages} packages";
+                            StatusText = $"Downloading {info.Percent:0}%";
+                            OnPropertyChanged(nameof(Progress));
+                            OnPropertyChanged(nameof(ProgressDetail));
+                            OnPropertyChanged(nameof(StatusText));
+                            _parent.PushSpeedSample(info.SpeedBytesPerSec, info.TotalBytes, info.BytesDone);
+                        }
+                );
+            }
+
+            private void Cancel()
+            {
+                try
+                {
+                    _verifyCts?.Cancel();
+                    _activeBootstrapper?.Cancel();
+                }
+                catch { }
+            }
+
+            private async Task<bool> InstallRosemaryAsync()
+            {
+                if (Voidstrap.Platform.Linux.LinuxRosemary.RunningProcessIds(RosemaryApplication).Count > 0)
+                {
+                    Frontend.ShowMessageBox($"Close {Title} before installing or updating it.", MessageBoxImage.Warning);
+                    return false;
+                }
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return false;
+                }
+
+                _parent.SelectedItem = this;
+                IsBusy = true;
+                Progress = 0;
+                StatusText = "Preparing...";
+                ProgressDetail = StatusText;
+                RaiseAll();
+                bool ok = false;
+                try
+                {
+                    Action<string> status = message =>
+                        Application.Current?.Dispatcher.BeginInvoke(
+                            (Action)
+                                delegate
+                                {
+                                    StatusText = message;
+                                    ProgressDetail = message;
+                                    OnPropertyChanged(nameof(StatusText));
+                                    OnPropertyChanged(nameof(ProgressDetail));
+                                }
+                        );
+                    Voidstrap.Platform.Linux.LinuxRosemary.DownloadSegments = Voidstrap.Utility.DownloadConfiguration.NormalizeSegments(
+                        App.Settings.Prop.MaxDownloadSegments
+                    );
+                    Voidstrap.Platform.OperationResult<string> runtime = await Voidstrap.Platform.Linux.LinuxRosemary.EnsureRuntimeAsync(
+                        status
+                    );
+                    if (!runtime.Succeeded)
+                    {
+                        Frontend.ShowMessageBox(runtime.Failure?.Message ?? "Rosemary could not be installed.", MessageBoxImage.Error);
+                        return false;
+                    }
+                    Voidstrap.Platform.Linux.RosemaryRobloxOptions options = new(
+                        App.Settings.Prop.IsChannelEnabled ? App.Settings.Prop.Channel : null,
+                        true,
+                        IsInstalled
+                    );
+                    Voidstrap.Platform.OperationResult<string> roblox = await Voidstrap.Platform.Linux.LinuxRosemary.EnsureRobloxAsync(
+                        RosemaryApplication,
+                        options,
+                        status
+                    );
+                    if (!roblox.Succeeded)
+                    {
+                        Frontend.ShowMessageBox(roblox.Failure?.Message ?? "Roblox could not be installed.", MessageBoxImage.Error);
+                        return false;
+                    }
+                    ok = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.WriteException("DownloadsViewModel::InstallRosemary", ex);
+                    Frontend.ShowMessageBox(ex.Message, MessageBoxImage.Error);
+                    return false;
+                }
+                finally
+                {
+                    IsBusy = false;
+                    _parent.EndOperation();
+                    Refresh();
+                    if (ok)
+                        App.Logger.WriteLine("DownloadsViewModel::InstallRosemary", Title + " is installed");
+                }
+            }
+
+            private async Task UninstallAsync()
+            {
+                if (!IsInstalled || IsBusy)
+                    return;
+                if (IsRosemary)
+                {
+                    if (
+                        Frontend.ShowMessageBox(
+                            $"Remove {Title}? You can reinstall it any time.",
+                            MessageBoxImage.Question,
+                            MessageBoxButton.YesNo,
+                            MessageBoxResult.No
+                        ) != MessageBoxResult.Yes
+                    )
+                        return;
+                    string bundle = Voidstrap.Platform.Linux.LinuxRosemary.ApplicationPath(RosemaryApplication);
+                    await Task.Run(
+                        delegate
+                        {
+                            try
+                            {
+                                if (Directory.Exists(bundle))
+                                    Directory.Delete(bundle, true);
+                                if (File.Exists(bundle + ".version"))
+                                    File.Delete(bundle + ".version");
+                            }
+                            catch (Exception ex)
+                            {
+                                App.Logger.WriteLine(
+                                    "DownloadsViewModel::UninstallRosemary",
+                                    "Could not remove " + bundle + ": " + ex.Message
+                                );
+                            }
+                        }
+                    );
+                    Refresh();
+                    return;
+                }
+                if (IsProcessRunning(_processName))
+                {
+                    Frontend.ShowMessageBox($"Close {Title} before removing it.", MessageBoxImage.Warning);
+                    return;
+                }
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return;
+                }
+                string removalMessage = $"Remove {Title}? This deletes {SizeText} of installed files. You can reinstall it any time.";
+                if (IsVng)
+                    removalMessage += "\n\n" + Strings.Vng_UninstallWarning;
+                if (
+                    Frontend.ShowMessageBox(removalMessage, MessageBoxImage.Question, MessageBoxButton.YesNo, MessageBoxResult.No)
+                    != MessageBoxResult.Yes
+                )
+                {
+                    _parent.EndOperation();
+                    return;
+                }
+                IsBusy = true;
+                StatusText = "Removing";
+                RaiseAll();
+                try
+                {
+                    string dir = _appData.Directory;
+                    bool compressed = Voidstrap.Utility.RobloxInstallCompression.IsCompressed(_appData);
+                    if (Directory.Exists(dir))
+                        await DeleteInstallDirectoryAsync(dir).ConfigureAwait(true);
+                    if (compressed)
+                        File.Delete(Voidstrap.Utility.RobloxInstallCompression.ArchivePathFor(dir));
+                    _appData.State.VersionGuid = string.Empty;
+                    _appData.State.PackageHashes?.Clear();
+                    _appData.State.Size = 0;
+                    App.State.Save();
+                    if (IsVng && App.Settings.Prop.UseVng)
+                    {
+                        App.Settings.Prop.UseVng = false;
+                        App.Settings.Save();
+                        WindowsRegistry.RegisterPlayer();
+                        OnPropertyChanged(nameof(UseVng));
+                    }
+                    UpdateAvailable = false;
+                    Refresh();
+                }
+                catch (Exception ex)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::Uninstall", $"{Title} removal failed: {ex.Message}");
+                    Frontend.ShowMessageBox(
+                        $"Could not fully remove {Title}. {ex.Message}" + "\n\nIf it keeps failing, run Voidstrap as administrator.",
+                        MessageBoxImage.Error
+                    );
+                }
+                finally
+                {
+                    IsBusy = false;
+                    _parent.EndOperation();
+                    Refresh();
+                }
+            }
+
+            private static async Task DeleteInstallDirectoryAsync(string directory)
+            {
+                Exception? failure = null;
+                for (int attempt = 0; attempt < 3; attempt++)
+                {
+                    try
+                    {
+                        await Task.Run(() => Filesystem.DeleteDirectoryRobust(directory)).ConfigureAwait(true);
+                        return;
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                    {
+                        failure = ex;
+                        if (attempt < 2)
+                            await Task.Delay(300).ConfigureAwait(true);
+                    }
+                }
+
+                throw new IOException(failure?.Message ?? "The install folder could not be removed.", failure);
+            }
+
+            private void OpenFolder()
+            {
+                try
+                {
+                    string dir = IsInstalled ? _appData.Directory : _appData.VersionsRoot;
+                    if (!Directory.Exists(dir))
+                        dir = _appData.VersionsRoot;
+                    Directory.CreateDirectory(dir);
+                    Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    Frontend.ShowMessageBox($"Could not open the folder: {ex.Message}", MessageBoxImage.Error);
+                }
+            }
+
+            private async Task ChangeLocationAsync()
+            {
+                if (IsBusy)
+                    return;
+                if (IsProcessRunning(_processName))
+                {
+                    Frontend.ShowMessageBox($"Close {Title} before changing its install location.", MessageBoxImage.Warning);
+                    return;
+                }
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox(
+                        "Wait for the current operation to finish before changing the install location.",
+                        MessageBoxImage.Warning
+                    );
+                    return;
+                }
+                var dialog = new OpenFolderDialog { Title = $"Choose where to install {Title}", Multiselect = false };
+                if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+                {
+                    _parent.EndOperation();
+                    return;
+                }
+
+                string source = _appData.VersionsRoot;
+                string folderName = IsVng ? "RobloxVng" : (_binaryType == "WindowsPlayer" ? "RobloxPlayer" : "RobloxStudio");
+                string target = Path.Combine(dialog.FolderName, folderName);
+
+                if (string.Equals(target.TrimEnd('\\'), source.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                {
+                    Frontend.ShowMessageBox($"{Title} is already installed at that location.", MessageBoxImage.Asterisk);
+                    _parent.EndOperation();
+                    return;
+                }
+                if (
+                    Frontend.ShowMessageBox(
+                        $"{Title} will be installed at:\n{target}\n\nOnly {Title} moves, Voidstrap and the other Roblox app stay where they are. Continue?",
+                        MessageBoxImage.Question,
+                        MessageBoxButton.YesNo,
+                        MessageBoxResult.No
+                    ) != MessageBoxResult.Yes
+                )
+                {
+                    _parent.EndOperation();
+                    return;
+                }
+
+                IsBusy = true;
+                StatusText = "Moving";
+                RaiseAll();
+                try
+                {
+                    string exeName = _appData.ExecutableName;
+                    string? archive = Voidstrap.Utility.RobloxInstallCompression.IsCompressed(_appData)
+                        ? Voidstrap.Utility.RobloxInstallCompression.ArchivePathFor(_appData.Directory)
+                        : null;
+                    await Task.Run(() => MoveBinaryInstalls(source, target, exeName, _binaryType, archive)).ConfigureAwait(true);
+                    if (IsVng)
+                        App.Settings.Prop.VngInstallLocation = target;
+                    else if (_binaryType == "WindowsPlayer")
+                        App.Settings.Prop.PlayerInstallLocation = target;
+                    else
+                        App.Settings.Prop.StudioInstallLocation = target;
+                    App.Settings.Save();
+                    _parent.RefreshAll();
+                    Frontend.ShowMessageBox($"{Title} install location changed to:\n{target}", MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::ChangeLocation", $"{Title} move failed: {ex.Message}");
+                    Frontend.ShowMessageBox($"Could not move {Title}: {ex.Message}", MessageBoxImage.Error);
+                    _parent.RefreshAll();
+                }
+                finally
+                {
+                    IsBusy = false;
+                    _parent.EndOperation();
+                    Refresh();
+                }
+            }
+
+            private static void MoveBinaryInstalls(string sourceRoot, string targetRoot, string exeName, string binaryType, string? archive)
+            {
+                Directory.CreateDirectory(targetRoot);
+                if (archive != null && File.Exists(archive))
+                    File.Move(archive, Path.Combine(targetRoot, Path.GetFileName(archive)), overwrite: true);
+                if (!Directory.Exists(sourceRoot))
+                    return;
+                foreach (var dir in Directory.GetDirectories(sourceRoot, "version-*"))
+                {
+                    if (!File.Exists(Path.Combine(dir, exeName)))
+                        continue;
+                    MoveDirectory(dir, Path.Combine(targetRoot, Path.GetFileName(dir)));
+                }
+                string staticDir = Path.Combine(sourceRoot, binaryType);
+                if (Directory.Exists(staticDir) && File.Exists(Path.Combine(staticDir, exeName)))
+                    MoveDirectory(staticDir, Path.Combine(targetRoot, binaryType));
+            }
+
+            private string? ScanForExistingInstall()
+            {
+                try
+                {
+                    string root = _appData.VersionsRoot;
+                    if (!Directory.Exists(root))
+                        return null;
+                    foreach (var dir in Directory.GetDirectories(root, "version-*"))
+                    {
+                        if (!Path.GetFileName(dir).Contains('.') && File.Exists(Path.Combine(dir, _appData.ExecutableName)))
+                            return Path.GetFileName(dir);
+                    }
+                }
+                catch { }
+                return null;
+            }
+
+            private static bool IsProcessRunning(string name) => Voidstrap.Utility.ProcessScan.Any(name);
+
+            private static BitmapSource? LoadIcon(string uri)
+            {
+                try
+                {
+                    return Voidstrap.Utility.AppImage.LoadSync(uri);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static string ComputeSize(string dir)
+            {
+                try
+                {
+                    if (!Directory.Exists(dir))
+                    {
+                        string archive = Voidstrap.Utility.RobloxInstallCompression.ArchivePathFor(dir);
+                        return File.Exists(archive) ? FormatBytes(new FileInfo(archive).Length) : "";
+                    }
+                    long total = 0;
+                    foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        try
+                        {
+                            total += new FileInfo(file).Length;
+                        }
+                        catch { }
+                    }
+                    return FormatBytes(total);
+                }
+                catch
+                {
+                    return "";
+                }
+            }
+        }
+
+        public class ClientItem : NotifyPropertyChangedViewModel
+        {
+            public bool IsVng => false;
+            public bool HasPoster => true;
+
+            private ImageSource? _logoImage;
+
+            public ImageSource? LogoImage
+            {
+                get => _logoImage;
+                private set
+                {
+                    _logoImage = value;
+                    OnPropertyChanged(nameof(LogoImage));
+                }
+            }
+            public bool CanChangeLocation => !Voidstrap.Utility.Platform.UsesLinuxHost;
+
+            private readonly DownloadsViewModel _parent;
+            private CancellationTokenSource? _cts = null!;
+
+            public string Code { get; }
+            public string Title { get; private set; }
+            public string Description { get; private set; } = "";
+            public bool IsInstalled { get; private set; }
+            public bool IsBusy { get; private set; }
+            public bool HasStudio { get; private set; }
+            public string StatusText { get; private set; } = "";
+            public string SizeText { get; private set; } = "";
+            public double Progress { get; private set; }
+            private ImageSource? _iconImage;
+            public ImageSource? IconImage
+            {
+                get => _iconImage;
+                private set
+                {
+                    if (!ReferenceEquals(_iconImage, value))
+                    {
+                        _iconImage = value;
+                        OnPropertyChanged(nameof(IconImage));
+                    }
+                }
+            }
+            public string Subtitle => Description;
+            public string ProgressDetail => StatusText;
+            public bool UpdateAvailable { get; private set; }
+            public string VersionText { get; private set; } = "";
+            public string LocationText { get; private set; } = "";
+            public string PrimaryButtonText => UpdateAvailable ? "Update" : (IsInstalled ? "Reinstall" : "Install");
+
+            public Wpf.Ui.Common.SymbolRegular PrimaryIcon => Wpf.Ui.Common.SymbolRegular.ArrowDownload24;
+            public bool ShowStudioAddons => false;
+
+            private bool _isSelected;
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected == value)
+                        return;
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+            public bool CanInstall => !IsBusy;
+            public bool CanPrimary => !IsBusy;
+            public bool CanUninstall => IsInstalled && !IsBusy;
+
+            public ICommand InstallCommand { get; }
+            public ICommand UninstallCommand { get; }
+            public ICommand CancelCommand { get; }
+            public ICommand OpenFolderCommand { get; }
+            public ICommand ChangeLocationCommand { get; }
+            public ICommand SelectCommand { get; }
+            public ICommand VerifyCommand { get; }
+
+            public string VerifyText { get; private set; } = "";
+            public bool HasVerifyText => VerifyText.Length > 0;
+            public bool CanVerify => IsInstalled && !IsBusy;
+
+            internal ClientItem(DownloadsViewModel parent, ClassicCatalogEntry entry)
+            {
+                _parent = parent;
+                Code = entry.Code;
+                Title = entry.Name;
+                Description = entry.Description;
+                HasStudio = entry.HasStudio;
+                InstallCommand = new AsyncRelayCommand(InstallOrReinstallAsync);
+                UninstallCommand = new AsyncRelayCommand(UninstallAsync);
+                CancelCommand = new RelayCommand(Cancel);
+                OpenFolderCommand = new RelayCommand(OpenFolder);
+                ChangeLocationCommand = new AsyncRelayCommand(InstallOrReinstallAsync);
+                SelectCommand = new RelayCommand(Select);
+                VerifyCommand = new AsyncRelayCommand(() => VerifyAsync(true));
+                _iconImage = ClientImages.Peek(Code);
+                _ = LoadIconAsync();
+                Refresh();
+            }
+
+            private bool _fullResLoaded;
+
+            private async Task LoadIconAsync()
+            {
+                try
+                {
+                    ImageSource low = await ClientImages.LoadAsync(Code, ClientImages.LowRes).ConfigureAwait(true);
+                    if (low != null && !_fullResLoaded)
+                        IconImage = low;
+
+                    ImageSource full = await ClientImages.LoadAsync(Code, ClientImages.FullRes).ConfigureAwait(true);
+                    if (full != null)
+                    {
+                        _fullResLoaded = true;
+                        IconImage = full;
+                    }
+
+                    Task<ImageSource>? logo = ClientImages.LoadLogoAsync(Code);
+                    if (logo != null)
+                        LogoImage = await logo.ConfigureAwait(true);
+                }
+                catch { }
+                IconImage ??= ClientImages.Fallback;
+            }
+
+            internal void RefreshInstallState()
+            {
+                if (IsBusy)
+                    return;
+                if ((ClassicClients.EngineInstalled && ClassicClients.IsClientInstalled(Code)) != IsInstalled)
+                    Refresh();
+            }
+
+            public void Refresh()
+            {
+                IsInstalled = ClassicClients.EngineInstalled && ClassicClients.IsClientInstalled(Code);
+                if (IsInstalled)
+                {
+                    var config = ClassicClients.GetInstalledConfig(Code);
+                    if (config != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(config.Name))
+                            Title = config.Name;
+                        HasStudio = ClassicClients.HasStudio(config);
+                    }
+                }
+                VersionText = IsInstalled ? "Installed" : "Not installed yet";
+                LocationText = IsInstalled ? Path.Combine(ClassicClients.ClientsDir, Code) : ClassicClients.Root;
+                if (IsInstalled)
+                    ComputeSizeAsync();
+                else
+                {
+                    SizeText = "";
+                    UpdateAvailable = false;
+                }
+                if (!IsBusy)
+                    StatusText = IsInstalled ? (UpdateAvailable ? "Update available" : "Installed") : "Not installed";
+                RaiseAll();
+            }
+
+            public bool HasAddons => false;
+            public bool ShowFleasion => false;
+            public bool ShowSwiftTunnel => false;
+            public bool ShowCommunityContent => false;
+
+            private void Select()
+            {
+                _parent.SelectedItem = this;
+                if (!IsInstalled)
+                    return;
+                App.Settings.Prop.LaunchSelectedClient = Code;
+                App.Settings.SaveDeferred();
+            }
+
+            public async Task CheckUpdateAsync()
+            {
+                if (!IsInstalled || IsBusy)
+                    return;
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                    bool available = await ClassicClients.IsClientUpdateAvailableAsync(Code, cts.Token).ConfigureAwait(true);
+                    if (available)
+                    {
+                        UpdateAvailable = true;
+                        OnPropertyChanged(nameof(UpdateAvailable));
+                        OnPropertyChanged(nameof(PrimaryButtonText));
+                        StatusText = "Update available";
+                        OnPropertyChanged(nameof(StatusText));
+                    }
+                }
+                catch { }
+            }
+
+            private void ComputeSizeAsync()
+            {
+                string dir = Path.Combine(ClassicClients.ClientsDir, Code);
+                _ = Task.Run(
+                    delegate
+                    {
+                        string size = FormatBytes(ClassicClients.GetDirectorySize(dir));
+                        Application.Current?.Dispatcher.BeginInvoke(
+                            (Action)
+                                delegate
+                                {
+                                    SizeText = size;
+                                    OnPropertyChanged(nameof(SizeText));
+                                }
+                        );
+                    }
+                );
+            }
+
+            private void RaiseAll()
+            {
+                OnPropertyChanged(nameof(Title));
+                OnPropertyChanged(nameof(Description));
+                OnPropertyChanged(nameof(IsInstalled));
+                OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(HasStudio));
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(VersionText));
+                OnPropertyChanged(nameof(LocationText));
+                OnPropertyChanged(nameof(SizeText));
+                OnPropertyChanged(nameof(Progress));
+                OnPropertyChanged(nameof(PrimaryButtonText));
+                OnPropertyChanged(nameof(CanInstall));
+                OnPropertyChanged(nameof(CanUninstall));
+                OnPropertyChanged(nameof(CanPrimary));
+                OnPropertyChanged(nameof(CanVerify));
+            }
+
+            private async Task VerifyAsync(bool interactive)
+            {
+                if (!IsInstalled || IsBusy)
+                    return;
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return;
+                }
+                SetBusy(true, "Verifying");
+                _cts = new CancellationTokenSource();
+                CancellationToken token = _cts.Token;
+                InstallManifest.Result? result = null;
+                List<string> problems = [];
+                bool canceled = false;
+                try
+                {
+                    (result, problems) = await Task.Run(
+                            () =>
+                            {
+                                List<string> launchProblems = ClassicClients.CheckLaunchFiles(Code);
+                                string root = ClassicClients.ClientDirectory(Code);
+                                List<InstallManifest.Entry>? entries = InstallManifest.Read(root);
+                                InstallManifest.Result? checkedFiles =
+                                    entries == null || entries.Count == 0
+                                        ? null
+                                        : InstallManifest.Verify(
+                                            root,
+                                            entries,
+                                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                                            OnVerifyProgress,
+                                            token
+                                        );
+                                return (checkedFiles, checkedFiles?.ProblemCount > 0 ? [] : launchProblems);
+                            },
+                            token
+                        )
+                        .ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    canceled = true;
+                }
+                catch (Exception ex)
+                    when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::ClassicVerify", $"{Code} verification failed: {ex.Message}");
+                    problems.Add(ex.Message);
+                }
+                finally
+                {
+                    _cts?.Dispose();
+                    _cts = null;
+                    SetBusy(false, "");
+                    _parent.EndOperation();
+                    Refresh();
+                }
+                if (canceled)
+                {
+                    SetVerifyText("Verification canceled");
+                    return;
+                }
+                bool repair = PresentVerifyResult(Title, result, problems, interactive, out string summary);
+                SetVerifyText(summary);
+                if (repair)
+                {
+                    await InstallOrReinstallAsync(confirm: false).ConfigureAwait(true);
+                    if (IsInstalled)
+                        await VerifyAsync(false).ConfigureAwait(true);
+                }
+            }
+
+            private void OnVerifyProgress(int done, int total)
+            {
+                ReportProgress(total == 0 ? 100 : done * 100.0 / total, $"Checked {done:N0} of {total:N0} files");
+            }
+
+            private void SetVerifyText(string text)
+            {
+                VerifyText = text;
+                OnPropertyChanged(nameof(VerifyText));
+                OnPropertyChanged(nameof(HasVerifyText));
+            }
+
+            private void SetBusy(bool busy, string status)
+            {
+                IsBusy = busy;
+                StatusText = status;
+                if (!busy)
+                    Progress = 0;
+                RaiseAll();
+            }
+
+            private void ReportProgress(double percent, string status)
+            {
+                Application.Current?.Dispatcher.BeginInvoke(
+                    (Action)
+                        delegate
+                        {
+                            Progress = percent;
+                            StatusText = status;
+                            OnPropertyChanged(nameof(Progress));
+                            OnPropertyChanged(nameof(StatusText));
+                        }
+                );
+            }
+
+            private void SetStatus(string status)
+            {
+                Application.Current?.Dispatcher.BeginInvoke(
+                    (Action)
+                        delegate
+                        {
+                            StatusText = status;
+                            OnPropertyChanged(nameof(StatusText));
+                        }
+                );
+            }
+
+            private void Cancel()
+            {
+                try
+                {
+                    _cts?.Cancel();
+                }
+                catch { }
+            }
+
+            private Task InstallOrReinstallAsync() => InstallOrReinstallAsync(confirm: true);
+
+            private async Task InstallOrReinstallAsync(bool confirm)
+            {
+                if (IsBusy)
+                    return;
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return;
+                }
+                if (
+                    confirm
+                    && Frontend.ShowMessageBox(
+                        "These are a WIP and may not work all entirely yet and may produce errors, I will still continue to work on these fixes.",
+                        MessageBoxImage.Warning,
+                        MessageBoxButton.OKCancel,
+                        MessageBoxResult.OK
+                    ) != MessageBoxResult.OK
+                )
+                {
+                    _parent.EndOperation();
+                    return;
+                }
+                _parent.SelectedItem = this;
+                SetBusy(true, "Preparing");
+                _cts = new CancellationTokenSource();
+                try
+                {
+                    if (!confirm && ClassicClients.EngineNeedsRepair())
+                        await ClassicClients.InstallEngineAsync(ReportProgress, _cts.Token).ConfigureAwait(true);
+                    await ClassicClients.InstallClientAsync(Code, ReportProgress, _cts.Token).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    SetStatus("Canceled");
+                }
+                catch (Exception ex)
+                {
+                    App.Logger?.WriteLine("DownloadsViewModel::ClassicInstall", $"{Code} install failed: {ex.Message}");
+                    Frontend.ShowMessageBox(
+                        $"Could not install {Title}: {ex.Message}\n\nCheck the classic download URL in Settings, or set a local VoidstrapClient folder to install from.",
+                        MessageBoxImage.Error
+                    );
+                }
+                finally
+                {
+                    _cts?.Dispose();
+                    _cts = null;
+                    SetBusy(false, "");
+                    Refresh();
+                    _parent.RefreshClassicMaps();
+                    _parent.EndOperation();
+                }
+            }
+
+            private async Task UninstallAsync()
+            {
+                if (!IsInstalled || IsBusy)
+                    return;
+                if (!_parent.TryBeginOperation())
+                {
+                    Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
+                    return;
+                }
+                if (
+                    Frontend.ShowMessageBox(
+                        $"Remove {Title}? This deletes {SizeText} of installed files. You can reinstall it any time.",
+                        MessageBoxImage.Question,
+                        MessageBoxButton.YesNo,
+                        MessageBoxResult.No
+                    ) != MessageBoxResult.Yes
+                )
+                {
+                    _parent.EndOperation();
+                    return;
+                }
+                SetBusy(true, "Removing");
+                try
+                {
+                    await ClassicClients.UninstallClientAsync(Code).ConfigureAwait(true);
+                }
+                catch (Exception ex)
+                {
+                    Frontend.ShowMessageBox($"Could not fully remove {Title}: {ex.Message}", MessageBoxImage.Error);
+                }
+                finally
+                {
+                    SetBusy(false, "");
+                    _parent.EndOperation();
+                    Refresh();
+                    _parent.RefreshClassicMaps();
+                }
+            }
+
+            private void OpenFolder()
+            {
+                try
+                {
+                    string dir = Path.Combine(ClassicClients.ClientsDir, Code);
+                    if (!Directory.Exists(dir))
+                        dir = ClassicClients.Root;
+                    Directory.CreateDirectory(dir);
+                    Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    Frontend.ShowMessageBox($"Could not open the folder: {ex.Message}", MessageBoxImage.Error);
+                }
+            }
+        }
+
+        public sealed class VrItem : NotifyPropertyChangedViewModel
+        {
+            private readonly DownloadsViewModel _parent;
+            private CancellationTokenSource? _watchCts;
+            private Voidstrap.Integrations.SteamVr.Install? _install;
+            private bool _isSelected;
+
+            public string Title => Strings.Vr_Title;
+            public string Subtitle => Strings.Vr_Description;
+            public ImageSource? IconImage { get; } = CreateIcon();
+            public ImageSource? LogoImage => null;
+            public bool HasPoster => false;
+            public bool IsVng => false;
+            public bool UpdateAvailable => false;
+            public bool HasAddons => false;
+            public bool ShowFleasion => false;
+            public bool ShowSwiftTunnel => false;
+            public bool ShowStudioAddons => false;
+            public bool ShowCommunityContent => false;
+            public bool CanVerify => false;
+            public bool HasVerifyText => false;
+            public string VerifyText => "";
+            public bool CanChangeLocation => false;
+            public ICommand? ChangeLocationCommand => null;
+            public double Progress => 0;
+            public string ProgressDetail => "";
+
+            public bool IsInstalled => _install != null;
+            public bool IsBusy { get; private set; }
+            public bool CanPrimary => !IsBusy;
+            public bool CanUninstall => IsInstalled && !IsBusy;
+            public string StatusText { get; private set; } = "";
+            public string VersionText => _install == null || _install.BuildId.Length == 0 ? "" : "Build " + _install.BuildId;
+            public string SizeText => _install == null || _install.SizeOnDisk <= 0 ? "" : FormatBytes(_install.SizeOnDisk);
+            public string LocationText => _install?.Folder ?? "SteamVR";
+            public string PrimaryButtonText => IsInstalled ? Strings.Common_Open : Strings.Common_Navigation_Install;
+
+            public Wpf.Ui.Common.SymbolRegular PrimaryIcon => IsInstalled ? Wpf.Ui.Common.SymbolRegular.Open24 : Wpf.Ui.Common.SymbolRegular.ArrowDownload24;
+
+            public bool IsSelected
+            {
+                get => _isSelected;
+                set
+                {
+                    if (_isSelected == value)
+                        return;
+                    _isSelected = value;
+                    OnPropertyChanged(nameof(IsSelected));
+                }
+            }
+
+            public ICommand SelectCommand { get; }
+            public ICommand InstallCommand { get; }
+            public ICommand UninstallCommand { get; }
+            public ICommand OpenFolderCommand { get; }
+            public ICommand CancelCommand { get; }
+            public ICommand VerifyCommand { get; }
+
+            internal VrItem(DownloadsViewModel parent)
+            {
+                _parent = parent;
+                SelectCommand = new RelayCommand(SelectSelf);
+                InstallCommand = new RelayCommand(Install);
+                UninstallCommand = new RelayCommand(Uninstall);
+                OpenFolderCommand = new RelayCommand(OpenFolder);
+                CancelCommand = new RelayCommand(StopWatching);
+                VerifyCommand = new RelayCommand(RefreshInstallState);
+                RefreshInstallState();
+            }
+
+            private void SelectSelf()
+            {
+                _parent.SelectedItem = this;
+            }
+
+            public void RefreshInstallState()
+            {
+                _install = Voidstrap.Integrations.SteamVr.Find();
+                if (!IsBusy)
+                    StatusText = IsInstalled ? "Up to date" : "Not installed";
+                RaiseAll();
+            }
+
+            private void RaiseAll()
+            {
+                OnPropertyChanged(nameof(IsInstalled));
+                OnPropertyChanged(nameof(IsBusy));
+                OnPropertyChanged(nameof(CanPrimary));
+                OnPropertyChanged(nameof(CanUninstall));
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(VersionText));
+                OnPropertyChanged(nameof(SizeText));
+                OnPropertyChanged(nameof(LocationText));
+                OnPropertyChanged(nameof(PrimaryButtonText));
+                OnPropertyChanged(nameof(PrimaryIcon));
+            }
+
+            private void Install()
+            {
+                if (!Voidstrap.Integrations.SteamVr.IsSteamInstalled)
+                {
+                    Frontend.ShowMessageBox(Strings.Vr_SteamMissing, MessageBoxImage.Warning);
+                    Utilities.OpenWebLink("https://store.steampowered.com/about/");
+                    return;
+                }
+                if (
+                    !IsInstalled
+                    && Frontend.ShowMessageBox(Strings.Vr_InstallWarning, MessageBoxImage.Information, MessageBoxButton.OKCancel)
+                        != MessageBoxResult.OK
+                )
+                    return;
+                if (!Voidstrap.Integrations.SteamVr.RequestInstall())
+                {
+                    Frontend.ShowMessageBox(Strings.Vr_SteamMissing, MessageBoxImage.Warning);
+                    return;
+                }
+                if (!IsInstalled)
+                    WatchUntil(true, "Installing through Steam");
+            }
+
+            private void Uninstall()
+            {
+                if (Voidstrap.Integrations.SteamVr.RequestUninstall())
+                    WatchUntil(false, "Removing through Steam");
+            }
+
+            private void OpenFolder()
+            {
+                if (_install != null && Directory.Exists(_install.Folder))
+                    Process.Start(new ProcessStartInfo(_install.Folder) { UseShellExecute = true })?.Dispose();
+            }
+
+            private void WatchUntil(bool installed, string status)
+            {
+                StopWatching();
+                CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromMinutes(45));
+                _watchCts = cts;
+                IsBusy = true;
+                StatusText = status;
+                RaiseAll();
+                _ = WatchAsync(installed, cts);
+            }
+
+            private async Task WatchAsync(bool installed, CancellationTokenSource cts)
+            {
+                try
+                {
+                    while (!cts.IsCancellationRequested)
+                    {
+                        await Task.Delay(3000, cts.Token).ConfigureAwait(true);
+                        if ((Voidstrap.Integrations.SteamVr.Find() != null) == installed)
+                            break;
+                    }
+                }
+                catch (OperationCanceledException) { }
+                finally
+                {
+                    if (ReferenceEquals(_watchCts, cts))
+                    {
+                        _watchCts = null;
+                        IsBusy = false;
+                        RefreshInstallState();
+                    }
+                    cts.Dispose();
+                }
+            }
+
+            private void StopWatching()
+            {
+                CancellationTokenSource? cts = _watchCts;
+                _watchCts = null;
+                if (cts != null)
+                {
+                    try
+                    {
+                        cts.Cancel();
+                    }
+                    catch (ObjectDisposedException) { }
+                }
+                if (IsBusy)
+                {
+                    IsBusy = false;
+                    RefreshInstallState();
+                }
+            }
+
+            private static ImageSource? CreateIcon()
+            {
+                try
+                {
+                    BitmapImage image = new BitmapImage();
+                    image.BeginInit();
+                    image.UriSource = new Uri("pack://application:,,,/Resources/SteamVRIcon.png");
+                    image.CacheOption = BitmapCacheOption.OnLoad;
+                    image.EndInit();
+                    image.Freeze();
+                    return image;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        public VrItem? Vr { get; private set; }
+
+        public bool HasVr => Vr != null;
+
+        public ObservableCollection<VrItem> VrItems { get; } = new ObservableCollection<VrItem>();
+
+        public ObservableCollection<DownloadItem> Items { get; } = new ObservableCollection<DownloadItem>();
+
+        public string InstallRootText => Paths.Versions;
+
+        public bool IsDownloading { get; private set; }
+        public DownloadItem ActiveItem { get; private set; } = null!;
+        public string GraphTitle { get; private set; } = "No active download";
+        public string CurrentSpeedText { get; private set; } = "0 B/s";
+        public string PeakSpeedText { get; private set; } = "0 B/s";
+        public string DownloadedText { get; private set; } = "";
+        public PointCollection GraphPoints { get; private set; } = new PointCollection();
+        public Visibility PlaceholderVisibility => GraphPoints.Count > 1 ? Visibility.Collapsed : Visibility.Visible;
+
+        private readonly List<double> _speedSamples = new List<double>();
+        private readonly SemaphoreSlim _operationGate = new SemaphoreSlim(1, 1);
+        private double _peakSpeed;
+        private const int MaxSamples = 90;
+        private const double GraphWidth = 1000.0;
+        private const double GraphHeight = 100.0;
+
+        internal static bool PresentVerifyResult(
+            string title,
+            InstallManifest.Result? result,
+            IReadOnlyList<string> launchProblems,
+            bool interactive,
+            out string summary
+        )
+        {
+            int problemCount = (result?.ProblemCount ?? 0) + launchProblems.Count;
+            if (problemCount > 0)
+            {
+                List<string> lines = [.. launchProblems];
+                if (result != null)
+                {
+                    lines.AddRange(result.Missing.Select(path => "Missing: " + path));
+                    lines.AddRange(result.Damaged.Select(path => "Damaged: " + path));
+                }
+                summary =
+                    problemCount == 1 ? "1 problem found, repair recommended" : $"{problemCount:N0} problems found, repair recommended";
+                App.Logger?.WriteLine("DownloadsViewModel::Verify", $"{title}: {summary}. " + string.Join("; ", lines.Take(40)));
+                string shown =
+                    string.Join("\n", lines.Take(8).Select(line => "  " + line))
+                    + (lines.Count > 8 ? $"\n  and {lines.Count - 8:N0} more" : "");
+                string heading = problemCount == 1 ? "1 problem" : $"{problemCount:N0} problems";
+                return Frontend.ShowMessageBox(
+                        $"{title} has {heading}:\n\n{shown}\n\nRepair it now? Voidstrap reinstalls {title} and checks it again.",
+                        MessageBoxImage.Warning,
+                        MessageBoxButton.YesNo
+                    ) == MessageBoxResult.Yes;
+            }
+            if (result == null)
+            {
+                summary = "No install record to check against yet";
+                return interactive
+                    && Frontend.ShowMessageBox(
+                        $"{title} was installed before Voidstrap recorded installs, so there is nothing to check its files against yet.\n\nRepair it now? Voidstrap reinstalls {title} and records every file so future checks are complete.",
+                        MessageBoxImage.Question,
+                        MessageBoxButton.YesNo
+                    ) == MessageBoxResult.Yes;
+            }
+            string skipped = result.Skipped > 0 ? $", {result.Skipped:N0} changed by your mods" : "";
+            if (!result.HasChecksums)
+            {
+                summary = $"All {result.Checked:N0} files are present{skipped}, repair once to enable full checks";
+                return interactive
+                    && Frontend.ShowMessageBox(
+                        $"All {result.Checked:N0} files of {title} are present, but this install only recorded file names, so their contents could not be checked.\n\nRepair it now to record full checksums?",
+                        MessageBoxImage.Information,
+                        MessageBoxButton.YesNo
+                    ) == MessageBoxResult.Yes;
+            }
+            summary = $"Verified {result.Checked:N0} files, no problems found{skipped}";
+            App.Logger?.WriteLine("DownloadsViewModel::Verify", $"{title}: {summary}");
+            if (interactive)
+                Frontend.ShowMessageBox(
+                    $"{title} is intact. Voidstrap checked {result.Checked:N0} files{skipped} and found no problems.",
+                    MessageBoxImage.Information
+                );
+            return false;
+        }
+
+        public ICommand OpenRootCommand { get; }
+        public ICommand RefreshCommand { get; }
+
+        public ObservableCollection<ClientItem> ClientItems { get; } = new ObservableCollection<ClientItem>();
+        public ObservableCollection<string> ClientMaps { get; } = new ObservableCollection<string>();
+
+        public bool HasClientMaps => ClientMaps.Count > 0;
+
+        public Visibility NoClientMapsVisibility => ClientMaps.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        public string ClassicStatusText { get; private set; } = "";
+
+        public string ClassicDownloadBaseUrl
+        {
+            get =>
+                string.IsNullOrWhiteSpace(App.Settings.Prop.ClassicDownloadBaseUrl)
+                    ? ClassicClients.DefaultBaseUrl
+                    : App.Settings.Prop.ClassicDownloadBaseUrl;
+            set
+            {
+                string v = (value ?? "").Trim();
+                if (
+                    string.Equals(v, ClassicClients.DefaultBaseUrl, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(v, ClassicClients.LegacyDefaultBaseUrl, StringComparison.OrdinalIgnoreCase)
+                )
+                    v = "";
+                if (App.Settings.Prop.ClassicDownloadBaseUrl == v)
+                    return;
+                App.Settings.Prop.ClassicDownloadBaseUrl = v;
+                App.Settings.Save();
+                OnPropertyChanged(nameof(ClassicDownloadBaseUrl));
+            }
+        }
+
+        private bool _isRefreshingClassicMaps;
+
+        public string SelectedClassicMap
+        {
+            get => App.Settings.Prop.ClassicSelectedMap;
+            set
+            {
+                if (_isRefreshingClassicMaps)
+                    return;
+                string newMap = value ?? "";
+                if (string.IsNullOrEmpty(newMap) && ClientMaps.Count > 0)
+                    return;
+                if (App.Settings.Prop.ClassicSelectedMap == newMap)
+                    return;
+                App.Settings.Prop.ClassicSelectedMap = newMap;
+                App.Settings.Save();
+                OnPropertyChanged(nameof(SelectedClassicMap));
+            }
+        }
+
+        public ICommand LocateClassicSourceCommand { get; }
+        public ICommand OpenClassicRootCommand { get; }
+
+        public DownloadsViewModel()
+        {
+            if (Voidstrap.Utility.Platform.UsesLinuxHost)
+            {
+                Items.Add(
+                    new DownloadItem(
+                        this,
+                        new RobloxPlayerData(),
+                        "Sober",
+                        "Plays Roblox on Linux",
+                        "pack://application:,,,/Resources/SoberIcon.png",
+                        "WindowsPlayer",
+                        LaunchMode.Player,
+                        "sober",
+                        false
+                    )
+                );
+                Items.Add(
+                    new DownloadItem(
+                        this,
+                        new RobloxStudioData(),
+                        "Vinegar",
+                        "Runs Roblox Studio on Linux",
+                        "pack://application:,,,/Resources/VinegarIcon.png",
+                        "WindowsStudio64",
+                        LaunchMode.Studio,
+                        "vinegar",
+                        false
+                    )
+                );
+                if (Voidstrap.Platform.Linux.LinuxRosemary.IsSupportedHost)
+                {
+                    Items.Add(
+                        new DownloadItem(
+                            this,
+                            new RobloxPlayerData(),
+                            Strings.Ui_Downloads_Rosemary_PlayerTitle,
+                            Strings.Ui_Downloads_Rosemary_PlayerSubtitle,
+                            "pack://application:,,,/Resources/RobloxPlayerIcon.png",
+                            "MacPlayer",
+                            LaunchMode.Player,
+                            Voidstrap.Utility.LinuxRuntimeChoice.Rosemary,
+                            false
+                        )
+                    );
+                    Items.Add(
+                        new DownloadItem(
+                            this,
+                            new RobloxStudioData(),
+                            Strings.Ui_Downloads_Rosemary_StudioTitle,
+                            Strings.Ui_Downloads_Rosemary_StudioSubtitle,
+                            "pack://application:,,,/Resources/RobloxStudioIcon.png",
+                            "MacStudio",
+                            LaunchMode.Studio,
+                            Voidstrap.Utility.LinuxRuntimeChoice.Rosemary,
+                            false
+                        )
+                    );
+                }
+            }
+            else
+            {
+                Items.Add(
+                    new DownloadItem(
+                        this,
+                        new RobloxPlayerData(false),
+                        "Roblox Player",
+                        "The Roblox client for playing experiences",
+                        "pack://application:,,,/Resources/RobloxPlayerIcon.png",
+                        "WindowsPlayer",
+                        LaunchMode.Player,
+                        "RobloxPlayerBeta",
+                        true
+                    )
+                );
+                Items.Add(
+                    new DownloadItem(
+                        this,
+                        new RobloxStudioData(),
+                        "Roblox Studio",
+                        "Create and edit experiences",
+                        "pack://application:,,,/Resources/RobloxStudioIcon.png",
+                        "WindowsStudio64",
+                        LaunchMode.Studio,
+                        "RobloxStudioBeta",
+                        false
+                    )
+                );
+                if (Voidstrap.Utility.Platform.IsWindows)
+                    Items.Add(
+                        new DownloadItem(
+                            this,
+                            new RobloxPlayerData(true),
+                            Strings.Vng_Title,
+                            Strings.Vng_Description,
+                            "pack://application:,,,/Resources/RobloxVngIcon.png",
+                            "WindowsPlayer",
+                            LaunchMode.Player,
+                            "RobloxPlayerBeta",
+                            true
+                        )
+                    );
+                if (Voidstrap.Integrations.SteamVr.IsSupported)
+                {
+                    Vr = new VrItem(this);
+                    VrItems.Add(Vr);
+                }
+            }
+            OpenRootCommand = new RelayCommand(OpenRoot);
+            RefreshCommand = new RelayCommand(RefreshAll);
+            SelectCommand = new RelayCommand<DownloadItem>(Select);
+            LocateClassicSourceCommand = new RelayCommand(LocateClassicSource);
+            OpenClassicRootCommand = new RelayCommand(OpenClassicRoot);
+            SelectedItem = Items.Count > 0 ? Items[0] : null;
+            RefreshClassic();
+            _ = LoadManifestClientsAsync();
+        }
+
+        private bool _manifestLoading;
+
+        private async Task LoadManifestClientsAsync()
+        {
+            if (_manifestLoading)
+                return;
+            _manifestLoading = true;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                var entries = await ClassicClients.FetchManifestClientsAsync(cts.Token).ConfigureAwait(true);
+                if (entries.Count == 0)
+                    return;
+                var comparer = Comparer<string>.Create((a, b) => ClassicClients.CompareClientNames(a, b));
+                bool added = false;
+                foreach (var entry in entries)
+                {
+                    if (ClientItems.Any(i => string.Equals(i.Code, entry.Code, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    int idx = 0;
+                    while (idx < ClientItems.Count && comparer.Compare(ClientItems[idx].Code, entry.Code) > 0)
+                        idx++;
+                    ClientItems.Insert(idx, new ClientItem(this, entry));
+                    added = true;
+                }
+                if (added)
+                    RefreshClassic();
+            }
+            catch (Exception ex)
+            {
+                App.Logger?.WriteLine("DownloadsViewModel::LoadManifest", ex.Message);
+            }
+            finally
+            {
+                _manifestLoading = false;
+            }
+        }
+
+        private object? _selectedItem;
+        public object? SelectedItem
+        {
+            get => _selectedItem;
+            set
+            {
+                _selectedItem = value;
+                foreach (DownloadItem item in Items)
+                    item.IsSelected = ReferenceEquals(item, value);
+                foreach (ClientItem item in ClientItems)
+                    item.IsSelected = ReferenceEquals(item, value);
+                foreach (VrItem item in VrItems)
+                    item.IsSelected = ReferenceEquals(item, value);
+                OnPropertyChanged(nameof(SelectedItem));
+                OnPropertyChanged(nameof(HasSelection));
+            }
+        }
+
+        public bool HasSelection => _selectedItem != null;
+
+        public DownloadItem? VngItem => Items.FirstOrDefault(item => item.IsVng);
+
+        public ICommand SelectCommand { get; }
+
+        private void Select(DownloadItem? item)
+        {
+            if (item != null)
+                SelectedItem = item;
+        }
+
+        private long _lastLocalRefresh;
+
+        private long _lastRemoteRefresh;
+
+        public void RefreshAll()
+        {
+            long now = Environment.TickCount64;
+            if (_lastLocalRefresh == 0 || now - _lastLocalRefresh >= 30000)
+            {
+                _lastLocalRefresh = now;
+                foreach (var item in Items)
+                    item.Refresh();
+                OnPropertyChanged(nameof(InstallRootText));
+                RefreshClassic();
+            }
+            if (_lastRemoteRefresh == 0 || now - _lastRemoteRefresh >= 600000)
+            {
+                _lastRemoteRefresh = now;
+                _ = LoadManifestClientsAsync();
+                _ = CheckAllUpdatesAsync();
+            }
+        }
+
+        public void RefreshClassic()
+        {
+            if (ClientItems.Count == 0)
+            {
+                foreach (
+                    var entry in ClassicClients.Catalog.OrderByDescending(
+                        e => e.Code,
+                        Comparer<string>.Create((a, b) => ClassicClients.CompareClientNames(a, b))
+                    )
+                )
+                    ClientItems.Add(new ClientItem(this, entry));
+            }
+            else
+            {
+                foreach (var item in ClientItems)
+                    item.Refresh();
+            }
+
+            int installed = ClientItems.Count(i => i.IsInstalled);
+            if (!ClassicClients.EngineInstalled)
+                ClassicStatusText =
+                    "Install any version to set up the classic engine. Clients download from the classic download URL (set in Settings), or from a local VoidstrapClient folder if you set one.";
+            else
+                ClassicStatusText = $"{installed} of {ClientItems.Count} installed at {ClassicClients.Root}";
+            OnPropertyChanged(nameof(ClassicStatusText));
+
+            RefreshClassicMaps();
+        }
+
+        internal void RefreshClassicMaps()
+        {
+            _isRefreshingClassicMaps = true;
+            try
+            {
+                var maps = ClassicClients.ListMaps();
+                string savedMap = App.Settings.Prop.ClassicSelectedMap ?? "";
+                if (!ClientMaps.SequenceEqual(maps))
+                {
+                    ClientMaps.Clear();
+                    foreach (var map in maps)
+                        ClientMaps.Add(map);
+                }
+
+                string selectedMap =
+                    maps.Count == 0 ? ""
+                    : !string.IsNullOrEmpty(savedMap) && maps.Contains(savedMap) ? savedMap
+                    : maps[0];
+                if (!string.Equals(App.Settings.Prop.ClassicSelectedMap, selectedMap, StringComparison.Ordinal))
+                {
+                    App.Settings.Prop.ClassicSelectedMap = selectedMap;
+                    App.Settings.Save();
+                }
+            }
+            finally
+            {
+                _isRefreshingClassicMaps = false;
+            }
+            OnPropertyChanged(nameof(SelectedClassicMap));
+            OnPropertyChanged(nameof(HasClientMaps));
+            OnPropertyChanged(nameof(NoClientMapsVisibility));
+        }
+
+        private void LocateClassicSource()
+        {
+            var dialog = new OpenFolderDialog { Title = "Locate your VoidstrapClient folder", Multiselect = false };
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.FolderName))
+                return;
+            if (!ClassicClients.IsValidSource(dialog.FolderName))
+            {
+                Frontend.ShowMessageBox(
+                    "That folder does not look like an VoidstrapClient installation. It must contain VoidstrapClient.WebServer.exe and a data\\clients folder.",
+                    MessageBoxImage.Warning
+                );
+                return;
+            }
+            App.Settings.Prop.ClassicSourceLocation = dialog.FolderName;
+            App.Settings.Save();
+            RefreshClassic();
+        }
+
+        private void OpenClassicRoot()
+        {
+            try
+            {
+                string dir = ClassicClients.Root;
+                Directory.CreateDirectory(dir);
+                Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Frontend.ShowMessageBox($"Could not open the folder: {ex.Message}", MessageBoxImage.Error);
+            }
+        }
+
+        private async Task CheckAllUpdatesAsync()
+        {
+            foreach (var item in Items)
+                await item.CheckUpdateAsync().ConfigureAwait(true);
+        }
+
+        internal void BeginActiveDownload(DownloadItem item, string binaryType)
+        {
+            _speedSamples.Clear();
+            _peakSpeed = 0;
+            GraphPoints = new PointCollection();
+            ActiveItem = item;
+            IsDownloading = true;
+            GraphTitle = "Downloading " + item.Title;
+            OnPropertyChanged(nameof(ActiveItem));
+            CurrentSpeedText = "0 B/s";
+            PeakSpeedText = "0 B/s";
+            DownloadedText = "";
+            OnPropertyChanged(nameof(IsDownloading));
+            OnPropertyChanged(nameof(GraphTitle));
+            OnPropertyChanged(nameof(GraphPoints));
+            OnPropertyChanged(nameof(PlaceholderVisibility));
+            OnPropertyChanged(nameof(CurrentSpeedText));
+            OnPropertyChanged(nameof(PeakSpeedText));
+            OnPropertyChanged(nameof(DownloadedText));
+        }
+
+        internal bool TryBeginOperation()
+        {
+            return _operationGate.Wait(0);
+        }
+
+        internal void EndOperation()
+        {
+            _operationGate.Release();
+        }
+
+        internal void EndActiveDownload()
+        {
+            IsDownloading = false;
+            GraphTitle = "No active download";
+            OnPropertyChanged(nameof(IsDownloading));
+            OnPropertyChanged(nameof(GraphTitle));
+        }
+
+        internal void PushSpeedSample(double speedBytesPerSec, long total, long done)
+        {
+            _speedSamples.Add(Math.Max(0, speedBytesPerSec));
+            if (_speedSamples.Count > MaxSamples)
+                _speedSamples.RemoveAt(0);
+            if (speedBytesPerSec > _peakSpeed)
+                _peakSpeed = speedBytesPerSec;
+
+            double scale = _peakSpeed > 1 ? _peakSpeed : 1;
+            var points = new PointCollection();
+            int n = _speedSamples.Count;
+            for (int i = 0; i < n; i++)
+            {
+                double x = n <= 1 ? 0 : i / (double)(n - 1) * GraphWidth;
+                double y = GraphHeight - (_speedSamples[i] / scale) * GraphHeight;
+                points.Add(new Point(x, y));
+            }
+            GraphPoints = points;
+            CurrentSpeedText = FormatSpeed(speedBytesPerSec);
+            PeakSpeedText = FormatSpeed(_peakSpeed) + " peak";
+            DownloadedText = $"{FormatBytes(done)} of {FormatBytes(total)}";
+            OnPropertyChanged(nameof(GraphPoints));
+            OnPropertyChanged(nameof(PlaceholderVisibility));
+            OnPropertyChanged(nameof(CurrentSpeedText));
+            OnPropertyChanged(nameof(PeakSpeedText));
+            OnPropertyChanged(nameof(DownloadedText));
+        }
+
+        private void OpenRoot()
+        {
+            try
+            {
+                Directory.CreateDirectory(Paths.Versions);
+                Process.Start(new ProcessStartInfo { FileName = Paths.Versions, UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Frontend.ShowMessageBox($"Could not open the folder: {ex.Message}", MessageBoxImage.Error);
+            }
+        }
+
+        private static void MoveDirectory(string source, string target)
+        {
+            if (!Directory.Exists(source))
+            {
+                Directory.CreateDirectory(target);
+                return;
+            }
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                Directory.Move(source, target);
+            }
+            catch (IOException)
+            {
+                CopyDirectory(source, target);
+                Directory.Delete(source, true);
+            }
+        }
+
+        private static void CopyDirectory(string source, string target)
+        {
+            Directory.CreateDirectory(target);
+            foreach (var file in Directory.GetFiles(source))
+                File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+            foreach (var dir in Directory.GetDirectories(source))
+                CopyDirectory(dir, Path.Combine(target, Path.GetFileName(dir)));
+        }
+
+        private static async Task<string> FetchLatestVersionAsync(string binaryType)
+        {
+            try
+            {
+                var info = await Deployment.GetInfo(App.Settings.Prop.Channel, binaryType: binaryType).ConfigureAwait(false);
+                return info?.VersionGuid ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            if (bytes >= 1073741824L)
+                return (bytes / 1073741824.0).ToString("0.0") + " GB";
+            if (bytes >= 1048576L)
+                return (bytes / 1048576.0).ToString("0") + " MB";
+            if (bytes >= 1024L)
+                return (bytes / 1024.0).ToString("0") + " KB";
+            return bytes + " B";
+        }
+
+        private static string FormatSpeed(double bytesPerSecond)
+        {
+            if (bytesPerSecond >= 1048576.0)
+                return (bytesPerSecond / 1048576.0).ToString("0.0") + " MB/s";
+            if (bytesPerSecond >= 1024.0)
+                return (bytesPerSecond / 1024.0).ToString("0") + " KB/s";
+            return Math.Max(0, bytesPerSecond).ToString("0") + " B/s";
+        }
+    }
+}

@@ -1,0 +1,96 @@
+<UserControl xmlns:resources="clr-namespace:Voidstrap.Resources" x:Class="Voidstrap.UI.Elements.Controls.RobloxVersionList" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" xmlns:local="clr-namespace:Voidstrap.UI.Elements.Controls" xmlns:appUi="clr-namespace:Voidstrap.UI" Focusable="False" IsVisibleChanged="VersionList_IsVisibleChanged">
+  <UserControl.Resources>
+    <local:RobloxVersionSelectableConverter x:Key="SelectableConverter" />
+    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+  </UserControl.Resources>
+  <ListBox x:Name="VersionsListBox" Background="Transparent" BorderThickness="0" Padding="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="2,2" VirtualizingPanel.CacheLengthUnit="Item" SelectionMode="Single" SelectionChanged="VersionsListBox_SelectionChanged" PreviewKeyDown="VersionsListBox_PreviewKeyDown" PreviewMouseWheel="VersionsListBox_PreviewMouseWheel">
+    <ListBox.ItemContainerStyle>
+      <Style TargetType="{x:Type ListBoxItem}">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Margin" Value="0,0,22,8" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <EventSetter Event="PreviewMouseLeftButtonDown" Handler="VersionItem_PreviewMouseLeftButtonDown" />
+        <EventSetter Event="MouseLeftButtonUp" Handler="VersionItem_MouseLeftButtonUp" />
+        <EventSetter Event="MouseEnter" Handler="VersionItem_MouseEnter" />
+        <EventSetter Event="MouseLeave" Handler="VersionItem_MouseLeave" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type ListBoxItem}">
+              <Grid x:Name="CardRoot">
+                <Border x:Name="RowBorder" Padding="12" CornerRadius="8" BorderThickness="1" BorderBrush="Transparent" Background="{DynamicResource LauncherMenuHoverBrush}" SnapsToDevicePixels="True">
+                  <ContentPresenter />
+                </Border>
+                <ui:Button x:Name="PlayButton" Appearance="Primary" Icon="Play20" Content="{resources:Loc Ui_Home_Play}" Height="32" Padding="14,0" Margin="0,18,12,0" HorizontalAlignment="Right" VerticalAlignment="Top" Opacity="0" IsHitTestVisible="False" Focusable="False" Click="PlayButton_Click" RenderTransformOrigin="0.5,0.5">
+                  <ui:Button.RenderTransform>
+                    <TranslateTransform x:Name="PlayShift" X="10" />
+                  </ui:Button.RenderTransform>
+                </ui:Button>
+              </Grid>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="RowBorder" Property="Background" Value="#1FFFFFFF" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                  <Setter TargetName="RowBorder" Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                </Trigger>
+                <DataTrigger Value="False">
+                  <DataTrigger.Binding>
+                    <MultiBinding Converter="{StaticResource SelectableConverter}">
+                      <Binding />
+                      <Binding Path="IsInstalled" />
+                    </MultiBinding>
+                  </DataTrigger.Binding>
+                  <Setter TargetName="RowBorder" Property="Opacity" Value="0.55" />
+                  <Setter Property="Cursor" Value="Arrow" />
+                </DataTrigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ListBox.ItemContainerStyle>
+    <ListBox.ItemTemplate>
+      <DataTemplate>
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+          </Grid.RowDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <Border Width="44" Height="44" VerticalAlignment="Center" CornerRadius="6" SnapsToDevicePixels="True">
+            <Image Source="{Binding IconImage}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality">
+              <Image.Clip>
+                <RectangleGeometry Rect="0,0,44,44" RadiusX="6" RadiusY="6" />
+              </Image.Clip>
+            </Image>
+          </Border>
+          <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
+            <TextBlock FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource LauncherTextPrimaryBrush}" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+            <TextBlock x:Name="VersionSubtitle" Margin="0,2,0,0" FontSize="12" Foreground="{DynamicResource LauncherTextSecondaryBrush}" Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Subtitle}" />
+          </StackPanel>
+          <Border Grid.Column="2" Width="22" Height="22" VerticalAlignment="Center" CornerRadius="11" Background="{DynamicResource AccentFillColorPrimaryBrush}" Visibility="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}, Converter={StaticResource BoolToVisibility}}">
+            <ui:SymbolIcon Symbol="Checkmark16" FontSize="13" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <Border Grid.Row="1" Grid.ColumnSpan="3" Margin="0,10,0,0" Padding="10,6" CornerRadius="6" Background="{DynamicResource ControlFillColorSecondaryBrush}" BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="1" ToolTip="{Binding LocationText}">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <ui:SymbolIcon Grid.Column="0" Symbol="Folder24" FontSize="15" Foreground="{DynamicResource AccentFillColorDefaultBrush}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding LocationText}" FontSize="12" Margin="8,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              <ui:Button Grid.Column="2" Width="26" Height="26" Padding="0" Appearance="Transparent" Icon="ArrowSwap20" FontSize="14" ToolTip="{resources:Loc Ui_Pages_ChangeInstallLocation}" Command="{Binding ChangeLocationCommand}" Visibility="{Binding CanChangeLocation, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
+          </Border>
+        </Grid>
+      </DataTemplate>
+    </ListBox.ItemTemplate>
+  </ListBox>
+</UserControl>

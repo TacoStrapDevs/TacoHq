@@ -1,0 +1,529 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<DebugType>embedded</DebugType>
+		<DebugSymbols>true</DebugSymbols>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<UseWPF>true</UseWPF>
+		<UseWindowsForms>True</UseWindowsForms>
+		<ApplicationIcon>favicon (1).ico</ApplicationIcon>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<RootNamespace>Voidstrap</RootNamespace>
+		<IncludePackageReferencesDuringMarkupCompilation>true</IncludePackageReferencesDuringMarkupCompilation>
+
+		<AssemblyName>Voidstrap</AssemblyName>
+		<AssemblyTitle>Voidstrap</AssemblyTitle>
+		<Product>Voidstrap</Product>
+		<Description>An alternative launcher for Roblox that provides advanced customization, performance tweaks, custom themes, mod management, and rich presence integration.</Description>
+		<Company>Voidstrap</Company>
+		<Authors>Voidstrap Contributors</Authors>
+		<Copyright>Copyright (c) Voidstrap Contributors. Licensed under MIT.</Copyright>
+		<PackageProjectUrl>https://github.com/KloBraticc/Voidstrap</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/KloBraticc/Voidstrap</RepositoryUrl>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<NeutralLanguage>en-US</NeutralLanguage>
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<GenerateAssemblyTitleAttribute>true</GenerateAssemblyTitleAttribute>
+		<GenerateAssemblyDescriptionAttribute>true</GenerateAssemblyDescriptionAttribute>
+		<GenerateAssemblyCompanyAttribute>true</GenerateAssemblyCompanyAttribute>
+		<GenerateAssemblyProductAttribute>true</GenerateAssemblyProductAttribute>
+		<GenerateAssemblyCopyrightAttribute>true</GenerateAssemblyCopyrightAttribute>
+		
+
+		<PublishSingleFile>true</PublishSingleFile>
+		<SelfContained>false</SelfContained>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+		<IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
+
+		<SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
+		<InvariantGlobalization>false</InvariantGlobalization>
+
+		<PublishTrimmed>false</PublishTrimmed>
+		<PublishReadyToRun>false</PublishReadyToRun>
+		<TieredCompilation>true</TieredCompilation>
+		<TieredCompilationQuickJit>true</TieredCompilationQuickJit>
+		<TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
+		<TieredPGO>false</TieredPGO>
+		<ServerGarbageCollection>false</ServerGarbageCollection>
+		<ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+		<RetainVMGarbageCollection>false</RetainVMGarbageCollection>
+
+		<DebuggerSupport>false</DebuggerSupport>
+		<EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+		<EnableUnsafeUTF7Encoding>false</EnableUnsafeUTF7Encoding>
+		<EventSourceSupport>false</EventSourceSupport>
+		<HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+		<MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+		<UseSystemResourceKeys>false</UseSystemResourceKeys>
+		<XmlResolverIsNetworkingEnabledByDefault>false</XmlResolverIsNetworkingEnabledByDefault>
+
+		<OptimizeImplicitlyTriggeredBuild>true</OptimizeImplicitlyTriggeredBuild>
+		<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+		<HighEntropyVA>true</HighEntropyVA>
+		<Deterministic>true</Deterministic>
+		<DeterministicSourcePaths>false</DeterministicSourcePaths>
+		<TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+		<EnableNETAnalyzers>true</EnableNETAnalyzers>
+		<AnalysisLevel>latest</AnalysisLevel>
+		<NoWarn>$(NoWarn);CS8305</NoWarn>
+
+		<StartupObject>Voidstrap.Program</StartupObject>
+
+		<CsWinRTIncludes>Windows.Media.Control;Windows.Storage.Streams.IRandomAccessStreamReference;Windows.Storage.Streams.IRandomAccessStreamWithContentType;Windows.Storage.Streams.IRandomAccessStream;Windows.Storage.Streams.IInputStream;Windows.Storage.Streams.IOutputStream;Windows.Storage.Streams.IContentTypeProvider;Windows.Storage.Streams.IBuffer;Windows.Storage.Streams.InputStreamOptions;Windows.Storage.Streams.DataReader;Windows.Storage.Streams.IDataReader;Windows.Storage.Streams.DataReaderLoadOperation;Windows.Storage.Streams.ByteOrder;Windows.Storage.Streams.UnicodeEncoding;Windows.Media.MediaPlaybackType;Windows.Media.MediaPlaybackAutoRepeatMode;Windows.Foundation;Windows.Graphics.Capture;Windows.Graphics.DirectX;Windows.Graphics.SizeInt32;Windows.Graphics.RectInt32;Windows.Graphics.DisplayId;Windows.UI.WindowId;Windows.Security.Authorization.AppCapabilityAccess.AppCapabilityAccessStatus</CsWinRTIncludes>
+		<CsWinRTExcludes>Windows.Foundation.Diagnostics;Windows.Storage.Streams.IRandomAccessStreamReferenceStatics;Windows.Storage.Streams.IRandomAccessStreamStatics;Windows.Storage.Streams.IBufferStatics;Windows.Storage.Streams.IBufferFactory</CsWinRTExcludes>
+		<CsWinRTWindowsMetadata>10.0.26100.0</CsWinRTWindowsMetadata>
+		<WindowsProjectionMetadataVersion>10.0.26100.57</WindowsProjectionMetadataVersion>
+	</PropertyGroup>
+	<ItemGroup>
+		<RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+	</ItemGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+	  <WarningLevel>4</WarningLevel>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+	  <WarningLevel>4</WarningLevel>
+	  <DebugType>none</DebugType>
+	  <DebugSymbols>false</DebugSymbols>
+	</PropertyGroup>
+	
+
+	<ItemGroup>
+		<None Remove="Resources\mappings.json" />
+		<None Remove="Voidstrap.png" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Resource Include="Voidstrap.ico" />
+		<Resource Include="Resources\Checkmark.ico" />
+		<Resource Include="Resources\CrossMark.ico" />
+		<Resource Include="Resources\Erik.png" />
+		<Resource Include="Resources\ImportSourceBloxstrap.png" />
+		<Resource Include="Resources\ImportSourceFishstrap.png" />
+		<Resource Include="Resources\RobloxFace.png" />
+		<Resource Include="Resources\RobloxPlayerIcon.png" />
+		<Resource Include="Resources\SteamVRIcon.png" />
+		<Resource Include="Resources\RobloxVngIcon.png" />
+		<Resource Include="Resources\RobloxStudioIcon.png" />
+		<Resource Include="Resources\SoberIcon.png" />
+		<Resource Include="Resources\RosemaryIcon.png" />
+		<Resource Include="Resources\VinegarIcon.png" />
+		<Resource Include="Resources\ReShadeIcon.png" />
+		<Resource Include="Resources\RiShadeV2Banner.jpg" />
+		<Resource Include="Resources\Fonts\NotoSansThai-VariableFont_wdth,wght.ttf" />
+		<Resource Include="Resources\Fonts\Rubik-VariableFont_wght.ttf" />
+		<Resource Include="..\..\external\wpfui\src\Wpf.Ui\Fonts\Source\FluentSystemIcons-Regular.ttf" Link="Resources\Fonts\SymbolIcons\FluentSystemIcons-Regular.ttf" Visible="false" />
+		<Resource Include="Resources\BootstrapperStyles\ByfronDialog\ByfronLogoDark.jpg" />
+		<Resource Include="Resources\BootstrapperStyles\ByfronDialog\ByfronLogoLight.jpg" />
+		<Resource Include="Resources\BootstrapperStyles\ByfronDialog\Matt.png" />
+		<Resource Include="Resources\CommunityMods\*.png" />
+		<Resource Include="Resources\MessageBox\Error.png" />
+		<Resource Include="Resources\MessageBox\Information.png" />
+		<Resource Include="Resources\MessageBox\Question.png" />
+		<Resource Include="Resources\MessageBox\Warning.png" />
+		<Resource Include="Resources\Flags\*.png" />
+		<Resource Include="Resources\AppImages\*.png" />
+		<EmbeddedResource Include="Resources\mappings.json" />
+		<EmbeddedResource Include="Resources\ModTranspiler.js" />
+		<EmbeddedResource Include="Resources\ModTypes.d.ts" />
+		<EmbeddedResource Include="Resources\ModManifest.schema.json" />
+		<EmbeddedResource Include="Resources\WorldMap\WorldLand.txt" />
+		<EmbeddedResource Include="Resources\WorldMap\WorldBorders.txt" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Berry.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-UltraGray.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Voidstrap.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Blue.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Red.xshd" />
+        <EmbeddedResource Include="UI\Style\Editor-Theme-Dark.xshd" />
+        <EmbeddedResource Include="UI\Style\Editor-Theme-Light.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Cyan.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Orange.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Green.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Pink.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Purple.xshd" />
+		<EmbeddedResource Include="UI\Style\Editor-Theme-Yellow.xshd" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="Resources\CustomBootstrapperSchema.json" />
+		<EmbeddedResource Include="Resources\CustomBootstrapperTemplate_Blank.xml" />
+		<EmbeddedResource Include="Resources\CustomBootstrapperTemplate_Simple.xml" />
+		<EmbeddedResource Include="Resources\CustomBootstrapperTemplate_Html.xml" />
+		<EmbeddedResource Include="Resources\CustomBootstrapperTemplate_Panel.html" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\Default\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2006\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2006\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2006\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2013\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2013\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\From2013\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\FPSCursor\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\FPSCursor\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\FPSCursor\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\DotCursor\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\DotCursor\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\DotCursor\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\StoofsCursor\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\StoofsCursor\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\StoofsCursor\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\CleanCursor\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\CleanCursor\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\CleanCursor\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\WhiteDotCursor\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\WhiteDotCursor\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\WhiteDotCursor\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\VerySmallWhiteDot\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\VerySmallWhiteDot\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\VerySmallWhiteDot\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\BibataModernIce\ArrowCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\BibataModernIce\ArrowFarCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\BibataModernIce\ArrowCursorDecalDrag.png" />
+		<EmbeddedResource Include="Resources\Mods\Cursor\BibataModernIce\IBeamCursor.png" />
+		<EmbeddedResource Include="Resources\Mods\Sounds\OldDeath.ogg" />
+		<EmbeddedResource Include="Resources\Mods\Sounds\OldGetUp.mp3" />
+		<EmbeddedResource Include="Resources\Mods\Sounds\OldJump.mp3" />
+		<EmbeddedResource Include="Resources\Mods\Sounds\OldWalk.mp3" />
+		<EmbeddedResource Include="Resources\Mods\Sounds\Empty.mp3" />
+		<EmbeddedResource Include="Resources\Mods\OldAvatarBackground.rbxl" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+		<PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
+		<PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+		<PackageReference Include="Jint" Version="4.18.0" />
+		<PackageReference Include="Markdig" Version="1.6.0" />
+		<PackageReference Include="Microsoft.Diagnostics.Runtime" Version="4.2.751201" />
+		<PackageReference Include="Microsoft.Identity.Client" Version="4.83.1" ExcludeAssets="all" />
+		<PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.83.1" ExcludeAssets="all" />
+		<PackageReference Include="Microsoft.IdentityModel.Abstractions" Version="8.14.0" ExcludeAssets="all" />
+		<PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.4" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+		<PackageReference Include="Microsoft.Windows.CsWinRT" Version="2.3.1" />
+		<PackageDownload Include="Microsoft.Windows.SDK.NET.Ref" Version="[$(WindowsProjectionMetadataVersion)]" />
+		<None Include="..\..\external\WindowsSdkTrimmed\Microsoft.Windows.SDK.NET.dll" Link="Microsoft.Windows.SDK.NET.dll" Visible="false" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<!-- <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" /> -->
+
+		<PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.369">
+			<!--<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>-->
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="NAudio" Version="3.3.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+		<PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+		<PackageReference Include="Concentus.Oggfile" Version="1.0.7" />
+		<PackageReference Include="NVorbis" Version="0.10.5" />
+		<PackageReference Include="OggVorbisEncoder" Version="1.2.2" />
+		<PackageReference Include="securifybv.ShellLink" Version="0.1.0" />
+		<PackageReference Include="SharpZipLib" Version="1.4.2" />
+		<PackageReference Include="System.Management" Version="10.0.14" />
+
+
+		<PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+
+		<PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+
+		<PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
+
+		<PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+		<PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
+		<PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
+		<PackageReference Include="Openize.Drako" Version="26.2.0" />
+		<PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+		<!-- <PackageReference Include="YoutubeExplode" Version="6.5.5" />
+		<PackageReference Include="YoutubeExplode.Converter" Version="6.5.5" /> -->
+	</ItemGroup>
+
+	<ItemGroup>
+		<PublishReadyToRunExclude Include="Microsoft.ML.OnnxRuntime.dll;System.Numerics.Tensors.dll;OggVorbisEncoder.dll;ZstdSharp.dll;Openize.Drako.dll;Tomlyn.dll;Voidstrap.Platform.Linux.dll;Voidstrap.Platform.MacOS.dll;Vortice.Direct2D1.dll;Vortice.Direct3D11.dll;Vortice.DirectComposition.dll;Vortice.D3DCompiler.dll;Vortice.Mathematics.dll;Nefarius.ViGEm.Client.dll" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Voidstrap.Core\Voidstrap.Core.csproj" />
+		<ProjectReference Include="..\Voidstrap.Platform.Abstractions\Voidstrap.Platform.Abstractions.csproj" />
+		<ProjectReference Include="..\Voidstrap.Platform.Linux\Voidstrap.Platform.Linux.csproj" />
+		<ProjectReference Include="..\Voidstrap.Platform.MacOS\Voidstrap.Platform.MacOS.csproj" />
+		<ProjectReference Include="..\..\external\wpfui\src\Wpf.Ui\Wpf.Ui.csproj" />
+		<ProjectReference Include="..\..\external\RinColorPicker\src\RinColorPicker\RinColorPicker.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<AssemblyAttribute Include="Voidstrap.Models.Attributes.BuildMetadataAttribute">
+			<_Parameter1>1970-01-01T00:00:00Z</_Parameter1>
+			<_Parameter2></_Parameter2>
+			<_Parameter3>$(CommitHash)</_Parameter3>
+			<_Parameter4>$(CommitRef)</_Parameter4>
+		</AssemblyAttribute>
+	</ItemGroup>
+
+	<ItemGroup>
+		<AdditionalFiles Include="NativeMethods.txt" />
+
+		<!-- Provide the path to the winmds used as input into the analyzer. -->
+		<CompilerVisibleProperty Include="CsWin32InputMetadataPaths" />
+		<CompilerVisibleProperty Include="CsWin32InputDocPaths" />
+	</ItemGroup>
+
+	<Target Name="AssembleCsWin32InputPaths" BeforeTargets="GenerateMSBuildEditorConfigFileCore">
+		<!-- Roslyn only allows source generators to see msbuild properties, to lift msbuild items into semicolon-delimited properties. -->
+		<PropertyGroup>
+			<CsWin32InputMetadataPaths>@(ProjectionMetadataWinmd->'%(FullPath)','|')</CsWin32InputMetadataPaths>
+			<CsWin32InputDocPaths>@(ProjectionDocs->'%(FullPath)','|')</CsWin32InputDocPaths>
+		</PropertyGroup>
+	</Target>
+
+	<Target Name="ResolveWindowsProjectionMetadata" BeforeTargets="CsWinRTGenerateProjection" Condition="'$(CsWinRTEnabled)' == 'true' And '$(CsWinRTWindowsMetadata)' == '10.0.26100.0'">
+		<PropertyGroup>
+			<WindowsProjectionMetadataDirectory>$(NuGetPackageRoot)microsoft.windows.sdk.net.ref\$(WindowsProjectionMetadataVersion)\winmd</WindowsProjectionMetadataDirectory>
+			<CsWinRTWindowsMetadata>&quot;$(WindowsProjectionMetadataDirectory)&quot;</CsWinRTWindowsMetadata>
+		</PropertyGroup>
+		<Error Condition="!Exists('$(WindowsProjectionMetadataDirectory)\Windows.Foundation.FoundationContract.winmd')" Text="Windows projection metadata is missing. Run dotnet restore before building." />
+	</Target>
+
+	<Target Name="PrepareWindowsProjectionForMarkup" BeforeTargets="GenerateTemporaryTargetAssembly;CoreCompile" DependsOnTargets="CsWinRTIncludeProjection" Condition="'$(CsWinRTEnabled)' == 'true'" />
+
+	<Target Name="FixMds" BeforeTargets="CoreCompile" Condition="'@(ProjectionMetadataWinmd)'==''">
+		<ItemGroup>
+			<ProjectionMetadataWinmd Include="$(UserProfile)\.nuget\packages\microsoft.windows.sdk.win32metadata\69.0.7-preview\Windows.Win32.winmd" />
+		</ItemGroup>
+	</Target>
+
+
+	<ItemGroup>
+	  <Resource Include="Voidstrap.png">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </Resource>
+	</ItemGroup>
+
+
+	<ItemGroup>
+	  <None Include="..\..\LICENSE">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="Utility\DarkTexturesMod.cs" />
+	</ItemGroup>
+
+
+
+	<ItemGroup>
+		<Compile Update="Properties\Settings.Designer.cs">
+			<DesignTimeSharedInput>True</DesignTimeSharedInput>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Settings.settings</DependentUpon>
+		</Compile>
+		<Compile Update="Resources\Strings.Designer.cs">
+			<DesignTime>True</DesignTime>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Strings.resx</DependentUpon>
+		</Compile>
+		<EmbeddedResource Update="Resources\Strings.resx">
+			<Generator>PublicResXFileCodeGenerator</Generator>
+			<LastGenOutput>Strings.Designer.cs</LastGenOutput>
+		</EmbeddedResource>
+		<None Update="Properties\Settings.settings">
+			<Generator>SettingsSingleFileGenerator</Generator>
+			<LastGenOutput>Settings.Designer.cs</LastGenOutput>
+		</None>
+	</ItemGroup>
+
+	<PropertyGroup>
+		<VoidImageCrate>$(MSBuildThisFileDirectory)../../native/voidimage</VoidImageCrate>
+		<VoidImageTargetDir>$(MSBuildThisFileDirectory)obj/voidimage</VoidImageTargetDir>
+		<VoidImageDll>$(VoidImageTargetDir)/x86_64-pc-windows-msvc/release/voidimage.dll</VoidImageDll>
+		<VoidImageCargo Condition="Exists('$(USERPROFILE)/.cargo/bin/cargo.exe')">$(USERPROFILE)/.cargo/bin/cargo.exe</VoidImageCargo>
+		<VoidImageCargo Condition="'$(VoidImageCargo)' == ''">cargo</VoidImageCargo>
+	</PropertyGroup>
+
+	<Target Name="BuildVoidImage" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidImageCrate)/Cargo.toml')" Inputs="$(VoidImageCrate)/Cargo.toml;$(VoidImageCrate)/Cargo.lock;@(VoidImageSources)" Outputs="$(VoidImageDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidImageCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidImageTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<ItemGroup>
+		<VoidImageSources Include="$(MSBuildThisFileDirectory)../../native/voidimage/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="IncludeVoidImage" AfterTargets="BuildVoidImage" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidImageDll)')">
+		<ItemGroup>
+			<None Include="$(VoidImageDll)" Link="voidimage.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidPacerCrate>$(MSBuildThisFileDirectory)../../native/framepacer</VoidPacerCrate>
+		<VoidPacerTargetDir>$(MSBuildThisFileDirectory)obj/framepacer</VoidPacerTargetDir>
+		<VoidPacerDll>$(VoidPacerTargetDir)/x86_64-pc-windows-msvc/release/voidpacer.dll</VoidPacerDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidPacerSources Include="$(MSBuildThisFileDirectory)../../native/framepacer/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidPacer" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidPacerCrate)/Cargo.toml')" Inputs="$(VoidPacerCrate)/Cargo.toml;$(VoidPacerCrate)/Cargo.lock;@(VoidPacerSources)" Outputs="$(VoidPacerDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidPacerCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidPacerTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<Target Name="RequireVoidPacer" AfterTargets="BuildVoidPacer" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And '$(Configuration)' == 'Release' And '$(VoidstrapAllowMissingPacer)' != 'true'">
+		<Error Condition="!Exists('$(VoidPacerDll)')" Text="The frame pacer library voidpacer.dll could not be built. Install Rust with the x86_64-pc-windows-msvc target, or set VoidstrapAllowMissingPacer to true to build without frame generation." />
+	</Target>
+
+	<Target Name="IncludeVoidPacer" AfterTargets="BuildVoidPacer" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidPacerDll)')">
+		<ItemGroup>
+			<None Include="$(VoidPacerDll)" Link="voidpacer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidClipCrate>$(MSBuildThisFileDirectory)../../native/voidclip</VoidClipCrate>
+		<VoidClipTargetDir>$(MSBuildThisFileDirectory)obj/voidclip</VoidClipTargetDir>
+		<VoidClipDll>$(VoidClipTargetDir)/x86_64-pc-windows-msvc/release/voidclip.dll</VoidClipDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidClipSources Include="$(MSBuildThisFileDirectory)../../native/voidclip/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidClip" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidClipCrate)/Cargo.toml')" Inputs="$(VoidClipCrate)/Cargo.toml;$(VoidClipCrate)/Cargo.lock;@(VoidClipSources)" Outputs="$(VoidClipDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidClipCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidClipTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<Target Name="IncludeVoidClip" AfterTargets="BuildVoidClip" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidClipDll)')">
+		<ItemGroup>
+			<None Include="$(VoidClipDll)" Link="voidclip.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidPkgCrate>$(MSBuildThisFileDirectory)../../native/voidpkg</VoidPkgCrate>
+		<VoidPkgTargetDir>$(MSBuildThisFileDirectory)obj/voidpkg</VoidPkgTargetDir>
+		<VoidPkgDll>$(VoidPkgTargetDir)/x86_64-pc-windows-msvc/release/voidpkg.dll</VoidPkgDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidPkgSources Include="$(MSBuildThisFileDirectory)../../native/voidpkg/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidPkg" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidPkgCrate)/Cargo.toml')" Inputs="$(VoidPkgCrate)/Cargo.toml;$(VoidPkgCrate)/Cargo.lock;@(VoidPkgSources)" Outputs="$(VoidPkgDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidPkgCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidPkgTargetDir)&quot;" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+		<Error Condition="!Exists('$(VoidPkgDll)')" Text="The package extraction library voidpkg.dll could not be built. Install Rust with the x86_64-pc-windows-msvc target." />
+	</Target>
+
+	<Target Name="IncludeVoidPkg" AfterTargets="BuildVoidPkg" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidPkgDll)')">
+		<ItemGroup>
+			<None Include="$(VoidPkgDll)" Link="voidpkg.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidRpcCrate>$(MSBuildThisFileDirectory)../../native/voidrpc</VoidRpcCrate>
+		<VoidRpcTargetDir>$(MSBuildThisFileDirectory)obj/voidrpc</VoidRpcTargetDir>
+		<VoidRpcDll>$(VoidRpcTargetDir)/x86_64-pc-windows-msvc/release/voidrpc.dll</VoidRpcDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidRpcSources Include="$(MSBuildThisFileDirectory)../../native/voidrpc/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidRpc" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidRpcCrate)/Cargo.toml')" Inputs="$(VoidRpcCrate)/Cargo.toml;$(VoidRpcCrate)/Cargo.lock;@(VoidRpcSources)" Outputs="$(VoidRpcDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidRpcCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidRpcTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<Target Name="IncludeVoidRpc" AfterTargets="BuildVoidRpc" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidRpcDll)')">
+		<ItemGroup>
+			<None Include="$(VoidRpcDll)" Link="voidrpc.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidLogCrate>$(MSBuildThisFileDirectory)../../native/voidlog</VoidLogCrate>
+		<VoidLogTargetDir>$(MSBuildThisFileDirectory)obj/voidlog</VoidLogTargetDir>
+		<VoidLogDll>$(VoidLogTargetDir)/x86_64-pc-windows-msvc/release/voidlog.dll</VoidLogDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidLogSources Include="$(MSBuildThisFileDirectory)../../native/voidlog/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidLog" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidLogCrate)/Cargo.toml')" Inputs="$(VoidLogCrate)/Cargo.toml;$(VoidLogCrate)/Cargo.lock;@(VoidLogSources)" Outputs="$(VoidLogDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidLogCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidLogTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<Target Name="IncludeVoidLog" AfterTargets="BuildVoidLog" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidLogDll)')">
+		<ItemGroup>
+			<None Include="$(VoidLogDll)" Link="voidlog.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<VoidStateCrate>$(MSBuildThisFileDirectory)../../native/voidstate</VoidStateCrate>
+		<VoidStateTargetDir>$(MSBuildThisFileDirectory)obj/voidstate</VoidStateTargetDir>
+		<VoidStateDll>$(VoidStateTargetDir)/x86_64-pc-windows-msvc/release/voidstate.dll</VoidStateDll>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<VoidStateSources Include="$(MSBuildThisFileDirectory)../../native/voidstate/src/**/*.rs" />
+	</ItemGroup>
+
+	<Target Name="BuildVoidState" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(VoidStateCrate)/Cargo.toml')" Inputs="$(VoidStateCrate)/Cargo.toml;$(VoidStateCrate)/Cargo.lock;@(VoidStateSources)" Outputs="$(VoidStateDll)">
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --release --locked --quiet --target x86_64-pc-windows-msvc --manifest-path &quot;$(VoidStateCrate)/Cargo.toml&quot; --target-dir &quot;$(VoidStateTargetDir)&quot;" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+	</Target>
+
+	<Target Name="IncludeVoidState" AfterTargets="BuildVoidState" BeforeTargets="AssignTargetPaths" Condition="Exists('$(VoidStateDll)')">
+		<ItemGroup>
+			<None Include="$(VoidStateDll)" Link="voidstate.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<PropertyGroup>
+		<RiShadeCrate>$(MSBuildThisFileDirectory)../../native/rishade</RiShadeCrate>
+		<RiShadeTargetDir>$(MSBuildThisFileDirectory)obj/rishade</RiShadeTargetDir>
+		<RiShadeCoreDll>$(RiShadeTargetDir)/x86_64-pc-windows-msvc/release/rishade_core.dll</RiShadeCoreDll>
+		<RiShadeAddonDll>$(RiShadeTargetDir)/x86_64-pc-windows-msvc/release/rishade_reshade_addon.dll</RiShadeAddonDll>
+		<RiShadeDepthRoot>$(MSBuildThisFileDirectory)../../native/rishade-depth</RiShadeDepthRoot>
+		<RiShadeDepthBuild>$(RiShadeTargetDir)/depth</RiShadeDepthBuild>
+		<RiShadeDepthBridgeDll>$(RiShadeDepthBuild)/Release/rishade_depth_bridge.dll</RiShadeDepthBridgeDll>
+		<RiShadeCMake Condition="'$(RI_SHADE_CMAKE)' != ''">$(RI_SHADE_CMAKE)</RiShadeCMake>
+		<RiShadeCMake Condition="'$(RiShadeCMake)' == ''">cmake</RiShadeCMake>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<RiShadeSources Include="$(RiShadeCrate)/**/*.rs;$(RiShadeCrate)/presets/**/*.ini" Exclude="$(RiShadeTargetDir)/**/*.rs" />
+		<RiShadeDepthSources Include="$(RiShadeDepthRoot)/CMakeLists.txt;$(RiShadeDepthRoot)/src/**/*.cpp;$(RiShadeDepthRoot)/src/**/*.h" />
+	</ItemGroup>
+
+	<Target Name="BuildRiShade" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(RiShadeCrate)/Cargo.toml')" Inputs="$(RiShadeCrate)/Cargo.toml;$(RiShadeCrate)/Cargo.lock;$(RiShadeCrate)/reshade-addon/Cargo.toml;@(RiShadeSources);@(RiShadeDepthSources)" Outputs="$(RiShadeCoreDll);$(RiShadeAddonDll);$(RiShadeDepthBridgeDll)">
+		<Exec Command="&quot;$(RiShadeCMake)&quot; -S &quot;$(RiShadeDepthRoot)&quot; -B &quot;$(RiShadeDepthBuild)&quot; -A x64" StandardOutputImportance="low" />
+		<Exec Command="&quot;$(RiShadeCMake)&quot; --build &quot;$(RiShadeDepthBuild)&quot; --config Release" StandardOutputImportance="low" />
+		<Exec Command="&quot;$(VoidImageCargo)&quot; build --workspace --locked --quiet --release --lib --target x86_64-pc-windows-msvc --manifest-path &quot;$(RiShadeCrate)/Cargo.toml&quot; --target-dir &quot;$(RiShadeTargetDir)&quot;" />
+	</Target>
+
+	<Target Name="RequireRiShadeLibraries" AfterTargets="BuildRiShade" BeforeTargets="AssignTargetPaths" Condition="'$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT'">
+		<Error Condition="!Exists('$(RiShadeCoreDll)') Or !Exists('$(RiShadeAddonDll)') Or !Exists('$(RiShadeDepthBridgeDll)')" Text="RiShade's native libraries could not be built. Install Rust with the x86_64-pc-windows-msvc target and the Visual C++ build tools with CMake." />
+	</Target>
+
+	<Target Name="IncludeRiShadeLibraries" AfterTargets="BuildRiShade" BeforeTargets="AssignTargetPaths" Condition="Exists('$(RiShadeCoreDll)') And Exists('$(RiShadeAddonDll)') And Exists('$(RiShadeDepthBridgeDll)')">
+		<ItemGroup>
+			<None Include="$(RiShadeCoreDll)" Link="rishade_core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+			<None Include="$(RiShadeAddonDll)" Link="rishade_reshade_addon.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+			<None Include="$(RiShadeDepthBridgeDll)" Link="rishade_depth_bridge.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
+	<Target Name="StripDocsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+		<ItemGroup>
+			<ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.Extension)' == '.xml' Or '%(ResolvedFileToPublish.Extension)' == '.pdb' Or '%(ResolvedFileToPublish.Extension)' == '.lib' Or ('%(ResolvedFileToPublish.Extension)' == '.txt' And !$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').StartsWith('licenses')))" />
+			<ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.RelativePath)' == 'runtimes\win-x64\native\WebView2Loader.dll' Or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Microsoft.Web.WebView2.WinForms.dll'" />
+		</ItemGroup>
+	</Target>
+
+	<Import Project="CompressedStrings.targets" />
+
+</Project>

@@ -1,0 +1,83 @@
+name: Bug report
+description: Report something in Voidstrap that is not working.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        <p align="center"><img width="96" alt="Voidstrap" src="https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/src/Voidstrap.App/Voidstrap.png"></p>
+
+        Share what happened, what you expected, and how to reproduce it. Remove private information from logs before sharing.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the [existing issues](https://github.com/KloBraticc/Voidstrap/issues) and this bug is not reported yet.
+          required: true
+        - label: I am using the [latest version](https://github.com/KloBraticc/Voidstrap/releases/latest) of Voidstrap.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Voidstrap version
+      description: Find this on the About page in Voidstrap.
+      placeholder: 2.0.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Android
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system version
+      description: Include your OS version. For Linux, add the distribution and package format. For macOS, add Intel or Apple silicon. For Android, add the play or direct flavor.
+      placeholder: Windows 11 24H2, Ubuntu 24.04 AppImage, macOS 15 on Apple silicon, or Android 14 direct
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Problem details
+      description: What happened, what did you expect, and when did it start?
+      placeholder: Describe the result you saw and the result you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Voidstrap
+        2. Open the affected page or setting
+        3. Describe what happens
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: Optional. Attach the newest log if available. Windows logs are in %LOCALAPPDATA%\Voidstrap\Logs. Linux logs are in ~/.local/state/voidstrap/logs, or ~/.var/app/io.github.KloBraticc.Voidstrap/.local/state/voidstrap/logs for Flatpak. Remove private information first.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or videos
+      description: Optional. Drag screenshots, GIFs, or recordings into this box.
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow the [Code of Conduct](https://github.com/KloBraticc/Voidstrap/blob/main/CODE_OF_CONDUCT.md).
+          required: true

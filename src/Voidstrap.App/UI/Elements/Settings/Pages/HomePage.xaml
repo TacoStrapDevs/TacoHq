@@ -1,0 +1,1173 @@
+﻿<Page
+    x:Class="Voidstrap.UI.Elements.Settings.Pages.HomePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:platform="clr-namespace:Voidstrap.UI"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:models="clr-namespace:Voidstrap.UI.ViewModels"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:resources="clr-namespace:Voidstrap.Resources"
+    xmlns:controls="clr-namespace:Voidstrap.UI.Elements.Controls"
+    xmlns:util="clr-namespace:Voidstrap.Utility"
+    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+    Title="{resources:Loc Ui_Nav_Home}">
+
+    <Page.Resources>
+        <Style x:Key="StudioTileActionButton" TargetType="Button">
+            <Setter Property="Width" Value="30"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="15" Background="#73000000" BorderBrush="#40FFFFFF" BorderThickness="1">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#A6000000"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <DataTemplate x:Key="StudioProjectCard">
+            <Border x:Name="ProjectCard"
+                    Margin="0,0,10,14"
+                    Padding="6"
+                    CornerRadius="8"
+                    Background="Transparent"
+                    Cursor="Hand"
+                    ToolTip="{Binding Name}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick"
+                                  Command="{Binding DataContext.OpenStudioProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                  CommandParameter="{Binding}"/>
+                </Border.InputBindings>
+                <StackPanel>
+                    <Grid>
+                        <Border Height="{Binding ActualWidth, RelativeSource={RelativeSource Self}}" util:RoundedClip.Radius="6" Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                            <Image Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                   util:DynamicRenderSystem.LazyImageSource="{Binding IconUrl}"/>
+                        </Border>
+                        <Border x:Name="CardActions" util:RoundedClip.Radius="6" Opacity="0" IsHitTestVisible="False">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="1,0" EndPoint="0,0.6">
+                                    <GradientStop Color="#66000000" Offset="0"/>
+                                    <GradientStop Color="#00000000" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <StackPanel Margin="0,8,8,0" HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Vertical">
+                                <Button Style="{StaticResource StudioTileActionButton}"
+                                        ToolTip="{Binding FavoriteTooltip}"
+                                        Command="{Binding DataContext.ToggleStudioFavoriteCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                        CommandParameter="{Binding}">
+                                    <ui:SymbolIcon Symbol="Star24" FontSize="14" Filled="{Binding IsFavorite}"/>
+                                </Button>
+                                <Button Style="{StaticResource StudioTileActionButton}"
+                                        ToolTip="{resources:Loc Ui_ModGen_MoreOptions}"
+                                        Click="StudioMore_Click">
+                                    <ui:SymbolIcon Symbol="MoreHorizontal24" FontSize="14"/>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="{Binding Name}"
+                               Margin="2,8,2,0"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <StackPanel Margin="2,3,2,0" Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="{Binding PrivacyIcon}" ToolTip="{Binding PrivacyLabel}" FontSize="11" Margin="0,0,5,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        <TextBlock Text="{Binding ModifiedLabel}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <Trigger SourceName="ProjectCard" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="ProjectCard" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                    <Setter TargetName="CardActions" Property="Opacity" Value="1"/>
+                    <Setter TargetName="CardActions" Property="IsHitTestVisible" Value="True"/>
+                </Trigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <DataTemplate x:Key="StudioTemplateCard">
+            <Border x:Name="TemplateCard"
+                    Margin="0,0,12,12"
+                    Padding="6"
+                    CornerRadius="8"
+                    Background="Transparent"
+                    Cursor="Hand"
+                    ToolTip="{Binding Name}">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick"
+                                  Command="{Binding DataContext.OpenStudioProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                  CommandParameter="{Binding}"/>
+                </Border.InputBindings>
+                <StackPanel>
+                    <Border Height="{Binding ActualWidth, RelativeSource={RelativeSource Self}}" CornerRadius="6" ClipToBounds="True" Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                        <Image Stretch="UniformToFill"
+                               RenderOptions.BitmapScalingMode="HighQuality"
+                               util:DynamicRenderSystem.LazyImageSource="{Binding IconUrl}"/>
+                    </Border>
+                    <TextBlock Text="{Binding Name}"
+                               Margin="2,10,0,2"
+                               FontSize="12.5"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                </StackPanel>
+            </Border>
+            <DataTemplate.Triggers>
+                <Trigger SourceName="TemplateCard" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="TemplateCard" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                </Trigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <ItemsPanelTemplate x:Key="StudioGridPanel">
+            <UniformGrid Columns="{Binding DataContext.StudioColumns, RelativeSource={RelativeSource AncestorType=Page}}" VerticalAlignment="Top"/>
+        </ItemsPanelTemplate>
+        <DataTemplate x:Key="NewsCardTemplate">
+                            <Border x:Name="NewsCard"
+                                    Height="212"
+                                    Margin="0,0,14,0"
+                                    CornerRadius="10"
+                                    Background="#FF0E1015"
+                                    BorderThickness="1"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    Cursor="Hand">
+                                <Border.InputBindings>
+                                    <MouseBinding MouseAction="LeftClick"
+                                                  Command="{Binding DataContext.OpenNewsCardCommand,
+                                                      RelativeSource={RelativeSource AncestorType=Page}}"
+                                                  CommandParameter="{Binding}"/>
+                                </Border.InputBindings>
+                                <Grid>
+                                    <Border x:Name="NewsImageHost" CornerRadius="9" RenderOptions.BitmapScalingMode="HighQuality"
+                                        util:DynamicRenderSystem.BrushDecodeWidth="960"
+                                        util:DynamicRenderSystem.BrushImageSource="{Binding ImageUrl}">
+                                        <Border.Background>
+                                            <ImageBrush Stretch="UniformToFill">
+                                                <ImageBrush.RelativeTransform>
+                                                    <ScaleTransform x:Name="NewsZoom" CenterX="0.5" CenterY="0.5" ScaleX="1" ScaleY="1"/>
+                                                </ImageBrush.RelativeTransform>
+                                            </ImageBrush>
+                                        </Border.Background>
+                                    </Border>
+                                    <Border CornerRadius="9" IsHitTestVisible="False">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Color="#33080A0E" Offset="0"/>
+                                                <GradientStop Color="#00080A0E" Offset="0.3"/>
+                                                <GradientStop Color="#B305060A" Offset="0.72"/>
+                                                <GradientStop Color="#F205060A" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                    <Border HorizontalAlignment="Left"
+                                            VerticalAlignment="Top"
+                                            Margin="14,14,0,0"
+                                            Padding="10,4"
+                                            CornerRadius="12"
+                                            Background="{DynamicResource AccentFillColorPrimaryBrush}"
+                                            Visibility="{Binding TagVisibility}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:SymbolIcon Symbol="Megaphone24"
+                                                           FontSize="11"
+                                                           Margin="0,1,5,0"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding Tag}"
+                                                       FontSize="11.5"
+                                                       FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Grid Margin="16,0,14,14" VerticalAlignment="Bottom">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,14,0" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                            <TextBlock Text="{Binding CardTitle}"
+                                                       FontSize="17"
+                                                       FontWeight="Bold"
+                                                       MaxHeight="44"
+                                                       LineHeight="22"
+                                                       Foreground="White"
+                                                       TextWrapping="Wrap"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Blurb}"
+                                                       FontSize="12.5"
+                                                       LineHeight="17"
+                                                       Margin="0,4,0,0"
+                                                       MaxHeight="34"
+                                                       Opacity="0.85"
+                                                       Foreground="White"
+                                                       TextWrapping="Wrap"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Visibility="{Binding BlurbVisibility}"/>
+                                            <TextBlock Text="{Binding DateLabel}"
+                                                       Visibility="{Binding DateVisibility}"
+                                                       FontSize="11.5"
+                                                       FontWeight="SemiBold"
+                                                       Margin="0,6,0,0"
+                                                       Opacity="0.7"
+                                                       Foreground="White"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1"
+                                                Width="30"
+                                                Height="30"
+                                                CornerRadius="15"
+                                                Background="White"
+                                                VerticalAlignment="Bottom">
+                                            <ui:SymbolIcon Symbol="ArrowRight24"
+                                                           FontSize="13"
+                                                           Foreground="#FF0B0D11"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"/>
+                                        </Border>
+                                    </Grid>
+                                    <ui:ProgressRing Width="26"
+                                                     Height="26"
+                                                     IsIndeterminate="True"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center"
+                                                     IsHitTestVisible="False"
+                                                     Visibility="{Binding Background.(util:DynamicRenderSystem.IsBrushLoading),
+                                                         ElementName=NewsImageHost,
+                                                         Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <EventTrigger SourceName="NewsCard" RoutedEvent="Border.MouseEnter">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="NewsZoom"
+                                                             Storyboard.TargetProperty="ScaleX"
+                                                             To="1.05" Duration="0:0:0.55">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <QuinticEase EasingMode="EaseOut"/>
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="NewsZoom"
+                                                             Storyboard.TargetProperty="ScaleY"
+                                                             To="1.05" Duration="0:0:0.55">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <QuinticEase EasingMode="EaseOut"/>
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <EventTrigger SourceName="NewsCard" RoutedEvent="Border.MouseLeave">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="NewsZoom"
+                                                             Storyboard.TargetProperty="ScaleX"
+                                                             To="1" Duration="0:0:0.65">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <QuinticEase EasingMode="EaseOut"/>
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="NewsZoom"
+                                                             Storyboard.TargetProperty="ScaleY"
+                                                             To="1" Duration="0:0:0.65">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <QuinticEase EasingMode="EaseOut"/>
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+
+        <Style x:Key="HomeSectionStyle" TargetType="Border">
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentColorSecondaryBrush}"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="CornerRadius" Value="12"/>
+                    <Setter Property="Padding" Value="10"/>
+                    <Setter Property="Margin" Value="0,0,0,10"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeSectionContentStyle" TargetType="Grid">
+            <Setter Property="IsHitTestVisible" Value="True"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="IsHitTestVisible" Value="False"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeSectionToolbarStyle" TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="Cursor" Value="SizeAll"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_DragSectionTooltip}"/>
+            <EventSetter Event="MouseLeftButtonDown" Handler="SectionGrip_MouseLeftButtonDown"/>
+            <EventSetter Event="MouseMove" Handler="SectionGrip_MouseMove"/>
+            <EventSetter Event="MouseLeftButtonUp" Handler="SectionGrip_MouseLeftButtonUp"/>
+            <EventSetter Event="LostMouseCapture" Handler="SectionGrip_LostMouseCapture"/>
+            <Setter Property="Padding" Value="4,0,4,0"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Grid.Row" Value="0"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeSectionToolbarDividerStyle" TargetType="Border">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="Margin" Value="4,0,4,0"/>
+            <Setter Property="Background" Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+        </Style>
+
+        <Style x:Key="HomeSectionGripStyle" TargetType="Border">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,0,8,0"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Margin" Value="0,4,4,4"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeSectionToolButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+            <Setter Property="Appearance" Value="Transparent"/>
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="1,0,1,0"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="HomeSectionMoveUpButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource HomeSectionToolButtonStyle}">
+            <Setter Property="Icon" Value="ArrowUp24"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_MoveSectionUpTooltip}"/>
+            <EventSetter Event="Click" Handler="SectionMoveUp_Click"/>
+        </Style>
+
+        <Style x:Key="HomeSectionMoveDownButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource HomeSectionToolButtonStyle}">
+            <Setter Property="Icon" Value="ArrowDown24"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_MoveSectionDownTooltip}"/>
+            <EventSetter Event="Click" Handler="SectionMoveDown_Click"/>
+        </Style>
+
+        <Style x:Key="HomeSectionMoveTopButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource HomeSectionToolButtonStyle}">
+            <Setter Property="Icon" Value="ArrowUpload24"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_MoveSectionTopTooltip}"/>
+            <EventSetter Event="Click" Handler="SectionMoveTop_Click"/>
+        </Style>
+
+        <Style x:Key="HomeSectionMoveBottomButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource HomeSectionToolButtonStyle}">
+            <Setter Property="Icon" Value="ArrowDownload24"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_MoveSectionBottomTooltip}"/>
+            <EventSetter Event="Click" Handler="SectionMoveBottom_Click"/>
+        </Style>
+
+        <Style x:Key="HomeSectionHideButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource HomeSectionToolButtonStyle}">
+            <Setter Property="Icon" Value="EyeOff24"/>
+            <Setter Property="ToolTip" Value="{resources:Loc Ui_Home_HideSectionTooltip}"/>
+            <EventSetter Event="Click" Handler="SectionHide_Click"/>
+        </Style>
+
+        <Style x:Key="HomeHiddenTrayStyle" TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+            <Setter Property="Margin" Value="0,12,0,0"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeEditLayoutButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+            <Setter Property="Content" Value="{resources:Loc Ui_Home_EditLayout}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="Content" Value="{resources:Loc Ui_Home_DoneEditingLayout}"/>
+                    <Setter Property="Appearance" Value="Primary"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="HomeResetLayoutButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsLayoutEditMode, RelativeSource={RelativeSource AncestorType=Page}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Page.Resources>
+
+    <Grid Margin="0,0,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,4,28,6">
+            <StackPanel x:Name="LearnMoreGroup" HorizontalAlignment="Left" VerticalAlignment="Center" Orientation="Horizontal">
+            <ui:Button VerticalAlignment="Center" Appearance="Secondary" Foreground="{DynamicResource SystemAccentColorSecondaryBrush}" Content="{resources:Loc Ui_Home_LearnMore}" Click="LearnMore_Click"/>
+            <ui:Button x:Name="LearnMoreHideButton" Margin="6,0,0,0" Style="{StaticResource HomeSectionToolButtonStyle}" Icon="EyeOff24" ToolTip="{resources:Loc Ui_Home_HideSectionTooltip}" Visibility="Collapsed" Click="LearnMoreHide_Click"/>
+            </StackPanel>
+            <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal">
+                <ui:Button x:Name="EditLayoutButton"
+                           Appearance="Secondary"
+                           Icon="Edit24"
+                           ToolTip="{resources:Loc Ui_Home_EditLayoutTooltip}"
+                           Style="{StaticResource HomeEditLayoutButtonStyle}"
+                           Click="EditLayout_Click"/>
+                <ui:Button x:Name="ResetLayoutButton"
+                           Margin="8,0,0,0"
+                           Appearance="Secondary"
+                           Icon="ArrowCounterclockwise24"
+                           Content="{resources:Loc Ui_Home_ResetLayout}"
+                           ToolTip="{resources:Loc Ui_Home_ResetLayoutTooltip}"
+                           Style="{StaticResource HomeResetLayoutButtonStyle}"
+                           Click="ResetLayout_Click"/>
+                <ui:Button x:Name="UndoLayoutButton"
+                           Margin="8,0,0,0"
+                           Appearance="Secondary"
+                           Icon="ArrowUndo24"
+                           Content="{resources:Loc Ui_Misc_Undo}"
+                           ToolTip="{resources:Loc Ui_Home_UndoLayoutTooltip}"
+                           Style="{StaticResource HomeResetLayoutButtonStyle}"
+                           IsEnabled="False"
+                           Click="UndoLayout_Click"/>
+                <StackPanel Margin="12,0,0,0" Orientation="Horizontal" Visibility="{Binding StudioTabVisibility}">
+                    <ui:Button Content="{resources:Loc ContextMenu_ServerBrowser_Refresh}" Icon="ArrowSync24" Appearance="Secondary" Command="{Binding RefreshStudioCommand}" />
+                    <ui:Button Margin="8,0,0,0" Appearance="Primary" Command="{Binding LaunchStudioCommand}" ToolTip="{resources:Loc LaunchMenu_LaunchRobloxStudio}">
+                        <StackPanel Orientation="Horizontal">
+                            <Image Width="16" Height="16" Margin="0,0,7,0" RenderOptions.BitmapScalingMode="HighQuality" Source="pack://application:,,,/Resources/RobloxStudioIcon.png" />
+                            <TextBlock VerticalAlignment="Center" Text="{resources:Loc Ui_Home_OpenStudio}" />
+                        </StackPanel>
+                    </ui:Button>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <TextBlock Grid.Row="1"
+                   Text="{Binding Error}"
+                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                   FontSize="13"
+                   Margin="0,0,28,12"
+                   TextWrapping="Wrap">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Error}" Value="">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+
+        <ui:DynamicScrollViewer Grid.Row="2"
+                      Visibility="{Binding RobloxTabVisibility}"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="RobloxSections" Margin="0,0,28,0">
+
+                <Border x:Name="RobloxHiddenTray" Style="{StaticResource HomeHiddenTrayStyle}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{resources:Loc Ui_Home_HiddenSections}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <WrapPanel x:Name="RobloxHiddenChips" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="HomeSectionFeatured" Tag="featured" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Margin="0,28,0,0" Style="{StaticResource HomeSectionContentStyle}">
+                            <Border Height="320" util:ResponsiveLayout.AspectRatio="3.2" MinHeight="300" MaxHeight="440" CornerRadius="14" util:RoundedClip.Radius="14" Background="#FF0B0B0D" Visibility="{Binding FeaturedVisibility}" Tag="{Binding FeaturedGame}" Cursor="Hand" MouseLeftButtonUp="GameThumbnail_Click">
+                                <Grid util:RoundedClip.Radius="14">
+                                    <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" util:DynamicRenderSystem.LazyImageSource="{Binding FeaturedGame.ThumbnailUrl}"/>
+                                    <controls:GameVideoView VideoPath="{Binding FeaturedVideoPath}" IsHitTestVisible="False"/>
+                                    <Border IsHitTestVisible="False">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#E0000000" Offset="0"/>
+                                                <GradientStop Color="#70000000" Offset="0.45"/>
+                                                <GradientStop Color="#00000000" Offset="0.8"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                    <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="28,0,28,28" MaxWidth="460">
+                                        <Border HorizontalAlignment="Left" CornerRadius="10" Padding="10,3" Background="#26FFFFFF" BorderBrush="#33FFFFFF" BorderThickness="1">
+                                            <TextBlock Text="{resources:Loc Ui_Home_MostPlayedNow}" FontSize="11" FontWeight="SemiBold" Foreground="White"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding FeaturedGame.Name}" FontSize="30" FontWeight="Bold" Foreground="White" Margin="0,10,0,0" TextTrimming="CharacterEllipsis"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                            <ui:SymbolIcon Symbol="People24" FontSize="14" Foreground="#DDFFFFFF" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding FeaturedGame.PlayerCount}" FontSize="13" Foreground="#DDFFFFFF" Margin="5,-2,14,0" VerticalAlignment="Center"/>
+                                            <Ellipse Width="8" Height="8" Fill="#FF22C55E" VerticalAlignment="Center" Visibility="{Binding FeaturedGame.LikeVisibility}"/>
+                                            <TextBlock Text="{Binding FeaturedGame.LikePercent}" FontSize="13" Foreground="#DDFFFFFF" Margin="5,-2,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                                            <ui:Button x:Name="FeaturedPlayButton" Appearance="Primary" Icon="Play24" Padding="22,8" FontWeight="SemiBold" Content="{resources:Loc Ui_Home_Play}" Command="{Binding PlayDiscoverCommand}" CommandParameter="{Binding FeaturedGame}"/>
+                                            <ui:Button Margin="8,0,0,0" Icon="Open24" Padding="0" Width="{Binding ActualHeight, ElementName=FeaturedPlayButton}" Height="{Binding ActualHeight, ElementName=FeaturedPlayButton}" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Background="#33FFFFFF" BorderBrush="#40FFFFFF" BorderThickness="1" Foreground="White" ToolTip="{resources:Loc Ui_Home_ViewGamePage}" Command="{Binding OpenDiscoverCommand}" CommandParameter="{Binding FeaturedGame}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="HomeSectionDiscover" Tag="discover" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="1" Margin="0,28,0,0">
+                            <StackPanel Visibility="{Binding RecommendedVisibility}" Margin="0,0,0,0">
+                                <TextBlock Text="{resources:Loc Ui_Home_RecommendedForYou}" FontSize="18" FontWeight="Bold" Margin="0,0,0,10" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <ItemsControl ItemsSource="{Binding Recommended}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="3" util:ResponsiveLayout.MinItemWidth="320"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,12,14" CornerRadius="12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                                                <StackPanel>
+                                                    <Border Height="160" util:ResponsiveLayout.AspectRatio="1.7778" CornerRadius="12,12,0,0" util:TopRoundedClip.Radius="12" Cursor="Hand" ToolTip="{resources:Loc Ui_Home_ViewGamePage}" MouseLeftButtonUp="GameThumbnail_Click" Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                                                        <Grid>
+                                                            <Image Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" util:DynamicRenderSystem.LazyImageSource="{Binding ThumbnailUrl}"/>
+                                                            <ui:Button HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Padding="8" Appearance="Primary" Icon="Play24" ToolTip="{resources:Loc Ui_Home_Play}" Command="{Binding DataContext.PlayDiscoverCommand, RelativeSource={RelativeSource AncestorType=Page}}" CommandParameter="{Binding}"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <StackPanel Margin="12,10,12,12">
+                                                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                        <DockPanel Margin="0,6,0,0">
+                                                            <ui:Button DockPanel.Dock="Right" Padding="4" Icon="Open24" Appearance="Transparent" ToolTip="{resources:Loc Ui_Home_ViewGamePage}" Command="{Binding DataContext.OpenDiscoverCommand, RelativeSource={RelativeSource AncestorType=Page}}" CommandParameter="{Binding}"/>
+                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <ui:SymbolIcon Symbol="People24" FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                                <TextBlock Text="{Binding PlayerCount}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="4,-2,12,0" VerticalAlignment="Center"/>
+                                                                <Ellipse Width="7" Height="7" Fill="#FF22C55E" VerticalAlignment="Center" Visibility="{Binding LikeVisibility}"/>
+                                                                <TextBlock Text="{Binding LikePercent}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="4,-2,0,0" VerticalAlignment="Center"/>
+                                                            </StackPanel>
+                                                        </DockPanel>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="HomeSectionContinue" Tag="continue" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel>
+
+                <Grid Margin="0,8,10,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{resources:Loc Ui_Home_ContinuePlaying}"
+                               FontSize="20"
+                               FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding GlobalDatacenterToolTip}">
+                        <TextBlock Text="{resources:Loc Ui_Home_ServerForEveryGame}"
+                                   FontSize="12.5"
+                                   Margin="0,0,8,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ComboBox Width="210"
+                                  Padding="8,4,8,4"
+                                  FontSize="12"
+                                  ItemsSource="{Binding GlobalDatacenterOptions}"
+                                  SelectedItem="{Binding GlobalDatacenter, Mode=TwoWay}"
+                                  DisplayMemberPath="Display"/>
+                    </StackPanel>
+                    <ui:Button Grid.Column="2"
+                               Margin="8,0,0,0"
+                               FontSize="12"
+                               Icon="ArrowSync24"
+                               Content="{resources:Loc Ui_Home_UseForAllGames}"
+                               ToolTip="{resources:Loc Ui_Home_ClearTheServerPickedOnEach}"
+                               Command="{Binding UseGlobalForAllCommand}"/>
+                </Grid>
+
+                <Border Margin="0,4,0,18"
+                        Padding="0,34,0,34"
+                        CornerRadius="10"
+                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                        BorderThickness="1"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        Visibility="{Binding IsEmpty,
+                            Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel HorizontalAlignment="Center">
+                        <Border Width="56"
+                                Height="56"
+                                CornerRadius="28"
+                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="History24"
+                                           FontSize="26"
+                                           Foreground="{StaticResource AccentColorSecondaryBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="{resources:Loc Ui_Home_NoHistoryYet}"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Margin="0,14,0,5"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="{resources:Loc Ui_Home_GamesYouPlayWillShowUp}"
+                                   FontSize="12.5"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,4,0,18"
+                        Padding="0,34,0,34"
+                        CornerRadius="10"
+                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                        BorderThickness="1"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        Visibility="{Binding IsFilteredEmpty,
+                            Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel HorizontalAlignment="Center">
+                        <Border Width="56"
+                                Height="56"
+                                CornerRadius="28"
+                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                HorizontalAlignment="Center">
+                            <ui:SymbolIcon Symbol="Search24"
+                                           FontSize="26"
+                                           Foreground="{StaticResource AccentColorSecondaryBrush}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="{resources:Loc Ui_Home_NoMatches}"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Margin="0,14,0,5"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="{resources:Loc Ui_Home_NothingInYourHistoryMatchesThat}"
+                                   FontSize="12.5"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                    </StackPanel>
+                </Border>
+
+                <ItemsControl ItemsSource="{Binding FilteredHistory}">
+                    <ItemsControl.Style>
+                        <Style TargetType="ItemsControl">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsEmpty}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsFilteredEmpty}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ItemsControl.Style>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Columns="3" util:ResponsiveLayout.MinItemWidth="320"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <ui:Card Margin="0,0,10,10" Padding="0" Cursor="Hand">
+                                <ui:Card.Style>
+                                    <Style TargetType="{x:Type ui:Card}" BasedOn="{StaticResource {x:Type ui:Card}}">
+                                        <Setter Property="Border.CornerRadius" Value="12"/>
+                                    </Style>
+                                </ui:Card.Style>
+                                <StackPanel>
+                                    <Border Height="140" util:ResponsiveLayout.AspectRatio="1.7778"
+                                            CornerRadius="12,12,0,0"
+                                            util:TopRoundedClip.Radius="12"
+                                            Cursor="Hand"
+                                            ToolTip="{resources:Loc Ui_Home_ViewGamePage}"
+                                            MouseLeftButtonUp="GameThumbnail_Click"
+                                            Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                                        <Grid>
+
+                                            <Image Stretch="UniformToFill"
+                                                   RenderOptions.BitmapScalingMode="HighQuality"
+                                                   util:DynamicRenderSystem.LazyImageSource="{Binding ThumbnailUrl}">
+                                                <Image.Style>
+                                                    <Style TargetType="Image">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasThumbnail}" Value="False">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Image.Style>
+                                            </Image>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Margin="12,8,12,0">
+                                        <TextBlock FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Text="{Binding Name}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Name}"/>
+
+                                        <TextBlock FontSize="11"
+                                                   Opacity="0.6"
+                                                   Margin="0,2,0,0"
+                                                   Text="{Binding CreatorName}"
+                                                   TextTrimming="CharacterEllipsis">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CreatorName}" Value="">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                            <Ellipse Width="7" Height="7" Fill="#FF22C55E" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding LikePercent}"
+                                                       FontSize="12"
+                                                       Margin="4,-2,12,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                       VerticalAlignment="Center"/>
+
+                                            <ui:SymbolIcon Symbol="People24"
+                                                           FontSize="14"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                           VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding PlayerCount}"
+                                                       FontSize="12"
+                                                       Margin="4,-2,0,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+
+                                        <TextBlock FontSize="10" Opacity="0.45" Margin="0,4,0,0">
+                                            <Run Text="{resources:Loc Ui_Home_Joined}"/>
+                                            <Run Text="{Binding TimeJoined,
+                                                         StringFormat='{}{0:MMM d, yyyy  h:mm tt}',
+                                                         Mode=OneWay}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+
+                                    <Grid Margin="12,8,12,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <ui:Button Grid.Column="0"
+                                                   Icon="Play24"
+                                                   Appearance="Primary"
+                                                   ToolTip="{Binding Name, StringFormat='Play {0}'}"
+                                                   HorizontalAlignment="Stretch"
+                                                   Command="{Binding DataContext.LaunchCommand,
+                                                       RelativeSource={RelativeSource AncestorType=Page}}"
+                                                   CommandParameter="{Binding}"/>
+
+                                        <ui:Button Grid.Column="2"
+                                                   Icon="Copy24"
+                                                   Appearance="Secondary"
+                                                   ToolTip="{resources:Loc Ui_Home_CopyGameLink}"
+                                                   Command="{Binding DataContext.CopyLinkCommand,
+                                                       RelativeSource={RelativeSource AncestorType=Page}}"
+                                                   CommandParameter="{Binding}"/>
+
+                                        <ui:Button Grid.Column="4"
+                                                   Icon="Heart24"
+                                                   IconFilled="{Binding IsFavorite}"
+                                                   Appearance="Secondary"
+                                                   ToolTip="{Binding FavoriteTooltip}"
+                                                   Command="{Binding ToggleFavoriteCommand}"/>
+                                    </Grid>
+
+                                    <ComboBox Margin="12,8,12,0"
+                                              Padding="8,4,8,4"
+                                              FontSize="12"
+                                              ToolTip="{Binding DatacenterToolTip}"
+                                              ToolTipService.ShowOnDisabled="True"
+                                              IsEnabled="{Binding MatchmakerEnabledForGame}"
+                                              ItemsSource="{Binding DatacenterOptions}"
+                                              SelectedItem="{Binding SelectedDatacenter, Mode=TwoWay}"
+                                              DisplayMemberPath="Display"/>
+
+                                    <ui:Button Margin="12,8,12,12"
+                                               HorizontalAlignment="Stretch"
+                                               FontSize="12"
+                                               Icon="{Binding SkipMatchmakerIcon}"
+                                               Content="{Binding SkipMatchmakerLabel}"
+                                               ToolTip="{Binding SkipMatchmakerTooltip}"
+                                               Command="{Binding ToggleSkipMatchmakerCommand}"/>
+                                </StackPanel>
+                            </ui:Card>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                            </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+            </StackPanel>
+        </ui:DynamicScrollViewer>
+
+        <ui:DynamicScrollViewer Grid.Row="2"
+                      SizeChanged="StudioScroller_SizeChanged"
+                      Visibility="{Binding StudioTabVisibility}"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="StudioSections" Margin="0,0,28,18">
+                <ProgressBar Height="3" Margin="0,4,0,0" IsIndeterminate="True"
+                             Visibility="{Binding IsStudioLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <TextBlock Text="{Binding StudioStatus}"
+                           Margin="0,12,0,0"
+                           FontSize="13"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StudioStatus}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <Border x:Name="StudioHiddenTray" Style="{StaticResource HomeHiddenTrayStyle}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{resources:Loc Ui_Home_HiddenSections}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <WrapPanel x:Name="StudioHiddenChips" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="StudioSectionFavorites" Tag="studioFavorites" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel Visibility="{Binding StudioFavoritesVisibility}">
+                    <TextBlock Text="{resources:Loc Ui_Home_Favourites}" FontSize="18" FontWeight="SemiBold" Margin="6,14,0,8" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding StudioFavorites}" ItemTemplate="{StaticResource StudioProjectCard}" ItemsPanel="{StaticResource StudioGridPanel}"/>
+                </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="StudioSectionRecent" Tag="studioRecent" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel Visibility="{Binding StudioRecentVisibility}">
+                    <TextBlock Text="{resources:Loc Ui_Home_MyRecentExperiences}" FontSize="18" FontWeight="SemiBold" Margin="6,14,0,8" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding StudioRecent}" ItemTemplate="{StaticResource StudioProjectCard}" ItemsPanel="{StaticResource StudioGridPanel}"/>
+                </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="StudioSectionOwned" Tag="studioOwned" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel Visibility="{Binding StudioOwnedVisibility}">
+                    <TextBlock Text="{resources:Loc Ui_Home_MyExperiences}" FontSize="18" FontWeight="SemiBold" Margin="6,14,0,4" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock Text="{resources:Loc Ui_Home_EveryExperienceOnYourAccountNewest}" FontSize="12" Margin="6,0,0,10" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding StudioOwned}" ItemTemplate="{StaticResource StudioProjectCard}" ItemsPanel="{StaticResource StudioGridPanel}"/>
+                </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="StudioSectionFiles" Tag="studioFiles" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel Visibility="{Binding StudioLocalFilesVisibility}">
+                    <TextBlock Text="{resources:Loc Ui_Home_RecentFiles}" FontSize="18" FontWeight="SemiBold" Margin="6,14,0,8" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding StudioLocalFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border x:Name="FileRow"
+                                        Margin="0,0,0,8"
+                                        Padding="14,10"
+                                        CornerRadius="8"
+                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        BorderThickness="1"
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                        Cursor="Hand"
+                                        ToolTip="{Binding FilePath}">
+                                    <Border.InputBindings>
+                                        <MouseBinding MouseAction="LeftClick"
+                                                      Command="{Binding DataContext.OpenStudioProjectCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                      CommandParameter="{Binding}"/>
+                                    </Border.InputBindings>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Image Width="28" Height="28" Margin="0,0,12,0" RenderOptions.BitmapScalingMode="HighQuality" Source="pack://application:,,,/Resources/RobloxStudioIcon.png"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding CreatorName}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{Binding ModifiedLabel}" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    </Grid>
+                                </Border>
+                                <DataTemplate.Triggers>
+                                    <Trigger SourceName="FileRow" Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="FileRow" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                                    </Trigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                            </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="StudioSectionTemplates" Tag="studioTemplates" Style="{StaticResource HomeSectionStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Style="{StaticResource HomeSectionContentStyle}">
+                            <StackPanel Visibility="{Binding StudioTemplatesVisibility}">
+                    <TextBlock Text="{resources:Loc Ui_Home_OpenATemplate}" FontSize="18" FontWeight="SemiBold" Margin="6,14,0,4" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock Text="{resources:Loc Ui_Home_SeeWhatSPossibleOnRoblox}" FontSize="12" Margin="6,0,0,10" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding StudioTemplates}" ItemTemplate="{StaticResource StudioTemplateCard}" ItemsPanel="{StaticResource StudioGridPanel}"/>
+                </StackPanel>
+                        </Grid>
+                        <Border Style="{StaticResource HomeSectionToolbarStyle}">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <ui:Button Style="{StaticResource HomeSectionMoveTopButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveUpButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveDownButtonStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionMoveBottomButtonStyle}"/>
+                                    <Border Style="{StaticResource HomeSectionToolbarDividerStyle}"/>
+                                    <ui:Button Style="{StaticResource HomeSectionHideButtonStyle}"/>
+                                </StackPanel>
+                                <Border Style="{StaticResource HomeSectionGripStyle}">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <ui:SymbolIcon Symbol="ReOrderDotsVertical24" FontSize="16" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Tag="sectionTitle" Loaded="SectionTitle_Loaded" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ui:DynamicScrollViewer>
+    </Grid>
+</Page>

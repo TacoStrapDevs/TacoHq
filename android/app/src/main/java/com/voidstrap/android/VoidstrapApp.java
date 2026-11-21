@@ -1,0 +1,127 @@
+package com.voidstrap.android;
+
+import android.app.Application;
+
+import androidx.appcompat.app.AppCompatDelegate;
+
+public final class VoidstrapApp extends Application {
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Crash.install();
+        Crash.run("mod log", () -> ModLog.init(getFilesDir()));
+        Crash.run("theme", () -> applyTheme(Store.get(this).setting("theme", "system")));
+        Crash.run("flag audit", () -> auditFlags(Store.get(this)));
+        Crash.run("startup cleanup", () -> Store.get(this).work.execute(() -> {
+            java.io.File ext = getExternalFilesDir(null);
+            if (ext != null) new java.io.File(ext, "start.sh").delete();
+            ModMigration.dropSoundMods(this);
+        }));
+        Crash.run("shortcuts", () -> Shortcuts.watch(this));
+        Crash.run("translations", () -> Translator.load(this));
+        Crash.run("helper token", () -> Helper.token(this));
+        Helper.onChanged = () -> Store.get(this).changed();
+        Crash.run("lifecycle callbacks", () -> registerActivityLifecycleCallbacks(new WindowCallbacks()));
+        Crash.guardMainLoop();
+    }
+
+    private static final class WindowCallbacks implements ActivityLifecycleCallbacks {
+        @Override
+        public void onActivityCreated(android.app.Activity a, android.os.Bundle saved) {
+        }
+
+        @Override
+        public void onActivityStarted(android.app.Activity a) {
+            Crash.run("font watch", () -> AppFont.watch(a.getWindow().getDecorView()));
+        }
+
+        @Override
+        public void onActivityResumed(android.app.Activity a) {
+            Crash.run("live translation", () -> LiveTranslator.apply(a));
+        }
+
+        @Override
+        public void onActivityPaused(android.app.Activity a) {
+        }
+
+        @Override
+        public void onActivityStopped(android.app.Activity a) {
+        }
+
+        @Override
+        public void onActivitySaveInstanceState(android.app.Activity a, android.os.Bundle out) {
+        }
+
+        @Override
+        public void onActivityDestroyed(android.app.Activity a) {
+        }
+    }
+
+    private static void auditFlags(Store store) {
+        if ("1".equals(store.setting("flagAudit", "0"))) return;
+        for (Flags.Profile p : store.flags.profiles) {
+            for (String k : FlagPresets.UNDECLARED) p.values.remove(k);
+            FlagPresets.fixFps(p.values);
+        }
+        store.saveFlags();
+        store.putSetting("flagAudit", "1");
+    }
+
+    public static final String[] THEMES = {"system", "dark", "light", "voidstrap", "ultragray", "berry", "blue", "cyan", "green", "orange", "pink", "purple", "red", "yellow"};
+    private static final int[] OVERLAYS = {0, 0, 0,
+            R.style.ThemeOverlay_Voidstrap_Color_Voidstrap, R.style.ThemeOverlay_Voidstrap_Color_UltraGray,
+            R.style.ThemeOverlay_Voidstrap_Color_Berry, R.style.ThemeOverlay_Voidstrap_Color_Blue,
+            R.style.ThemeOverlay_Voidstrap_Color_Cyan, R.style.ThemeOverlay_Voidstrap_Color_Green,
+            R.style.ThemeOverlay_Voidstrap_Color_Orange, R.style.ThemeOverlay_Voidstrap_Color_Pink,
+            R.style.ThemeOverlay_Voidstrap_Color_Purple, R.style.ThemeOverlay_Voidstrap_Color_Red,
+            R.style.ThemeOverlay_Voidstrap_Color_Yellow};
+
+    private static int index(String value) {
+        for (int i = 0; i < THEMES.length; i++) if (THEMES[i].equals(value)) return i;
+        return 0;
+    }
+
+    public static int themeIndex(String value) {
+        return index(value);
+    }
+
+    public static int overlay(String value) {
+        return OVERLAYS[index(value)];
+    }
+
+    public static boolean colorTheme(String value) {
+        return overlay(value) != 0;
+    }
+
+    public static int nightMode(String value) {
+        if ("light".equals(value)) return AppCompatDelegate.MODE_NIGHT_NO;
+        if ("system".equals(value) || index(value) == 0) return AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+        return AppCompatDelegate.MODE_NIGHT_YES;
+    }
+
+    static String styleKey(Store store) {
+        return store.setting("theme", "system") + "|" + store.setting("accent", "system");
+    }
+
+    static void style(androidx.appcompat.app.AppCompatActivity a) {
+        Store store = Store.get(a);
+        String theme = store.setting("theme", "system");
+        boolean brand = android.os.Build.VERSION.SDK_INT < 31 || "brand".equals(store.setting("accent", "system"));
+        a.setTheme(brand ? R.style.Theme_Voidstrap_Brand : R.style.Theme_Voidstrap);
+        int overlay = overlay(theme);
+        if (overlay != 0) a.getTheme().applyStyle(overlay, true);
+        a.getDelegate().setLocalNightMode(nightMode(theme));
+    }
+
+    static void bars(android.app.Activity a) {
+        boolean night = (a.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        androidx.core.view.WindowInsetsControllerCompat c = androidx.core.view.WindowCompat.getInsetsController(a.getWindow(), a.getWindow().getDecorView());
+        c.setAppearanceLightStatusBars(!night);
+        c.setAppearanceLightNavigationBars(!night);
+    }
+
+    public static void applyTheme(String value) {
+        int mode = nightMode(value);
+        if (AppCompatDelegate.getDefaultNightMode() != mode) AppCompatDelegate.setDefaultNightMode(mode);
+    }
+}

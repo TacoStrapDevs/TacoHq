@@ -1,0 +1,41 @@
+﻿<Project>
+
+	<PropertyGroup>
+		<VoidstrapVersion>2.0.0.0</VoidstrapVersion>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">
+		<ProduceOnlyReferenceAssembly>true</ProduceOnlyReferenceAssembly>
+		<DebugType>none</DebugType>
+		<DebugSymbols>false</DebugSymbols>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(VoidstrapLinuxPackagingRoot)' != ''">
+		<BaseOutputPath>$(VoidstrapLinuxPackagingRoot)bin/$(MSBuildProjectName)/</BaseOutputPath>
+		<BaseIntermediateOutputPath>$(VoidstrapLinuxPackagingRoot)obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+		<DefaultItemExcludes>$(DefaultItemExcludes);bin/**;bin-*/**;bin-cross/**;obj/**;obj-*/**</DefaultItemExcludes>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(VoidstrapLinuxPackagingRoot)' != '' And $(MSBuildProjectName.StartsWith('Voidstrap.Cross'))">
+		<BaseOutputPath>$(VoidstrapLinuxPackagingRoot)bin/Voidstrap.Cross/</BaseOutputPath>
+		<BaseIntermediateOutputPath>$(VoidstrapLinuxPackagingRoot)obj/Voidstrap.Cross/</BaseIntermediateOutputPath>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('freebsd')) And !$([MSBuild]::IsOSPlatform('FreeBSD'))">
+		<VoidstrapFreeBSDNativeDirectory Condition="'$(VoidstrapFreeBSDNativeDirectory)' == ''">$(MSBuildThisFileDirectory)external/LibreWPF/freebsd-x64/</VoidstrapFreeBSDNativeDirectory>
+		<VoidstrapFreeBSDNativeDirectory>$([MSBuild]::EnsureTrailingSlash('$(VoidstrapFreeBSDNativeDirectory)'))</VoidstrapFreeBSDNativeDirectory>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<Version Condition="'$(Version)' == ''">$(VoidstrapVersion)</Version>
+		<FileVersion>$(Version)</FileVersion>
+		<AssemblyVersion>$(Version)</AssemblyVersion>
+		<InformationalVersion>$(Version)</InformationalVersion>
+	</PropertyGroup>
+
+</Project>

@@ -1,0 +1,610 @@
+using System;
+using System.ComponentModel;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Voidstrap.Extensions;
+using Voidstrap.Integrations;
+using Voidstrap.Integrations.Overlays;
+
+namespace Voidstrap.UI.Elements.Overlay
+{
+    public partial class OverlayWindow : Window, INotifyPropertyChanged
+    {
+        private readonly Grid _root;
+        private readonly TextBlock _locationTextBlock;
+        private readonly TextBlock _separatorTextBlock;
+        private readonly TextBlock _timeTextBlock;
+        private readonly StackPanel _readoutPanel;
+        private readonly Border _readoutBorder;
+
+        private readonly DispatcherTimer _updateTimer;
+        private readonly RobloxOverlayAnchor _anchor;
+        private ActivityWatcher? _activityWatcher;
+        private readonly CancellationTokenSource _lifetimeCts = new();
+
+        private bool _showTime;
+        private bool _showLocation;
+        private int _appliedCornerRadius = 8;
+
+        private const double LinuxReadoutMaxWidth = 520;
+
+        private double _lastAppliedSaturation = App.Settings.Prop.Saturation;
+        private double _lastAppliedContrast = App.Settings.Prop.Contrast;
+        private double _lastAppliedColorTemperature = App.Settings.Prop.ColorTemperature;
+        private bool _lastCbEnabled = App.Settings.Prop.ColorBlindnessEnabled;
+        private int _lastCbType = App.Settings.Prop.ColorBlindnessType;
+        private double _lastCbSeverity = App.Settings.Prop.ColorBlindnessSeverity;
+        private bool _lastCbSimulate = App.Settings.Prop.ColorBlindnessSimulate;
+
+        private string _serverIp = null!;
+        private string _lastServerIp = null!;
+        private bool _locationFetching;
+        private string _serverLocation = "Location: unavailable";
+        private int _networkUpdating;
+        private int _networkUpdateCountdown;
+        private bool _disposed;
+        private string _lastTimeText = string.Empty;
+
+        public static bool SurfaceRequired
+        {
+            get
+            {
+                var settings = App.Settings.Prop;
+                return settings.CurrentTimeDisplay || settings.ShowServerDetailsUI;
+            }
+        }
+
+        internal static string CurrentLocationDisplay
+        {
+            get
+            {
+                if (
+                    Application.Current?.Resources["OverlayWindow"] is OverlayWindow existing
+                    && !existing._disposed
+                    && !string.IsNullOrWhiteSpace(existing._serverLocation)
+                )
+                {
+                    return existing._serverLocation;
+                }
+                return "Location: unavailable";
+            }
+        }
+
+        internal static void SetScreenDragHidden(bool hidden)
+        {
+            if (Application.Current?.Resources["OverlayWindow"] is OverlayWindow existing && !existing._disposed)
+            {
+                existing._root.Opacity = hidden ? 0 : 1;
+            }
+        }
+
+        public static void Reconcile(ActivityWatcher? activityWatcher = null)
+        {
+            Application? application = Application.Current;
+            if (application == null || application.Dispatcher.HasShutdownStarted || application.Dispatcher.HasShutdownFinished)
+                return;
+            if (!application.Dispatcher.CheckAccess())
+            {
+                application.Dispatcher.BeginInvoke(new Action(() => Reconcile(activityWatcher)));
+                return;
+            }
+
+            ActivityWatcher? watcher = activityWatcher ?? Watcher.Current?.ActivityWatcher;
+            bool required = SurfaceRequired;
+            if (application.Resources["OverlayWindow"] is OverlayWindow existing)
+            {
+                if (!existing._disposed && existing.IsLoaded)
+                {
+                    if (!required)
+                    {
+                        try
+                        {
+                            existing.Close();
+                        }
+                        catch { }
+                        application.Resources.Remove("OverlayWindow");
+                        return;
+                    }
+                    if (watcher != null)
+                        existing._activityWatcher = watcher;
+                    existing.RefreshConfiguration();
+                    return;
+                }
+                try
+                {
+                    existing.Close();
+                }
+                catch { }
+                application.Resources.Remove("OverlayWindow");
+            }
+
+            if (!required)
+                return;
+
+            OverlayWindow overlay = new(watcher);
+            overlay.Show();
+            application.Resources["OverlayWindow"] = overlay;
+        }
+
+        public OverlayWindow(ActivityWatcher? activityWatcher = null)
+        {
+            _activityWatcher = activityWatcher;
+            LinuxOverlaySurface.ReleaseMainWindowClaim(this);
+            Title = "Voidstrap Overlay";
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            WindowStyle = WindowStyle.None;
+            Topmost = true;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            SnapsToDevicePixels = true;
+            UseLayoutRounding = true;
+
+            _root = new Grid();
+
+            _readoutPanel = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0) };
+
+            _readoutBorder = new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0),
+                Padding = new Thickness(12, 8, 12, 8),
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromRgb(25, 28, 36)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(54, 59, 72)),
+                BorderThickness = new Thickness(1),
+                Child = _readoutPanel,
+            };
+
+            _readoutBorder.SetResourceReference(Border.BackgroundProperty, "SolidBackgroundFillColorBaseBrush");
+            _readoutBorder.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorDefaultBrush");
+
+            _locationTextBlock = CreateTextBlock(new SolidColorBrush(Color.FromRgb(245, 247, 252)));
+            _locationTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorPrimaryBrush");
+            _locationTextBlock.Text = _serverLocation;
+
+            _separatorTextBlock = CreateTextBlock(new SolidColorBrush(Color.FromRgb(120, 130, 150)));
+            _separatorTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorTertiaryBrush");
+            _separatorTextBlock.Text = "  ·  ";
+            _separatorTextBlock.Visibility = Visibility.Collapsed;
+
+            _timeTextBlock = CreateTextBlock(new SolidColorBrush(Color.FromRgb(179, 189, 207)));
+            _lastTimeText = ClockDisplay.Format(DateTime.UtcNow);
+            _timeTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
+            _timeTextBlock.Text = _lastTimeText;
+
+            _readoutPanel.Children.Add(_locationTextBlock);
+            _readoutPanel.Children.Add(_separatorTextBlock);
+            _readoutPanel.Children.Add(_timeTextBlock);
+
+            if (Voidstrap.Utility.Platform.UsesLinuxHost)
+            {
+                SizeToContent = SizeToContent.WidthAndHeight;
+                MaxWidth = LinuxReadoutMaxWidth;
+                _readoutBorder.HorizontalAlignment = HorizontalAlignment.Stretch;
+                _readoutBorder.VerticalAlignment = VerticalAlignment.Stretch;
+                _readoutBorder.MaxWidth = LinuxReadoutMaxWidth;
+                _readoutBorder.Background = new SolidColorBrush(Color.FromRgb(12, 13, 16));
+                foreach (UIElement child in _readoutPanel.Children)
+                {
+                    if (child is TextBlock readout)
+                        readout.TextTrimming = TextTrimming.CharacterEllipsis;
+                }
+            }
+
+            _root.Children.Add(_readoutBorder);
+            Content = _root;
+
+            _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+            _updateTimer.Tick += OnUpdateTimerTick;
+
+            _anchor = new RobloxOverlayAnchor(this, placement: RobloxOverlayPlacement.TopRight, customPosition: ComputeOverlayPosition);
+
+            RefreshConfiguration();
+
+            Loaded += OnOverlayLoaded;
+            SizeChanged += OnOverlaySizeChanged;
+            IsVisibleChanged += OnOverlayVisibilityChanged;
+            Closed += OnUIWindowClosed;
+        }
+
+        private static (int Left, int Top) ComputeOverlayPosition(
+            RobloxWindowRect rect,
+            double scaleX,
+            double scaleY,
+            int width,
+            int height
+        )
+        {
+            var layout = App.Settings.Prop.OverlayLayout ?? new Voidstrap.Models.Persistable.OverlayLayoutSettings();
+            int marginX = (int)Math.Round(layout.SafeReadoutEdgeSpacing * scaleX);
+            int marginY = (int)Math.Round(layout.SafeReadoutEdgeSpacing * scaleY);
+            int minLeft = rect.Left + marginX;
+            int maxLeft = Math.Max(minLeft, rect.Left + rect.Width - width - marginX);
+            int minTop = rect.Top + marginY;
+            int maxTop = Math.Max(minTop, rect.Top + rect.Height - height - marginY);
+            int left = minLeft + (int)Math.Round((maxLeft - minLeft) * (layout.SafeReadoutHorizontal / 100.0));
+            int top = minTop + (int)Math.Round((maxTop - minTop) * (layout.SafeReadoutVertical / 100.0));
+            return (left, top);
+        }
+
+        internal static void ApplyReadoutBackground(Border border, double opacity)
+        {
+            Color fill = Voidstrap.Utility.Platform.UsesLinuxHost
+                ? Color.FromRgb(12, 13, 16)
+                : border.TryFindResource("SolidBackgroundFillColorBaseBrush") is SolidColorBrush surface ? surface.Color : Color.FromRgb(25, 28, 36);
+            Color stroke = border.TryFindResource("SurfaceStrokeColorDefaultBrush") is SolidColorBrush edge ? edge.Color : Color.FromRgb(54, 59, 72);
+            border.Background = CreateReadoutBrush(fill, opacity);
+            border.BorderBrush = CreateReadoutBrush(stroke, opacity);
+        }
+
+        private static SolidColorBrush CreateReadoutBrush(Color color, double opacity)
+        {
+            SolidColorBrush brush = new(color) { Opacity = opacity };
+            brush.Freeze();
+            return brush;
+        }
+
+        public void RefreshConfiguration()
+        {
+            if (_disposed)
+                return;
+
+            var settings = App.Settings.Prop;
+            var layout = settings.OverlayLayout ?? new Voidstrap.Models.Persistable.OverlayLayoutSettings();
+            bool hadLocation = _showLocation;
+            _showTime = settings.CurrentTimeDisplay;
+            _showLocation = settings.ShowServerDetailsUI;
+
+            bool horizontal = layout.ReadoutHorizontalLayout;
+            _readoutPanel.Orientation = horizontal ? Orientation.Horizontal : Orientation.Vertical;
+
+            _locationTextBlock.Visibility = _showLocation ? Visibility.Visible : Visibility.Collapsed;
+            _timeTextBlock.Visibility = _showTime ? Visibility.Visible : Visibility.Collapsed;
+            _separatorTextBlock.Visibility = horizontal && _showLocation && _showTime ? Visibility.Visible : Visibility.Collapsed;
+            _readoutBorder.Visibility = (_showLocation || _showTime) ? Visibility.Visible : Visibility.Collapsed;
+
+            double scale = layout.SafeReadoutScale;
+            _readoutBorder.LayoutTransform = Math.Abs(scale - 1.0) > 0.005 ? new ScaleTransform(scale, scale) : Transform.Identity;
+
+            int radius = (int)Math.Round(layout.SafeReadoutCornerRadius);
+            _appliedCornerRadius = radius;
+            _readoutBorder.CornerRadius = new CornerRadius(radius);
+            ApplyReadoutBackground(_readoutBorder, layout.SafeReadoutOpacity);
+
+            if (_showTime)
+            {
+                _lastTimeText = ClockDisplay.Format(DateTime.UtcNow);
+                _timeTextBlock.Text = _lastTimeText;
+            }
+
+            if (_showLocation && !hadLocation)
+            {
+                _networkUpdateCountdown = 0;
+                _ = UpdateNetworkStatsGuardedAsync();
+            }
+
+            FitToReadout();
+        }
+
+        private void FitToReadout()
+        {
+            if (_disposed)
+                return;
+
+            _readoutBorder.Measure(new Size(LinuxReadoutMaxWidth, double.PositiveInfinity));
+            Size desired = _readoutBorder.DesiredSize;
+            if (!Voidstrap.Utility.Platform.UsesLinuxHost)
+            {
+                double nextW = Math.Max(48, Math.Ceiling(desired.Width));
+                double nextH = Math.Max(24, Math.Ceiling(desired.Height));
+                if (Math.Abs(Width - nextW) > 0.5)
+                    Width = nextW;
+                if (Math.Abs(Height - nextH) > 0.5)
+                    Height = nextH;
+            }
+            else if (IsLoaded)
+            {
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ApplyRoundedShape(this, _appliedCornerRadius);
+            }
+            _anchor?.Refresh();
+        }
+
+        private void OnOverlayLoaded(object? sender, RoutedEventArgs e)
+        {
+            if (Voidstrap.Utility.Platform.UsesLinuxHost)
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.MakeClickThrough(this, _appliedCornerRadius);
+            else
+                MakeClickThrough();
+            ApplyColorEffects();
+            FitToReadout();
+            UpdateActiveState(IsVisible);
+        }
+
+        private void OnOverlayVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            UpdateActiveState(e.NewValue is true);
+        }
+
+        private void OnOverlaySizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            _anchor.Refresh();
+            if (Voidstrap.Utility.Platform.UsesLinuxHost)
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ApplyRoundedShape(this, _appliedCornerRadius);
+        }
+
+        private void UpdateActiveState(bool active)
+        {
+            if (_disposed)
+                return;
+            if (active)
+            {
+                if (!_updateTimer.IsEnabled)
+                    _updateTimer.Start();
+                return;
+            }
+            _updateTimer.Stop();
+        }
+
+        private void OnUpdateTimerTick(object? sender, EventArgs e)
+        {
+            if (_disposed)
+                return;
+            try
+            {
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.KeepAbove(this);
+                UpdateEffects();
+                UpdateReadouts();
+                if (_showLocation && _networkUpdateCountdown-- <= 0)
+                {
+                    _networkUpdateCountdown = 3;
+                    _ = UpdateNetworkStatsGuardedAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("OverlayWindow::Update", ex);
+            }
+        }
+
+        private async Task UpdateNetworkStatsGuardedAsync()
+        {
+            if (_disposed || Interlocked.Exchange(ref _networkUpdating, 1) != 0)
+                return;
+            try
+            {
+                await UpdateNetworkStatsAsync();
+            }
+            catch (OperationCanceledException) when (_disposed) { }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("OverlayWindow::NetworkUpdate", ex);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _networkUpdating, 0);
+            }
+        }
+
+        private void OnUIWindowClosed(object? sender, EventArgs e)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _lifetimeCts.Cancel();
+            _updateTimer.Stop();
+            _updateTimer.Tick -= OnUpdateTimerTick;
+            _anchor.Dispose();
+            _lifetimeCts.Dispose();
+            Loaded -= OnOverlayLoaded;
+            SizeChanged -= OnOverlaySizeChanged;
+            IsVisibleChanged -= OnOverlayVisibilityChanged;
+            Closed -= OnUIWindowClosed;
+            if (Application.Current?.Resources["OverlayWindow"] is OverlayWindow overlay && ReferenceEquals(overlay, this))
+                Application.Current.Resources.Remove("OverlayWindow");
+            try
+            {
+                Voidstrap.Utility.ScreenColorEffect.Reset();
+            }
+            catch { }
+            PropertyChanged = null;
+        }
+
+        private static void ApplyColorEffects()
+        {
+            Voidstrap.Utility.ScreenColorEffect.ApplyConfigured();
+        }
+
+        private void UpdateEffects()
+        {
+            bool colorChanged = false;
+            if (Math.Abs(App.Settings.Prop.Saturation - _lastAppliedSaturation) > 0.01)
+            {
+                _lastAppliedSaturation = App.Settings.Prop.Saturation;
+                colorChanged = true;
+            }
+            if (Math.Abs(App.Settings.Prop.Contrast - _lastAppliedContrast) > 0.01)
+            {
+                _lastAppliedContrast = App.Settings.Prop.Contrast;
+                colorChanged = true;
+            }
+            if (Math.Abs(App.Settings.Prop.ColorTemperature - _lastAppliedColorTemperature) > 0.01)
+            {
+                _lastAppliedColorTemperature = App.Settings.Prop.ColorTemperature;
+                colorChanged = true;
+            }
+            if (App.Settings.Prop.ColorBlindnessEnabled != _lastCbEnabled)
+            {
+                _lastCbEnabled = App.Settings.Prop.ColorBlindnessEnabled;
+                colorChanged = true;
+            }
+            if (App.Settings.Prop.ColorBlindnessType != _lastCbType)
+            {
+                _lastCbType = App.Settings.Prop.ColorBlindnessType;
+                colorChanged = true;
+            }
+            if (Math.Abs(App.Settings.Prop.ColorBlindnessSeverity - _lastCbSeverity) > 0.01)
+            {
+                _lastCbSeverity = App.Settings.Prop.ColorBlindnessSeverity;
+                colorChanged = true;
+            }
+            if (App.Settings.Prop.ColorBlindnessSimulate != _lastCbSimulate)
+            {
+                _lastCbSimulate = App.Settings.Prop.ColorBlindnessSimulate;
+                colorChanged = true;
+            }
+            if (colorChanged)
+            {
+                ApplyColorEffects();
+            }
+        }
+
+        private void UpdateReadouts()
+        {
+            if (_disposed)
+                return;
+
+            if (!_showTime || _timeTextBlock == null)
+                return;
+
+            string timeText = ClockDisplay.Format(DateTime.UtcNow);
+            if (!string.Equals(timeText, _lastTimeText, StringComparison.Ordinal))
+            {
+                bool lengthChanged = timeText.Length != _lastTimeText.Length;
+                _lastTimeText = timeText;
+                _timeTextBlock.Text = timeText;
+                if (lengthChanged)
+                    FitToReadout();
+            }
+        }
+
+        private async Task UpdateNetworkStatsAsync()
+        {
+            if (_disposed)
+                return;
+
+            if (!_showLocation)
+                return;
+
+            string activityIp = _activityWatcher?.Data?.MachineAddressValid == true ? _activityWatcher.Data.MachineAddress : "";
+            if (!string.IsNullOrEmpty(activityIp))
+            {
+                _serverIp = activityIp;
+            }
+
+            string jobId = _activityWatcher?.Data?.JobId ?? string.Empty;
+            bool resolvableJob = _activityWatcher?.InGame == true && _activityWatcher.Data.PlaceId > 0 && !string.IsNullOrWhiteSpace(jobId);
+
+            if (string.IsNullOrEmpty(_serverIp) && !resolvableJob)
+            {
+                if (!string.Equals(_locationTextBlock.Text, "Location: unavailable", StringComparison.Ordinal))
+                {
+                    _locationTextBlock.Text = "Location: unavailable";
+                    FitToReadout();
+                }
+                return;
+            }
+
+            string key = string.IsNullOrEmpty(_serverIp) ? jobId : _serverIp;
+
+            if (!_locationFetching && key != _lastServerIp)
+            {
+                _lastServerIp = key;
+                _locationFetching = true;
+                try
+                {
+                    string location = await GetServerLocationAsync(_serverIp, _lifetimeCts.SafeToken());
+                    if (_disposed)
+                        return;
+                    _serverLocation = location;
+                    _locationTextBlock.Text = location;
+                    FitToReadout();
+                }
+                finally
+                {
+                    _locationFetching = false;
+                }
+            }
+        }
+
+        private async Task<string> GetServerLocationAsync(string ip, CancellationToken token)
+        {
+            try
+            {
+                if (
+                    _activityWatcher?.InGame == true
+                    && _activityWatcher.Data.PlaceId > 0
+                    && !string.IsNullOrWhiteSpace(_activityWatcher.Data.JobId)
+                )
+                {
+                    string? exact = await _activityWatcher.Data.QueryServerLocation(token);
+                    if (!string.IsNullOrWhiteSpace(exact))
+                        return "Location: " + exact;
+                }
+                var dc = await Voidstrap.Integrations.VoidstrapMatchmaker.LookupUnknownIpAsync(ip, token);
+                if (dc == null || string.IsNullOrEmpty(dc.City))
+                    return "Location: Unknown";
+                string country = Voidstrap.Integrations.VoidstrapMatchmaker.CountryToDisplayName(dc.Country);
+                return string.IsNullOrEmpty(country) || string.Equals(country, dc.City, StringComparison.OrdinalIgnoreCase)
+                    ? "Location: " + dc.City
+                    : "Location: " + dc.City + ", " + country;
+            }
+            catch (OperationCanceledException)
+            {
+                return "Location: Unknown";
+            }
+            catch
+            {
+                return "Location: Unknown";
+            }
+        }
+
+        private static TextBlock CreateTextBlock(Brush color) =>
+            new()
+            {
+                FontSize = 17,
+                FontWeight = FontWeights.SemiBold,
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI Variable Text"),
+                Foreground = color,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.None,
+                LineHeight = 23,
+                Margin = new Thickness(0, 1, 0, 1),
+            };
+
+        private void MakeClickThrough()
+        {
+            if (!Voidstrap.Utility.Platform.IsWindows)
+            {
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.MakeClickThrough(this);
+                return;
+            }
+
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int style = GetWindowLong(hwnd, GWL_EXSTYLE);
+            _ = SetWindowLong(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+        }
+
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TRANSPARENT = 0x20;
+        private const int WS_EX_TOOLWINDOW = 0x80;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
+
+        [System.Runtime.InteropServices.LibraryImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+        private static partial int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [System.Runtime.InteropServices.LibraryImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+        private static partial int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+}

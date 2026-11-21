@@ -1,0 +1,2807 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using CommunityToolkit.Mvvm.Input;
+using Voidstrap.Models.Entities;
+using Voidstrap.Models.Persistable;
+using Voidstrap.Resources;
+using Voidstrap.Utility;
+using Voidstrap.UI.ViewModels.Pages;
+
+namespace Voidstrap.UI.ViewModels.Settings;
+
+public class LibraryEventEntry
+{
+    public string Id { get; init; } = string.Empty;
+    public long UniverseId { get; init; }
+    public string Title { get; init; } = string.Empty;
+    public string Subtitle { get; init; } = string.Empty;
+    public string GameName { get; set; } = string.Empty;
+    public string ThumbnailUrl { get; set; } = string.Empty;
+    public DateTime? StartUtc { get; init; }
+    public DateTime? EndUtc { get; init; }
+    public long MediaId { get; init; }
+
+    public string EventUrl => "https://www.roblox.com/events/" + Id;
+
+    public string StartDisplay => StartUtc.HasValue ? StartUtc.Value.ToLocalTime().ToString("ddd, MMM d, h:mm tt") : string.Empty;
+
+    public string SubtitleDisplay => string.IsNullOrWhiteSpace(Subtitle) ? GameName : Subtitle;
+}
+
+public class LibraryGameEntry : INotifyPropertyChanged
+{
+    private bool _isPinned;
+    private bool _isFavorite;
+    private string _likePercent = "";
+    private long _playing;
+
+    public long PlaceId { get; set; }
+
+    public long UniverseId { get; set; }
+
+    public string Name { get; set; } = "";
+
+    public string CreatorName { get; set; } = "";
+
+    public string Description { get; set; } = "";
+
+    public string? IconUrl { get; set; }
+
+    public string? ThumbnailUrl { get; set; }
+
+    public long Visits { get; set; }
+
+    public int MaxPlayers { get; set; }
+
+    public string Genre { get; set; } = "";
+
+    public Visibility GenreVisibility => string.IsNullOrWhiteSpace(Genre) || Genre.Equals("All", StringComparison.OrdinalIgnoreCase) ? Visibility.Collapsed : Visibility.Visible;
+
+    public DateTime? Created { get; set; }
+
+    public DateTime? Updated { get; set; }
+
+    public DateTime? LastPlayed { get; set; }
+
+    public double PlayTimeMinutes { get; set; }
+
+    public virtual Visibility RemoveVisibility => Visibility.Visible;
+
+    public bool HasIcon => !string.IsNullOrEmpty(IconUrl);
+
+    public bool HasThumbnail => !string.IsNullOrEmpty(ThumbnailUrl);
+
+    public string CreatorDisplay => string.IsNullOrEmpty(CreatorName) ? "" : string.Format(Strings.Library_By, CreatorName);
+
+    public bool IsPinned
+    {
+        get => _isPinned;
+        set
+        {
+            if (_isPinned != value)
+            {
+                _isPinned = value;
+                OnPropertyChanged(nameof(IsPinned));
+                OnPropertyChanged(nameof(PinButtonText));
+                OnPropertyChanged(nameof(PinIconVisibility));
+                OnPropertyChanged(nameof(FavoriteIconVisibility));
+            }
+        }
+    }
+
+    public bool IsFavorite
+    {
+        get => _isFavorite;
+        set
+        {
+            if (_isFavorite != value)
+            {
+                _isFavorite = value;
+                OnPropertyChanged(nameof(IsFavorite));
+                OnPropertyChanged(nameof(FavoriteIconVisibility));
+            }
+        }
+    }
+
+    public Visibility FavoriteIconVisibility => IsFavorite && !IsPinned ? Visibility.Visible : Visibility.Collapsed;
+
+    public string PinButtonText => IsPinned ? Strings.Library_Unpin : Strings.Library_Pin;
+
+    public Visibility PinIconVisibility => IsPinned ? Visibility.Visible : Visibility.Collapsed;
+
+    public LibrarySidebarGroup[] SidebarGroup => Integrations.LibraryCollectionStore.SidebarGroups(UniverseId, IsPinned);
+
+    public double LikePercentValue => double.TryParse(_likePercent.TrimEnd('%'), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value : double.NaN;
+
+    public string LikePercent
+    {
+        get => _likePercent;
+        set
+        {
+            if (_likePercent != value)
+            {
+                _likePercent = value;
+                OnPropertyChanged(nameof(LikePercent));
+                OnPropertyChanged(nameof(LikePercentValue));
+                OnPropertyChanged(nameof(ReviewSummary));
+            }
+        }
+    }
+
+    public long Playing
+    {
+        get => _playing;
+        set
+        {
+            if (_playing != value)
+            {
+                _playing = value;
+                OnPropertyChanged(nameof(Playing));
+                OnPropertyChanged(nameof(PlayingDisplay));
+            }
+        }
+    }
+
+    public string PlayingDisplay => Playing > 0 ? LibraryViewModel.FormatCount(Playing) : "0";
+
+    public string VisitsDisplay => Visits > 0 ? LibraryViewModel.FormatCount(Visits) : "0";
+
+    public string LastPlayedDisplay
+    {
+        get
+        {
+            if (LastPlayed == null || LastPlayed.Value == default)
+                return Strings.Library_Never;
+            DateTime value = LastPlayed.Value;
+            if (value.Date == DateTime.Now.Date)
+                return Strings.Library_Today;
+            if (value.Date == DateTime.Now.Date.AddDays(-1))
+                return Strings.Library_Yesterday;
+            return value.ToString("d");
+        }
+    }
+
+    public string PlayTimeDisplay
+    {
+        get
+        {
+            if (PlayTimeMinutes < 1)
+                return Strings.Library_NoPlaytime;
+            long total = (long)Math.Round(PlayTimeMinutes);
+            long hours = total / 60;
+            long mins = total % 60;
+            if (hours == 0)
+                return string.Format(Strings.Library_Minutes, mins);
+            if (mins == 0)
+                return string.Format(Strings.Library_Hours, hours);
+            return string.Format(Strings.Library_HoursMinutes, hours, mins);
+        }
+    }
+
+    public string UpdatedAgoDisplay
+    {
+        get
+        {
+            if (Updated == null)
+                return "";
+            TimeSpan span = DateTime.Now - Updated.Value.ToLocalTime();
+            if (span.TotalDays < 1)
+                return Strings.Library_UpdatedToday;
+            if (span.TotalDays < 2)
+                return Strings.Library_UpdatedYesterday;
+            if (span.TotalDays < 30)
+                return string.Format(Strings.Library_UpdatedDaysAgo, Math.Floor(span.TotalDays));
+            return string.Format(Strings.Library_UpdatedOn, Updated.Value.ToLocalTime().ToString("d"));
+        }
+    }
+
+    public string ReviewSummary
+    {
+        get
+        {
+            if (!int.TryParse(LikePercent.TrimEnd('%'), out int percent))
+                return "";
+            if (percent >= 95)
+                return Strings.Library_Store_ReviewOverwhelming;
+            if (percent >= 80)
+                return Strings.Library_Store_ReviewVeryPositive;
+            if (percent >= 70)
+                return Strings.Library_Store_ReviewMostlyPositive;
+            return percent >= 40 ? Strings.Library_Store_ReviewMixed : Strings.Library_Store_ReviewMostlyNegative;
+        }
+    }
+
+    public string CreatedDisplay => Created?.ToLocalTime().ToString("d") ?? Strings.Library_Unknown;
+
+    public string UpdatedDisplay => Updated?.ToLocalTime().ToString("d") ?? Strings.Library_Unknown;
+
+    private int _badgeEarned = -1;
+
+    private int _badgeTotal = -1;
+
+    public bool HasBadgeProgress => _badgeTotal > 0 && _badgeEarned >= 0;
+
+    public Visibility BadgeProgressVisibility => HasBadgeProgress ? Visibility.Visible : Visibility.Collapsed;
+
+    public double BadgeProgressPercent => HasBadgeProgress ? _badgeEarned * 100.0 / _badgeTotal : 0;
+
+    public string BadgeProgressText => HasBadgeProgress ? _badgeEarned.ToString("N0") + " / " + _badgeTotal.ToString("N0") : "";
+
+    public string BadgeStatDisplay
+    {
+        get
+        {
+            if (_badgeTotal < 0)
+                return "...";
+            if (_badgeTotal == 0)
+                return Strings.Library_Badges_StatNone;
+            if (_badgeEarned < 0)
+                return _badgeTotal.ToString("N0");
+            return BadgeProgressText;
+        }
+    }
+
+    public string BadgeTooltip =>
+        HasBadgeProgress ? string.Format(Strings.Library_Badges_Summary, _badgeEarned.ToString("N0"), _badgeTotal.ToString("N0")) : "";
+
+    public void SetBadgeProgress(int earned, int total)
+    {
+        if (_badgeEarned == earned && _badgeTotal == total)
+            return;
+        _badgeEarned = earned;
+        _badgeTotal = total;
+        OnPropertyChanged(nameof(HasBadgeProgress));
+        OnPropertyChanged(nameof(BadgeProgressVisibility));
+        OnPropertyChanged(nameof(BadgeProgressPercent));
+        OnPropertyChanged(nameof(BadgeProgressText));
+        OnPropertyChanged(nameof(BadgeStatDisplay));
+        OnPropertyChanged(nameof(BadgeTooltip));
+    }
+
+    public void RefreshAll()
+    {
+        OnPropertyChanged(string.Empty);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    protected void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
+
+public class LibraryBadgeEntry : INotifyPropertyChanged
+{
+    private string? _iconUrl;
+
+    public long Id { get; init; }
+
+    public string Name { get; init; } = "";
+
+    public string Description { get; init; } = "";
+
+    public bool Earned { get; init; }
+
+    public DateTime AwardedUtc { get; init; }
+
+    public double WinRate { get; init; }
+
+    public string? IconUrl
+    {
+        get => _iconUrl;
+        set
+        {
+            if (_iconUrl == value)
+                return;
+            _iconUrl = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IconUrl)));
+        }
+    }
+
+    public Visibility DescriptionVisibility => string.IsNullOrWhiteSpace(Description) ? Visibility.Collapsed : Visibility.Visible;
+
+    public double CardOpacity => Earned ? 1.0 : 0.55;
+
+    public Visibility EarnedVisibility => Earned ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility LockedVisibility => Earned ? Visibility.Collapsed : Visibility.Visible;
+
+    public string StateText =>
+        Earned
+            ? (
+                AwardedUtc > DateTime.MinValue
+                    ? string.Format(Strings.Library_Badges_EarnedOn, AwardedUtc.ToLocalTime().ToString("d"))
+                    : Strings.Library_Badges_EarnedNoDate
+            )
+            : Strings.Library_Badges_Locked;
+
+    public string RarityText =>
+        WinRate > 0 ? string.Format(Strings.Library_Badges_Rarity, (WinRate * 100).ToString(WinRate * 100 < 1 ? "0.##" : "0.#")) : "";
+
+    public Visibility RarityVisibility => WinRate > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+public class GamePassEntry
+{
+    public long Id { get; set; }
+
+    public string Name { get; set; } = "";
+
+    public string PriceDisplay { get; set; } = "";
+
+    public string? IconUrl { get; set; }
+
+    public virtual Visibility RemoveVisibility => Visibility.Visible;
+
+    public bool HasIcon => !string.IsNullOrEmpty(IconUrl);
+}
+
+internal sealed class LibraryCollection<T> : ObservableCollection<T>
+{
+    public void ReplaceWith(IEnumerable<T> source)
+    {
+        Items.Clear();
+        foreach (T item in source)
+            Items.Add(item);
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+}
+
+public class LibraryViewModel : INotifyPropertyChanged
+{
+    private const int MaximumHistoryBytes = 16 * 1024 * 1024;
+
+    private const int MaximumHistoryEntries = 100;
+
+    private const int GamePageSize = 30;
+
+    private const long MaximumSnapshotBytes = 8 * 1024 * 1024;
+
+    private static readonly TimeSpan SnapshotFreshness = TimeSpan.FromMinutes(15);
+
+    private static readonly JsonSerializerOptions SnapshotOptions = new JsonSerializerOptions { IgnoreReadOnlyProperties = true };
+
+    private static string SnapshotPath => Integrations.LibraryStore.SnapshotPath;
+
+    private static readonly HttpClient _http = Voidstrap.Utility.VpnHttpClient.Create(TimeSpan.FromSeconds(20));
+
+    private readonly string _historyFilePath = Paths.ServerHistory;
+
+    private readonly Dictionary<long, List<GamePassEntry>> _gamePassCache = new();
+
+    private readonly List<LibraryGameEntry> _masterGames = new();
+
+    private LibraryGameEntry? _selectedGame;
+
+    private string _sidebarSearch = "";
+
+    private string _statusText = "";
+
+    private string _gamePassStatus = "";
+
+    private string _addGameText = "";
+
+    private bool _isLoading;
+
+    private bool _gamePassesLoading;
+
+    private bool _loadInFlight;
+
+    private bool _reloadRequested;
+
+    private bool _reloadForced;
+
+    private bool _loadingMoreGames;
+
+    private CancellationTokenSource? _gamePassLoadCts;
+    private CancellationTokenSource? _selectedGameVotesCts;
+
+    private CancellationTokenSource? _loadCts;
+
+    private static readonly TimeSpan SubplaceSelectionDelay = TimeSpan.FromMilliseconds(300);
+    private CancellationTokenSource? _subplaceLoadCts;
+    private IReadOnlyList<RobloxSubplaces.Place> _subplaces = Array.Empty<RobloxSubplaces.Place>();
+    private string _subplaceStatus = "";
+    private bool _subplacesLoading;
+    private bool _isSubplacesTabSelected;
+    private bool _subplaceViewActive;
+
+    public IReadOnlyList<RobloxSubplaces.Place> Subplaces
+    {
+        get => _subplaces;
+        private set
+        {
+            _subplaces = value;
+            OnPropertyChanged(nameof(Subplaces));
+        }
+    }
+
+    public string SubplaceStatus
+    {
+        get => _subplaceStatus;
+        private set
+        {
+            _subplaceStatus = value;
+            OnPropertyChanged(nameof(SubplaceStatus));
+        }
+    }
+
+    public bool SubplacesLoading
+    {
+        get => _subplacesLoading;
+        private set
+        {
+            _subplacesLoading = value;
+            OnPropertyChanged(nameof(SubplacesLoading));
+        }
+    }
+
+    public bool IsSubplacesTabSelected
+    {
+        get => _isSubplacesTabSelected;
+        set
+        {
+            if (_isSubplacesTabSelected == value)
+                return;
+            _isSubplacesTabSelected = value;
+            OnPropertyChanged(nameof(IsSubplacesTabSelected));
+            if (value)
+                _ = LoadSubplacesAsync();
+        }
+    }
+
+    public void CancelSubplaceLoading()
+    {
+        CancellationTokenSource? previous = _subplaceLoadCts;
+        _subplaceLoadCts = null;
+        previous?.Cancel();
+        previous?.Dispose();
+        SubplacesLoading = false;
+        _selectedGameVotesCts?.Cancel();
+        _selectedGameVotesCts?.Dispose();
+        _selectedGameVotesCts = null;
+    }
+
+    public void SetSubplaceViewActive(bool active)
+    {
+        _subplaceViewActive = active;
+        if (active)
+            _ = LoadSubplacesAsync();
+        else
+            CancelSubplaceLoading();
+    }
+
+    public async Task LoadSubplacesAsync()
+    {
+        if (!_subplaceViewActive || _subplaceLoadCts != null)
+            return;
+        LibraryGameEntry? game = SelectedGame;
+        Subplaces = Array.Empty<RobloxSubplaces.Place>();
+        SubplaceStatus = "";
+        if (game == null)
+            return;
+        if (RobloxSubplaces.TryGetCached(game.UniverseId, out IReadOnlyList<RobloxSubplaces.Place> cached))
+        {
+            Subplaces = cached;
+            SubplaceStatus = cached.Count == 0 ? Strings.Shortcuts_SubplaceEmpty : "";
+            return;
+        }
+        using CancellationTokenSource current = new(TimeSpan.FromSeconds(30));
+        _subplaceLoadCts = current;
+        CancellationToken token = current.Token;
+        SubplacesLoading = true;
+        SubplaceStatus = Strings.Shortcuts_SubplaceLoading;
+        try
+        {
+            await Task.Delay(SubplaceSelectionDelay, token);
+            IReadOnlyList<RobloxSubplaces.Place> places = await RobloxSubplaces.GetAsync(_http, game.PlaceId, token, game.UniverseId);
+            if (!ReferenceEquals(_subplaceLoadCts, current) || !ReferenceEquals(SelectedGame, game))
+                return;
+            Subplaces = places;
+            SubplaceStatus = places.Count == 0 ? Strings.Shortcuts_SubplaceEmpty : "";
+        }
+        catch (OperationCanceledException)
+        {
+            if (ReferenceEquals(_subplaceLoadCts, current))
+                SubplaceStatus = Strings.Shortcuts_SubplaceTimeout;
+        }
+        catch (InvalidDataException)
+        {
+            if (ReferenceEquals(_subplaceLoadCts, current))
+                SubplaceStatus = Strings.Shortcuts_SubplaceFailed;
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_subplaceLoadCts, current))
+            {
+                SubplaceStatus = Strings.Shortcuts_SubplaceFailed;
+                App.Logger.WriteException("LibraryViewModel::LoadSubplaces", ex);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_subplaceLoadCts, current))
+            {
+                _subplaceLoadCts = null;
+                SubplacesLoading = false;
+            }
+        }
+    }
+
+    private long _gamePassLoadVersion;
+
+    private long _badgeLoadVersion;
+
+    private CancellationTokenSource? _badgeLoadCts;
+
+    private CancellationTokenSource? _badgeFillCts;
+
+    private bool _badgesLoading;
+
+    private string _badgeStatus = "";
+
+    private int _badgeEarnedCount;
+
+    private int _badgeTotalCount;
+
+    public ObservableCollection<LibraryBadgeEntry> Badges { get; } = new LibraryCollection<LibraryBadgeEntry>();
+
+    public ICommand OpenBadgeCommand { get; }
+
+    public ICommand RefreshBadgesCommand { get; }
+
+    public bool BadgesLoading
+    {
+        get => _badgesLoading;
+        private set
+        {
+            if (_badgesLoading == value)
+                return;
+            _badgesLoading = value;
+            OnPropertyChanged(nameof(BadgesLoading));
+            OnPropertyChanged(nameof(BadgeSummaryVisibility));
+        }
+    }
+
+    public string BadgeStatus
+    {
+        get => _badgeStatus;
+        private set
+        {
+            if (_badgeStatus == value)
+                return;
+            _badgeStatus = value;
+            OnPropertyChanged(nameof(BadgeStatus));
+            OnPropertyChanged(nameof(BadgeStatusVisibility));
+        }
+    }
+
+    public Visibility BadgeStatusVisibility => string.IsNullOrEmpty(BadgeStatus) ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility BadgeSummaryVisibility => _badgeTotalCount > 0 && !BadgesLoading ? Visibility.Visible : Visibility.Collapsed;
+
+    public string BadgeSummaryText =>
+        string.Format(Strings.Library_Badges_Summary, _badgeEarnedCount.ToString("N0"), _badgeTotalCount.ToString("N0"));
+
+    public double BadgeSummaryPercent => _badgeTotalCount > 0 ? _badgeEarnedCount * 100.0 / _badgeTotalCount : 0;
+
+    public string BadgeSummaryPercentText => string.Format(Strings.Library_Badges_Percent, Math.Floor(BadgeSummaryPercent).ToString("0"));
+
+    private void SetBadgeSummary(int earned, int total)
+    {
+        _badgeEarnedCount = earned;
+        _badgeTotalCount = total;
+        OnPropertyChanged(nameof(BadgeSummaryVisibility));
+        OnPropertyChanged(nameof(BadgeSummaryText));
+        OnPropertyChanged(nameof(BadgeSummaryPercent));
+        OnPropertyChanged(nameof(BadgeSummaryPercentText));
+    }
+
+    public bool HasLoaded { get; private set; }
+
+    public ObservableCollection<LibraryGameEntry> SidebarGames { get; } = new LibraryCollection<LibraryGameEntry>();
+
+    public ObservableCollection<LibraryGameEntry> RecentGames { get; } = new LibraryCollection<LibraryGameEntry>();
+
+    public ObservableCollection<LibraryGameEntry> WhatsNew { get; } = new LibraryCollection<LibraryGameEntry>();
+
+    public ObservableCollection<LibraryEventEntry> Events { get; } = new LibraryCollection<LibraryEventEntry>();
+
+    public ObservableCollection<LibraryGameEntry> AllGames { get; } = new LibraryCollection<LibraryGameEntry>();
+
+    public ObservableCollection<GamePassEntry> GamePasses { get; } = new LibraryCollection<GamePassEntry>();
+
+    public ICommand SelectGameCommand { get; }
+
+    public ICommand OpenEventCommand { get; }
+
+    public ICommand GoHomeCommand { get; }
+
+    public ICommand LaunchCommand { get; }
+
+    public ICommand LaunchSubplaceCommand { get; }
+
+    public ICommand TogglePinCommand { get; }
+
+    public ICommand AddGameCommand { get; }
+
+    public ICommand RefreshCommand { get; }
+
+    public ICommand RemoveGameCommand { get; }
+
+    public ICommand OpenGamePassCommand { get; }
+
+    public ICommand CreateShortcutCommand { get; }
+
+    public ICommand ViewOnRobloxCommand { get; }
+
+    public ICommand CopyGameLinkCommand { get; }
+
+    public LibraryViewModel()
+    {
+        SelectGameCommand = new RelayCommand<LibraryGameEntry>(SelectGame);
+        OpenEventCommand = new RelayCommand<LibraryEventEntry>(OpenEvent);
+        GoHomeCommand = new RelayCommand(GoHome);
+        LaunchCommand = new AsyncRelayCommand<LibraryGameEntry>(LaunchGameAsync);
+        LaunchSubplaceCommand = new AsyncRelayCommand<RobloxSubplaces.Place>(LaunchSubplaceAsync);
+        TogglePinCommand = new RelayCommand<LibraryGameEntry>(TogglePin);
+        AddGameCommand = new AsyncRelayCommand(AddGameFromTextAsync);
+        RefreshCommand = new RelayCommand(Refresh);
+        RemoveGameCommand = new AsyncRelayCommand<LibraryGameEntry>(RemoveGameAsync);
+        SelectMediaCommand = new RelayCommand<GameMediaTile>(SelectMedia);
+        MediaBackCommand = new RelayCommand(() => PageMedia(-1));
+        MediaForwardCommand = new RelayCommand(() => PageMedia(1));
+        OpenGamePassCommand = new RelayCommand<GamePassEntry>(OpenGamePass);
+        CreateShortcutCommand = new AsyncRelayCommand<LibraryGameEntry>(CreateShortcutAsync);
+        ViewOnRobloxCommand = new RelayCommand<LibraryGameEntry>(ViewOnRoblox);
+        CopyGameLinkCommand = new RelayCommand<LibraryGameEntry>(CopyGameLink);
+        OpenBadgeCommand = new RelayCommand<LibraryBadgeEntry>(OpenBadge);
+        RefreshBadgesCommand = new RelayCommand(RefreshBadges);
+    }
+
+    private void OpenGamePass(GamePassEntry? pass)
+    {
+        if (pass == null || pass.Id == 0)
+            return;
+        try
+        {
+            Utilities.ShellExecute($"https://www.roblox.com/game-pass/{pass.Id}");
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("LibraryViewModel::OpenGamePass", ex);
+        }
+    }
+
+    private bool _suppressSelectionReset;
+
+    public LibraryServersViewModel Servers { get; } = new();
+
+    public LibraryStorefrontViewModel Storefront { get; } = new();
+
+    public ObservableCollection<GameMediaTile> GameMedia { get; } = new();
+
+    private List<string> _gameShots = new();
+
+    private string? _selectedMedia;
+
+    private CancellationTokenSource? _mediaCts;
+
+    private bool _leavingGame;
+
+    public string? SelectedMedia
+    {
+        get => _selectedMedia;
+        set
+        {
+            if (_selectedMedia != value)
+            {
+                _selectedMedia = value;
+                OnPropertyChanged(nameof(SelectedMedia));
+            }
+        }
+    }
+
+    private int _allGamesColumns = 4;
+
+    public int AllGamesColumns
+    {
+        get => _allGamesColumns;
+        set
+        {
+            if (_allGamesColumns != value)
+            {
+                _allGamesColumns = value;
+                OnPropertyChanged(nameof(AllGamesColumns));
+            }
+        }
+    }
+
+    public ICommand SelectMediaCommand { get; }
+
+    private string? _gameVideoPath;
+
+    private bool _videoShown;
+
+    public string? GameVideoPath
+    {
+        get => _gameVideoPath;
+        private set
+        {
+            _gameVideoPath = value;
+            OnPropertyChanged(nameof(GameVideoPath));
+            RaiseVideoVisibility();
+        }
+    }
+
+    public Visibility GameVideoVisibility => !string.IsNullOrEmpty(_gameVideoPath) && _videoShown ? Visibility.Visible : Visibility.Collapsed;
+
+    private void RaiseVideoVisibility()
+    {
+        OnPropertyChanged(nameof(GameVideoVisibility));
+    }
+
+    private void RebuildMediaTiles()
+    {
+        GameMedia.Clear();
+        List<GameMediaTile> all = new();
+        if (!string.IsNullOrEmpty(_gameVideoPath))
+            all.Add(new GameMediaTile { Url = _gameShots.FirstOrDefault() ?? "", IsVideo = true, IsSelected = _videoShown });
+        foreach (string shot in _gameShots)
+            all.Add(new GameMediaTile { Url = shot, IsSelected = !_videoShown && shot == _selectedMedia });
+        _tileOffset = Math.Clamp(_tileOffset, 0, Math.Max(0, all.Count - MediaTileCount));
+        foreach (GameMediaTile tile in all.Skip(_tileOffset).Take(MediaTileCount))
+            GameMedia.Add(tile);
+        _tileTotal = all.Count;
+        OnPropertyChanged(nameof(MediaArrowVisibility));
+        OnPropertyChanged(nameof(CanPageMediaBack));
+        OnPropertyChanged(nameof(CanPageMediaForward));
+    }
+
+    private const int MediaTileCount = 4;
+
+    private int _tileOffset;
+
+    private int _tileTotal;
+
+    public Visibility MediaArrowVisibility => _tileTotal > MediaTileCount ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool CanPageMediaBack => _tileOffset > 0;
+
+    public bool CanPageMediaForward => _tileOffset + MediaTileCount < _tileTotal;
+
+    public ICommand MediaBackCommand { get; }
+
+    public ICommand MediaForwardCommand { get; }
+
+    private void PageMedia(int step)
+    {
+        _tileOffset += step;
+        RebuildMediaTiles();
+    }
+
+    private void SelectMedia(GameMediaTile? tile)
+    {
+        if (tile == null)
+            return;
+        _videoShown = tile.IsVideo;
+        if (!tile.IsVideo)
+            SelectedMedia = tile.Url;
+        RaiseVideoVisibility();
+        RebuildMediaTiles();
+    }
+
+    private async Task LoadGameMediaAsync(LibraryGameEntry? game)
+    {
+        _mediaCts?.Cancel();
+        _mediaCts?.Dispose();
+        _mediaCts = null;
+        GameMedia.Clear();
+        SelectedMedia = game?.ThumbnailUrl;
+        _videoShown = false;
+        _tileOffset = 0;
+        GameVideoPath = null;
+        _gameShots = new List<string>();
+        if (game == null)
+            return;
+        CancellationTokenSource cancellation = new();
+        _mediaCts = cancellation;
+        CancellationToken token = cancellation.Token;
+        try
+        {
+            if (game is StoreGameEntry)
+            {
+                await EnrichAsync(new List<LibraryGameEntry> { game }, token);
+                game.RefreshAll();
+            }
+            List<string> urls = await LibraryStorefrontViewModel.FetchScreenshotsAsync(game.UniverseId, token);
+            if (token.IsCancellationRequested)
+                return;
+            _gameShots = urls;
+            _tileOffset = 0;
+            RebuildMediaTiles();
+            SelectedMedia = urls.FirstOrDefault() ?? game.ThumbnailUrl;
+            RebuildMediaTiles();
+            string? video = await GameVideoStore.GetLocalVideoAsync(game.UniverseId, token);
+            if (!token.IsCancellationRequested)
+            {
+                _videoShown = video != null;
+                GameVideoPath = video;
+                RebuildMediaTiles();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("LibraryViewModel::LoadGameMediaAsync", ex);
+        }
+    }
+
+    public LibraryGameEntry? SelectedGame
+    {
+        get => _selectedGame;
+        set
+        {
+            if (_suppressSelectionReset && value == null && _selectedGame != null)
+                return;
+            if (value == null && _selectedGame is StoreGameEntry && !_leavingGame)
+                return;
+            if (_selectedGame != value)
+            {
+                _selectedGame = value;
+                StatusText = "";
+                CancelSubplaceLoading();
+                _ = LoadSubplacesAsync();
+                Servers.SetGame(value);
+                OnPropertyChanged(nameof(SelectedGame));
+                OnPropertyChanged(nameof(DashboardVisibility));
+                OnPropertyChanged(nameof(DetailVisibility));
+                CancellationTokenSource? previous = _gamePassLoadCts;
+                _gamePassLoadCts = null;
+                previous?.Cancel();
+                long version = Interlocked.Increment(ref _gamePassLoadVersion);
+                GamePasses.Clear();
+                GamePassStatus = "";
+                GamePassesLoading = false;
+                _selectedGameVotesCts?.Cancel();
+                _selectedGameVotesCts?.Dispose();
+                _selectedGameVotesCts = null;
+                if (value == null)
+                    Voidstrap.Integrations.VoidstrapPresence.Clear("LibraryPage");
+                else
+                    Voidstrap.Integrations.VoidstrapPresence.SetGame(
+                        "LibraryPage",
+                        value.Name,
+                        value.CreatorName,
+                        value.UniverseId,
+                        value.PlaceId
+                    );
+                if (value != null)
+                {
+                    value.RefreshAll();
+                    CancellationTokenSource current = new();
+                    _gamePassLoadCts = current;
+                    GamePassesLoading = true;
+                    _ = LoadGamePassesAsync(value.UniverseId, version, current);
+                    CancellationTokenSource votesCts = new();
+                    _selectedGameVotesCts = votesCts;
+                    _ = RunSelectedGameLiveVotesLoopAsync(value, votesCts.Token);
+                }
+                StartBadgeLoad(value, refreshAwarded: true);
+                _ = LoadGameMediaAsync(value);
+            }
+        }
+    }
+
+    private async Task RunSelectedGameLiveVotesLoopAsync(LibraryGameEntry game, CancellationToken token)
+    {
+        const string LOG_IDENT = "LibraryViewModel::RunSelectedGameLiveVotesLoopAsync";
+
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Integrations.GameLiveData.InBackoff() ? 60 : 20), token).ConfigureAwait(false);
+                long universeId = game.UniverseId;
+                if (token.IsCancellationRequested || universeId == 0)
+                    continue;
+                Task<Integrations.GameVoteCounts?> votesTask = Integrations.GameLiveData.RefreshVotesAsync(universeId, token);
+                Task<Integrations.GameLiveStats?> statsTask = Integrations.GameLiveData.RefreshStatsAsync(universeId, token);
+                await Task.WhenAll(votesTask, statsTask).ConfigureAwait(false);
+                Integrations.GameVoteCounts? votes = votesTask.Result;
+                Integrations.GameLiveStats? stats = statsTask.Result;
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (token.IsCancellationRequested || !ReferenceEquals(SelectedGame, game))
+                        return;
+                    if (votes is Integrations.GameVoteCounts counts && !double.IsNaN(counts.LikePercent))
+                        game.LikePercent = $"{Math.Round(counts.LikePercent)}%";
+                    if (stats is Integrations.GameLiveStats live)
+                        game.Playing = live.Playing;
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine(LOG_IDENT, ex.Message);
+            }
+        }
+    }
+
+    public Visibility DashboardVisibility => SelectedGame == null ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility DetailVisibility => SelectedGame == null ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility WhatsNewVisibility => WhatsNew.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility EventsVisibility => Events.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility RecentVisibility => RecentGames.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility EmptyLibraryVisibility => AllGames.Count == 0 && !IsLoading ? Visibility.Visible : Visibility.Collapsed;
+
+    public string AllGamesHeader => $"All Games ({_masterGames.Count})";
+
+    public string SidebarCountText => $"ALL ({_masterGames.Count})";
+
+    public string TotalPlayTimeDisplay
+    {
+        get
+        {
+            double total = _masterGames.Sum(g => g.PlayTimeMinutes);
+            if (total < 1)
+                return "Total playtime: none yet";
+            long rounded = (long)Math.Round(total);
+            long hours = rounded / 60;
+            long mins = rounded % 60;
+            if (hours == 0)
+                return $"Total playtime: {mins} min";
+            if (mins == 0)
+                return $"Total playtime: {hours} hr";
+            return $"Total playtime: {hours} hr {mins} min";
+        }
+    }
+
+    public string SidebarSearch
+    {
+        get => _sidebarSearch;
+        set
+        {
+            if (_sidebarSearch != value)
+            {
+                _sidebarSearch = value;
+                OnPropertyChanged(nameof(SidebarSearch));
+                RebuildSidebar();
+            }
+        }
+    }
+
+    public string AddGameText
+    {
+        get => _addGameText;
+        set
+        {
+            if (_addGameText != value)
+            {
+                _addGameText = value;
+                OnPropertyChanged(nameof(AddGameText));
+                _ = UpdateAddPreviewAsync(value);
+            }
+        }
+    }
+
+    private CancellationTokenSource? _addPreviewCts;
+
+    private string? _addPreviewIconUrl;
+
+    private string _addPreviewName = "";
+
+    public string? AddPreviewIconUrl
+    {
+        get => _addPreviewIconUrl;
+        private set
+        {
+            _addPreviewIconUrl = value;
+            OnPropertyChanged(nameof(AddPreviewIconUrl));
+            OnPropertyChanged(nameof(AddPreviewVisibility));
+        }
+    }
+
+    public string AddPreviewName
+    {
+        get => _addPreviewName;
+        private set
+        {
+            _addPreviewName = value;
+            OnPropertyChanged(nameof(AddPreviewName));
+        }
+    }
+
+    public Visibility AddPreviewVisibility => string.IsNullOrEmpty(_addPreviewIconUrl) ? Visibility.Collapsed : Visibility.Visible;
+
+    private async Task UpdateAddPreviewAsync(string text)
+    {
+        const string LOG_IDENT = "LibraryViewModel::UpdateAddPreviewAsync";
+        _addPreviewCts?.Cancel();
+        _addPreviewCts?.Dispose();
+        CancellationTokenSource cts = new();
+        _addPreviewCts = cts;
+        long placeId = ParsePlaceId(text.Trim());
+        if (placeId <= 0)
+        {
+            AddPreviewIconUrl = null;
+            AddPreviewName = "";
+            return;
+        }
+        try
+        {
+            await Task.Delay(400, cts.Token);
+            DiscoverGameEntry? game = await HomePageViewModel.LookupPlaceAsync(placeId, cts.Token);
+            string? icon = game == null ? null : await Voidstrap.UI.TaskbarJumpList.ResolveIconUrlAsync(game.UniverseId, cts.Token);
+            if (cts.IsCancellationRequested)
+                return;
+            AddPreviewName = game?.Name ?? "";
+            AddPreviewIconUrl = icon;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine(LOG_IDENT, "Preview lookup failed: " + ex.Message);
+            if (!cts.IsCancellationRequested)
+                AddPreviewIconUrl = null;
+        }
+    }
+
+    public string StatusText
+    {
+        get => _statusText;
+        set
+        {
+            if (_statusText != value)
+            {
+                _statusText = value;
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(StatusVisibility));
+            }
+        }
+    }
+
+    public Visibility StatusVisibility => string.IsNullOrEmpty(StatusText) ? Visibility.Collapsed : Visibility.Visible;
+
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set
+        {
+            if (_isLoading != value)
+            {
+                _isLoading = value;
+                OnPropertyChanged(nameof(IsLoading));
+                OnPropertyChanged(nameof(EmptyLibraryVisibility));
+            }
+        }
+    }
+
+    public bool GamePassesLoading
+    {
+        get => _gamePassesLoading;
+        set
+        {
+            if (_gamePassesLoading != value)
+            {
+                _gamePassesLoading = value;
+                OnPropertyChanged(nameof(GamePassesLoading));
+            }
+        }
+    }
+
+    public string GamePassStatus
+    {
+        get => _gamePassStatus;
+        set
+        {
+            if (_gamePassStatus != value)
+            {
+                _gamePassStatus = value;
+                OnPropertyChanged(nameof(GamePassStatus));
+                OnPropertyChanged(nameof(GamePassStatusVisibility));
+            }
+        }
+    }
+
+    public Visibility GamePassStatusVisibility => string.IsNullOrEmpty(GamePassStatus) ? Visibility.Collapsed : Visibility.Visible;
+
+    public static string FormatCount(long value)
+    {
+        if (value >= 1_000_000_000)
+            return $"{value / 1_000_000_000.0:0.#}B";
+        if (value >= 1_000_000)
+            return $"{value / 1_000_000.0:0.#}M";
+        if (value >= 1_000)
+            return $"{value / 1_000.0:0.#}K";
+        return value.ToString();
+    }
+
+    public async Task LoadAsync(bool forceRefresh = false)
+    {
+        if (_loadInFlight)
+        {
+            _reloadRequested = true;
+            _reloadForced |= forceRefresh;
+            return;
+        }
+
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        CancellationTokenSource cancellation = new();
+        _loadCts = cancellation;
+        CancellationToken token = cancellation.Token;
+        _loadInFlight = true;
+        HasLoaded = true;
+        IsLoading = true;
+        StatusText = "";
+        Stopwatch elapsed = Stopwatch.StartNew();
+
+        try
+        {
+            List<AppSettings.LibraryPin> pins = Integrations.LibraryStore.Pins;
+            (List<LibraryGameEntry> shownGames, bool snapshotFresh) = await Task.Run(() => BuildLocalGames(pins), token)
+                .ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            if (shownGames.Count > 0)
+            {
+                await UpdateUiAsync(() =>
+                    {
+                        shownGames = MergeWithShown(shownGames);
+                        PublishGamesCore(shownGames);
+                        IsLoading = false;
+                    })
+                    .ConfigureAwait(false);
+                App.Logger.WriteLine("LibraryViewModel", "Cached library shown in " + elapsed.ElapsedMilliseconds + " ms");
+            }
+
+            bool refreshShown = forceRefresh || !snapshotFresh || shownGames.Exists(static game => !IsEnriched(game));
+            if (refreshShown)
+                await EnrichAsync(shownGames, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+
+            List<LibraryGameEntry> games = await BuildHistoryGamesAsync(pins, token).ConfigureAwait(false);
+            HashSet<long> shownIds = shownGames.Select(static game => game.UniverseId).ToHashSet();
+            List<LibraryGameEntry> added = games.Where(game => !shownIds.Contains(game.UniverseId)).ToList();
+            await EnrichAsync(added, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+
+            List<LibraryGameEntry> published = games;
+            await UpdateUiAsync(() =>
+                {
+                    published = MergeWithShown(games);
+                    PersistPinSnapshots(published, pins);
+                    PublishGamesCore(published);
+                    IsLoading = false;
+                })
+                .ConfigureAwait(false);
+            bool usedNetwork = refreshShown || added.Count > 0;
+            App.Logger.WriteLine(
+                "LibraryViewModel",
+                "Library details shown in " + elapsed.ElapsedMilliseconds + " ms, network refresh " + (usedNetwork ? "used" : "skipped")
+            );
+
+            if (usedNetwork)
+                SaveSnapshot(published);
+            _ = FetchEventsInBackgroundAsync(published, token);
+            await UpdateUiAsync(() => StartBadgeFill(published)).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            HasLoaded = false;
+            App.Logger.WriteException("LibraryViewModel::LoadAsync", ex);
+            await UpdateUiAsync(() => StatusText = string.Format(Strings.Library_LoadFailed, ex.Message)).ConfigureAwait(false);
+        }
+        finally
+        {
+            await UpdateUiAsync(() =>
+                {
+                    if (ReferenceEquals(_loadCts, cancellation))
+                        IsLoading = false;
+                })
+                .ConfigureAwait(false);
+            _loadInFlight = false;
+            if (_reloadRequested)
+            {
+                bool force = _reloadForced;
+                _reloadRequested = false;
+                _reloadForced = false;
+                _ = UpdateUiAsync(() => _ = LoadAsync(force));
+            }
+        }
+    }
+
+    private (List<LibraryGameEntry> Games, bool Fresh) BuildLocalGames(List<AppSettings.LibraryPin> pins)
+    {
+        List<Integrations.RobloxFavorites.Favorite> favorites = App.Settings.Prop.LibraryShowRobloxFavorites
+            ? Integrations.RobloxFavorites.ReadCached()
+            : [];
+        List<LibraryGameEntry> games = BuildEntries(ReadHistoryFile(), pins, Integrations.PlayTimeStore.Read(), favorites);
+        bool fresh = false;
+        try
+        {
+            string path = SnapshotPath;
+            if (File.Exists(path))
+            {
+                fresh = DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < SnapshotFreshness;
+                Dictionary<long, LibraryGameEntry> stored = new();
+                foreach (
+                    LibraryGameEntry entry in JsonFile.Deserialize<List<LibraryGameEntry>>(path, SnapshotOptions, MaximumSnapshotBytes)
+                )
+                {
+                    if (entry != null && entry.UniverseId > 0)
+                        stored.TryAdd(entry.UniverseId, entry);
+                }
+                foreach (LibraryGameEntry game in games)
+                {
+                    if (stored.TryGetValue(game.UniverseId, out LibraryGameEntry? snapshot))
+                        ApplyMetadata(game, snapshot);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            fresh = false;
+            App.Logger.WriteLine("LibraryViewModel", "Library snapshot could not be read: " + ex.Message);
+        }
+        ApplyCachedDetails(games);
+        return (games, fresh);
+    }
+
+    private async Task<List<LibraryGameEntry>> BuildHistoryGamesAsync(List<AppSettings.LibraryPin> pins, CancellationToken token)
+    {
+        List<Models.Entities.ActivityData> history = await Task.Run(ReadHistoryFile, token).ConfigureAwait(false);
+        List<Models.Entities.ActivityData> unresolved = history.Where(static session => session.UniverseId == 0).ToList();
+        if (unresolved.Count > 0)
+        {
+            await UniverseDetails
+                .ResolvePlacesToUniversesAsync(unresolved.Select(static session => session.PlaceId), token)
+                .ConfigureAwait(false);
+            foreach (Models.Entities.ActivityData session in unresolved)
+            {
+                if (UniverseDetails.TryGetUniverseForPlace(session.PlaceId, out long resolvedUniverse))
+                    session.UniverseId = resolvedUniverse;
+            }
+        }
+        Integrations.PlayTimeStore.StoreData playStore = await Task.Run(Integrations.PlayTimeStore.Read, token).ConfigureAwait(false);
+        List<Integrations.RobloxFavorites.Favorite> favorites = [];
+        if (App.Settings.Prop.LibraryShowRobloxFavorites)
+            favorites =
+                await Integrations.RobloxFavorites.RefreshAsync(token).ConfigureAwait(false) ?? Integrations.RobloxFavorites.ReadCached();
+        List<LibraryGameEntry> games = BuildEntries(history, pins, playStore, favorites);
+        ApplyCachedDetails(games);
+        return games;
+    }
+
+    private static async Task EnrichAsync(List<LibraryGameEntry> games, CancellationToken token)
+    {
+        if (games.Count == 0)
+            return;
+        await Task.WhenAll(
+                FetchUniverseDetailsAsync(games, token),
+                FetchLandscapeThumbnailsAsync(games, token),
+                FetchVotesAsync(games, token)
+            )
+            .ConfigureAwait(false);
+        ApplyCachedDetails(games);
+        await FetchMissingIconsAsync(games, token).ConfigureAwait(false);
+    }
+
+    private static async Task FetchMissingIconsAsync(List<LibraryGameEntry> games, CancellationToken token)
+    {
+        List<LibraryGameEntry> missing = games.Where(static game => game.UniverseId > 0 && string.IsNullOrEmpty(game.IconUrl)).ToList();
+        if (missing.Count == 0)
+            return;
+        try
+        {
+            Dictionary<long, string> icons = await UniverseDetails.FetchIconUrlsAsync(missing.Select(static game => game.UniverseId), token).ConfigureAwait(false);
+            foreach (LibraryGameEntry game in missing)
+            {
+                if (icons.TryGetValue(game.UniverseId, out string? icon))
+                    game.IconUrl = icon;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Icon fetch failed: " + ex.Message);
+        }
+    }
+
+    private List<LibraryGameEntry> MergeWithShown(List<LibraryGameEntry> games)
+    {
+        Dictionary<long, LibraryGameEntry> shown = new();
+        foreach (LibraryGameEntry game in _masterGames)
+            shown.TryAdd(game.UniverseId, game);
+        List<LibraryGameEntry> merged = new(games.Count);
+        foreach (LibraryGameEntry game in games)
+        {
+            if (!shown.TryGetValue(game.UniverseId, out LibraryGameEntry? existing) || ReferenceEquals(existing, game))
+            {
+                merged.Add(game);
+                continue;
+            }
+            ApplyMetadata(existing, game);
+            if (game.PlaceId != 0)
+                existing.PlaceId = game.PlaceId;
+            existing.LastPlayed = game.LastPlayed;
+            existing.PlayTimeMinutes = game.PlayTimeMinutes;
+            existing.IsPinned = game.IsPinned;
+            existing.IsFavorite = game.IsFavorite;
+            existing.RefreshAll();
+            merged.Add(existing);
+        }
+        return merged;
+    }
+
+    private static void ApplyMetadata(LibraryGameEntry target, LibraryGameEntry source)
+    {
+        if (!IsPlaceholderName(source) && IsPlaceholderName(target))
+            target.Name = source.Name;
+        if (!string.IsNullOrWhiteSpace(source.CreatorName))
+            target.CreatorName = source.CreatorName;
+        if (!string.IsNullOrWhiteSpace(source.Description))
+            target.Description = source.Description;
+        if (!string.IsNullOrWhiteSpace(source.IconUrl))
+            target.IconUrl = source.IconUrl;
+        if (!string.IsNullOrWhiteSpace(source.ThumbnailUrl))
+            target.ThumbnailUrl = source.ThumbnailUrl;
+        if (source.Visits > 0)
+            target.Visits = source.Visits;
+        if (source.MaxPlayers > 0)
+            target.MaxPlayers = source.MaxPlayers;
+        if (!string.IsNullOrWhiteSpace(source.Genre))
+            target.Genre = source.Genre;
+        if (source.Created != null)
+            target.Created = source.Created;
+        if (source.Updated != null)
+            target.Updated = source.Updated;
+        if (!string.IsNullOrEmpty(source.LikePercent))
+            target.LikePercent = source.LikePercent;
+        if (source.Playing > 0)
+            target.Playing = source.Playing;
+        if (target.PlaceId == 0)
+            target.PlaceId = source.PlaceId;
+    }
+
+    private static bool IsPlaceholderName(LibraryGameEntry game)
+    {
+        return string.IsNullOrWhiteSpace(game.Name) || game.Name == "Unknown game" || game.Name == "Place " + game.PlaceId;
+    }
+
+    private static bool IsEnriched(LibraryGameEntry game)
+    {
+        return !IsPlaceholderName(game) && !string.IsNullOrEmpty(game.IconUrl) && !string.IsNullOrEmpty(game.ThumbnailUrl);
+    }
+
+    private static void SaveSnapshot(List<LibraryGameEntry> games)
+    {
+        try
+        {
+            Directory.CreateDirectory(Paths.Library);
+            JsonFile.SerializeAtomic(SnapshotPath, games, SnapshotOptions, false);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Library snapshot could not be saved: " + ex.Message);
+        }
+    }
+
+    private static async Task FetchUniverseDetailsAsync(List<LibraryGameEntry> games, CancellationToken token)
+    {
+        List<long> ids = games.Where(static game => game.UniverseId > 0).Select(static game => game.UniverseId).Distinct().ToList();
+        await Task.WhenAll(
+                Chunk(ids, 50)
+                    .Select(async chunk =>
+                    {
+                        try
+                        {
+                            await UniverseDetails.FetchBulk(chunk, token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Logger.WriteLine("LibraryViewModel", "Details fetch failed: " + ex.Message);
+                        }
+                    })
+            )
+            .ConfigureAwait(false);
+    }
+
+    private async Task FetchEventsInBackgroundAsync(List<LibraryGameEntry> games, CancellationToken token)
+    {
+        try
+        {
+            List<LibraryGameEntry> prioritized = games
+                .OrderByDescending(static game => game.IsPinned)
+                .ThenByDescending(static game => game.LastPlayed)
+                .Take(48)
+                .ToList();
+            await FetchEventsAsync(prioritized, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Event loading stopped: " + ex.Message);
+        }
+    }
+
+    private static void ApplyCachedDetails(List<LibraryGameEntry> games)
+    {
+        foreach (LibraryGameEntry game in games)
+        {
+            UniverseDetails? details = UniverseDetails.LoadFromCache(game.UniverseId);
+            if (details?.Data == null)
+            {
+                if (string.IsNullOrEmpty(game.Name))
+                    game.Name = $"Place {game.PlaceId}";
+                continue;
+            }
+            game.Name = details.Data.Name ?? $"Place {game.PlaceId}";
+            game.CreatorName = details.Data.Creator?.Name ?? "";
+            game.Description = details.Data.Description ?? "";
+            game.Playing = details.Data.Playing;
+            game.Visits = details.Data.Visits;
+            game.MaxPlayers = details.Data.MaxPlayers;
+            game.Genre = details.Data.Genre ?? "";
+            game.Created = details.Data.Created;
+            game.Updated = details.Data.Updated;
+            game.IconUrl = details.Thumbnail?.ImageUrl ?? game.IconUrl;
+            if (game.PlaceId == 0)
+                game.PlaceId = details.Data.RootPlaceId;
+        }
+    }
+
+    private static Task UpdateUiAsync(Action action)
+    {
+        return Application.Current.Dispatcher.InvokeAsync(action).Task;
+    }
+
+    private static List<LibraryGameEntry> BuildEntries(
+        List<Models.Entities.ActivityData> rawHistory,
+        List<AppSettings.LibraryPin> pins,
+        Integrations.PlayTimeStore.StoreData playStore,
+        List<Integrations.RobloxFavorites.Favorite> favorites
+    )
+    {
+        Dictionary<long, LibraryGameEntry> byUniverse = new();
+        foreach (Models.Entities.ActivityData session in rawHistory.OrderByDescending(x => x.TimeJoined))
+        {
+            if (session.UniverseId == 0)
+                continue;
+            if (!byUniverse.TryGetValue(session.UniverseId, out LibraryGameEntry? entry))
+            {
+                entry = new LibraryGameEntry
+                {
+                    UniverseId = session.UniverseId,
+                    PlaceId = session.PlaceId,
+                    LastPlayed = session.TimeJoined,
+                };
+                byUniverse[session.UniverseId] = entry;
+            }
+            if (session.TimeLeft.HasValue && session.TimeLeft.Value > session.TimeJoined)
+            {
+                double minutes = (session.TimeLeft.Value - session.TimeJoined).TotalMinutes;
+                if (minutes > 0 && minutes < 1440)
+                    entry.PlayTimeMinutes += minutes;
+            }
+        }
+
+        foreach (AppSettings.LibraryPin pin in pins)
+        {
+            if (pin.UniverseId == 0)
+                continue;
+            if (!byUniverse.TryGetValue(pin.UniverseId, out LibraryGameEntry? entry))
+            {
+                entry = new LibraryGameEntry
+                {
+                    UniverseId = pin.UniverseId,
+                    PlaceId = pin.PlaceId,
+                    Name = pin.Name ?? "",
+                };
+                byUniverse[pin.UniverseId] = entry;
+            }
+            ApplyPinSnapshot(entry, pin);
+            entry.IsPinned = true;
+            if (entry.PlaceId == 0)
+                entry.PlaceId = pin.PlaceId;
+            if (string.IsNullOrEmpty(entry.Name) && !string.IsNullOrEmpty(pin.Name))
+                entry.Name = pin.Name;
+        }
+
+        foreach (LibraryGameEntry local in byUniverse.Values)
+        {
+            if (Integrations.FavoriteGames.Contains(local.PlaceId))
+                local.IsFavorite = true;
+        }
+        foreach (Integrations.RobloxFavorites.Favorite favorite in favorites)
+        {
+            if (favorite.UniverseId == 0 || Integrations.LibraryStore.IsFavoriteHidden(favorite.UniverseId))
+                continue;
+            if (!byUniverse.TryGetValue(favorite.UniverseId, out LibraryGameEntry? entry))
+            {
+                entry = new LibraryGameEntry { UniverseId = favorite.UniverseId, PlaceId = favorite.PlaceId };
+                byUniverse[favorite.UniverseId] = entry;
+            }
+            entry.IsFavorite = true;
+            if (entry.PlaceId == 0)
+                entry.PlaceId = favorite.PlaceId;
+            if (string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(favorite.Name))
+                entry.Name = favorite.Name;
+            if (string.IsNullOrWhiteSpace(entry.CreatorName) && !string.IsNullOrWhiteSpace(favorite.CreatorName))
+                entry.CreatorName = favorite.CreatorName;
+            if (entry.Visits <= 0 && favorite.Visits > 0)
+                entry.Visits = favorite.Visits;
+            entry.Updated ??= favorite.Updated;
+        }
+
+        foreach (KeyValuePair<long, Integrations.PlayTimeStore.UniverseTime> stored in playStore.Universes)
+        {
+            if (!byUniverse.TryGetValue(stored.Key, out LibraryGameEntry? entry))
+            {
+                entry = new LibraryGameEntry { UniverseId = stored.Key };
+                byUniverse[stored.Key] = entry;
+            }
+            if (stored.Value.Minutes > entry.PlayTimeMinutes)
+                entry.PlayTimeMinutes = stored.Value.Minutes;
+            if (stored.Value.LastPlayed != null && (entry.LastPlayed == null || stored.Value.LastPlayed > entry.LastPlayed))
+                entry.LastPlayed = stored.Value.LastPlayed;
+        }
+
+        List<LibraryGameEntry> games = byUniverse.Values.ToList();
+        foreach (LibraryGameEntry game in games)
+        {
+            if (string.IsNullOrWhiteSpace(game.Name))
+                game.Name = game.PlaceId > 0 ? $"Place {game.PlaceId}" : "Unknown game";
+        }
+        return games;
+    }
+
+    private void PublishGamesCore(List<LibraryGameEntry> games)
+    {
+        _masterGames.Clear();
+        _masterGames.AddRange(games.OrderBy(static game => game.Name, StringComparer.OrdinalIgnoreCase));
+
+        ReplaceIfChanged(
+            RecentGames,
+            games.Where(static game => game.LastPlayed != null).OrderByDescending(static game => game.LastPlayed).Take(12)
+        );
+
+        DateTime cutoff = DateTime.Now.AddDays(-30);
+        ReplaceIfChanged(
+            WhatsNew,
+            games
+                .Where(game => game.Updated != null && game.Updated.Value.ToLocalTime() >= cutoff)
+                .OrderByDescending(static game => game.Updated)
+                .Take(12)
+        );
+
+        ReplaceIfChanged(AllGames, _masterGames.Take(Math.Max(GamePageSize, AllGames.Count)));
+
+        LibraryGameEntry? currentSelection = _selectedGame;
+
+        RebuildSidebar(false);
+
+        OnPropertyChanged(nameof(AllGamesHeader));
+        OnPropertyChanged(nameof(SidebarCountText));
+        OnPropertyChanged(nameof(TotalPlayTimeDisplay));
+        OnPropertyChanged(nameof(WhatsNewVisibility));
+        OnPropertyChanged(nameof(RecentVisibility));
+        OnPropertyChanged(nameof(EmptyLibraryVisibility));
+
+        if (currentSelection != null)
+        {
+            LibraryGameEntry? match = _masterGames.FirstOrDefault(game =>
+                (currentSelection.UniverseId > 0 && game.UniverseId == currentSelection.UniverseId)
+                || (currentSelection.UniverseId <= 0 && currentSelection.PlaceId > 0 && game.PlaceId == currentSelection.PlaceId)
+            );
+            if (match != null)
+                SelectedGame = match;
+        }
+    }
+
+    private static void ReplaceCollection<T>(ObservableCollection<T> collection, IEnumerable<T> source)
+    {
+        if (collection is LibraryCollection<T> optimized)
+        {
+            optimized.ReplaceWith(source);
+            return;
+        }
+
+        collection.Clear();
+        foreach (T item in source)
+            collection.Add(item);
+    }
+
+    private static void ReplaceIfChanged<T>(ObservableCollection<T> collection, IEnumerable<T> source)
+        where T : class
+    {
+        List<T> items = source.ToList();
+        if (items.Count == collection.Count)
+        {
+            bool unchanged = true;
+            for (int index = 0; index < items.Count && unchanged; index++)
+                unchanged = ReferenceEquals(items[index], collection[index]);
+            if (unchanged)
+                return;
+        }
+        ReplaceCollection(collection, items);
+    }
+
+    public void LoadMoreGames()
+    {
+        if (_loadingMoreGames || AllGames.Count >= _masterGames.Count)
+            return;
+
+        _loadingMoreGames = true;
+        try
+        {
+            int end = Math.Min(AllGames.Count + GamePageSize, _masterGames.Count);
+            for (int index = AllGames.Count; index < end; index++)
+                AllGames.Add(_masterGames[index]);
+        }
+        finally
+        {
+            _loadingMoreGames = false;
+        }
+    }
+
+    private static void ApplyPinSnapshot(LibraryGameEntry entry, AppSettings.LibraryPin pin)
+    {
+        if (!string.IsNullOrWhiteSpace(pin.Name))
+            entry.Name = pin.Name;
+        if (!string.IsNullOrWhiteSpace(pin.CreatorName))
+            entry.CreatorName = pin.CreatorName;
+        if (!string.IsNullOrWhiteSpace(pin.Description))
+            entry.Description = pin.Description;
+        if (!string.IsNullOrWhiteSpace(pin.IconUrl))
+            entry.IconUrl = pin.IconUrl;
+        if (!string.IsNullOrWhiteSpace(pin.ThumbnailUrl))
+            entry.ThumbnailUrl = pin.ThumbnailUrl;
+        if (pin.Visits > 0)
+            entry.Visits = pin.Visits;
+        if (pin.MaxPlayers > 0)
+            entry.MaxPlayers = pin.MaxPlayers;
+        if (!string.IsNullOrWhiteSpace(pin.Genre))
+            entry.Genre = pin.Genre;
+        entry.Created ??= pin.Created;
+        entry.Updated ??= pin.Updated;
+    }
+
+    private static void PersistPinSnapshots(List<LibraryGameEntry> games, List<AppSettings.LibraryPin> pins)
+    {
+        bool changed = false;
+        foreach (AppSettings.LibraryPin pin in pins)
+        {
+            LibraryGameEntry? game = games.FirstOrDefault(candidate => candidate.UniverseId == pin.UniverseId);
+            if (game == null)
+                continue;
+            changed |= UpdatePinSnapshot(pin, game);
+        }
+        if (changed)
+            Integrations.LibraryStore.Save();
+    }
+
+    private static bool UpdatePinSnapshot(AppSettings.LibraryPin pin, LibraryGameEntry game)
+    {
+        string iconUrl = game.IconUrl ?? "";
+        string thumbnailUrl = game.ThumbnailUrl ?? "";
+        bool changed =
+            pin.PlaceId != game.PlaceId
+            || pin.Name != game.Name
+            || pin.CreatorName != game.CreatorName
+            || pin.Description != game.Description
+            || pin.IconUrl != iconUrl
+            || pin.ThumbnailUrl != thumbnailUrl
+            || pin.Visits != game.Visits
+            || pin.MaxPlayers != game.MaxPlayers
+            || pin.Genre != game.Genre
+            || pin.Created != game.Created
+            || pin.Updated != game.Updated;
+        pin.PlaceId = game.PlaceId;
+        pin.Name = game.Name;
+        pin.CreatorName = game.CreatorName;
+        pin.Description = game.Description;
+        pin.IconUrl = iconUrl;
+        pin.ThumbnailUrl = thumbnailUrl;
+        pin.Visits = game.Visits;
+        pin.MaxPlayers = game.MaxPlayers;
+        pin.Genre = game.Genre;
+        pin.Created = game.Created;
+        pin.Updated = game.Updated;
+        return changed;
+    }
+
+    private List<Models.Entities.ActivityData> ReadHistoryFile()
+    {
+        try
+        {
+            if (!File.Exists(_historyFilePath))
+                return new List<Models.Entities.ActivityData>();
+            JsonSerializerOptions options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            return JsonFile
+                .Deserialize<List<Models.Entities.ActivityData>>(_historyFilePath, options, MaximumHistoryBytes)
+                .Where(static entry => entry is not null && entry.PlaceId > 0)
+                .OrderByDescending(static entry => entry.TimeJoined)
+                .Take(MaximumHistoryEntries)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "History read failed: " + ex.Message);
+            return new List<Models.Entities.ActivityData>();
+        }
+    }
+
+    private static IEnumerable<string> Chunk(List<long> ids, int size)
+    {
+        for (int i = 0; i < ids.Count; i += size)
+            yield return string.Join(',', ids.Skip(i).Take(size));
+    }
+
+    private static async Task FetchLandscapeThumbnailsAsync(List<LibraryGameEntry> games, CancellationToken token = default)
+    {
+        List<long> ids = games.Select(g => g.UniverseId).ToList();
+        Dictionary<long, LibraryGameEntry> byUniverse = new();
+        foreach (LibraryGameEntry entry in games)
+            byUniverse[entry.UniverseId] = entry;
+
+        await Task.WhenAll(
+            Chunk(ids, 50)
+                .Select(async chunk =>
+                {
+                    try
+                    {
+                        string url =
+                            $"https://thumbnails.roblox.com/v1/games/multiget/thumbnails?universeIds={chunk}&countPerUniverse=1&defaults=true&size=768x432&format=Jpeg";
+                        using JsonDocument doc = JsonDocument.Parse(
+                            await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, url, token: token).ConfigureAwait(false)
+                        );
+                        if (!doc.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+                            return;
+                        foreach (JsonElement item in data.EnumerateArray())
+                        {
+                            if (!item.TryGetProperty("universeId", out JsonElement idProp))
+                                continue;
+                            long universeId = idProp.GetInt64();
+                            if (!item.TryGetProperty("thumbnails", out JsonElement thumbs) || thumbs.ValueKind != JsonValueKind.Array)
+                                continue;
+                            foreach (JsonElement thumb in thumbs.EnumerateArray())
+                            {
+                                if (thumb.TryGetProperty("imageUrl", out JsonElement urlProp) && urlProp.ValueKind == JsonValueKind.String)
+                                {
+                                    string? imageUrl = urlProp.GetString();
+                                    if (byUniverse.TryGetValue(universeId, out LibraryGameEntry? game) && !string.IsNullOrEmpty(imageUrl))
+                                        game.ThumbnailUrl = imageUrl;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.WriteLine("LibraryViewModel", "Thumbnail fetch failed: " + ex.Message);
+                    }
+                })
+        );
+    }
+
+    private void OpenEvent(LibraryEventEntry? entry)
+    {
+        if (entry == null || string.IsNullOrEmpty(entry.Id))
+            return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(entry.EventUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Could not open event: " + ex.Message);
+        }
+    }
+
+    internal static async Task<List<LibraryEventEntry>> FetchUniverseEventsAsync(long universeId, string gameName, CancellationToken token)
+    {
+        List<LibraryEventEntry> events = new();
+        try
+        {
+            string url = "https://apis.roblox.com/virtual-events/v1/universes/" + universeId + "/virtual-events";
+            string? body = await Voidstrap
+                .Utility.GitHubCache.GetStringAsync(url, TimeSpan.FromMinutes(20), token: token)
+                .ConfigureAwait(false);
+            if (string.IsNullOrEmpty(body))
+                return events;
+            using JsonDocument doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+                return events;
+
+            foreach (JsonElement item in data.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                    continue;
+                if (ReadEventText(item, "eventStatus") != "active")
+                    continue;
+                if (ReadEventText(item, "eventVisibility") != "public")
+                    continue;
+
+                DateTime? start = null;
+                DateTime? end = null;
+                if (item.TryGetProperty("eventTime", out JsonElement time) && time.ValueKind == JsonValueKind.Object)
+                {
+                    start = ReadEventDate(time, "startUtc");
+                    end = ReadEventDate(time, "endUtc");
+                }
+
+                if (end.HasValue && end.Value < DateTime.UtcNow)
+                    continue;
+
+                long mediaId = 0;
+                if (item.TryGetProperty("thumbnails", out JsonElement thumbs) && thumbs.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement thumb in thumbs.EnumerateArray())
+                    {
+                        if (
+                            thumb.ValueKind == JsonValueKind.Object
+                            && thumb.TryGetProperty("mediaId", out JsonElement mid)
+                            && mid.ValueKind == JsonValueKind.Number
+                            && mid.TryGetInt64(out long mv)
+                        )
+                        {
+                            mediaId = mv;
+                            break;
+                        }
+                    }
+                }
+
+                string title = ReadEventText(item, "displayTitle");
+                if (string.IsNullOrWhiteSpace(title))
+                    title = ReadEventText(item, "title");
+                string subtitle = ReadEventText(item, "displaySubtitle");
+                if (string.IsNullOrWhiteSpace(subtitle))
+                    subtitle = ReadEventText(item, "subtitle");
+
+                events.Add(
+                    new LibraryEventEntry
+                    {
+                        Id = ReadEventText(item, "id"),
+                        UniverseId = universeId,
+                        Title = title,
+                        Subtitle = subtitle,
+                        GameName = gameName,
+                        StartUtc = start,
+                        EndUtc = end,
+                        MediaId = mediaId,
+                    }
+                );
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Events fetch failed for " + universeId + ": " + ex.Message);
+        }
+        return events;
+    }
+
+    private async Task FetchEventsAsync(List<LibraryGameEntry> games, CancellationToken token = default)
+    {
+        System.Collections.Concurrent.ConcurrentBag<LibraryEventEntry> found = new();
+        using SemaphoreSlim gate = new SemaphoreSlim(6, 6);
+
+        await Task.WhenAll(
+                games.Select(async game =>
+                {
+                    if (game.UniverseId <= 0)
+                        return;
+                    await gate.WaitAsync(token).ConfigureAwait(false);
+                    try
+                    {
+                        foreach (LibraryEventEntry entry in await FetchUniverseEventsAsync(game.UniverseId, game.Name ?? string.Empty, token).ConfigureAwait(false))
+                            found.Add(entry);
+                    }
+                    finally
+                    {
+                        gate.Release();
+                    }
+                })
+            )
+            .ConfigureAwait(false);
+
+        List<LibraryEventEntry> ordered = found.OrderBy(e => e.StartUtc ?? DateTime.MaxValue).Take(24).ToList();
+
+        await ResolveEventThumbnailsAsync(ordered, token).ConfigureAwait(false);
+
+        Action publish = () =>
+        {
+            if (token.IsCancellationRequested)
+                return;
+            ReplaceCollection(Events, ordered);
+            OnPropertyChanged(nameof(EventsVisibility));
+        };
+        await Application.Current.Dispatcher.InvokeAsync(publish);
+    }
+
+    internal static async Task ResolveEventThumbnailsAsync(List<LibraryEventEntry> events, CancellationToken token = default)
+    {
+        List<long> mediaIds = events.Where(e => e.MediaId > 0).Select(e => e.MediaId).Distinct().ToList();
+        if (mediaIds.Count == 0)
+            return;
+
+        Dictionary<long, string> urls = new();
+        await Task.WhenAll(
+            Chunk(mediaIds, 50)
+                .Select(async chunk =>
+                {
+                    try
+                    {
+                        string url =
+                            "https://thumbnails.roblox.com/v1/assets?assetIds=" + chunk + "&size=768x432&format=Jpeg&isCircular=false";
+                        using JsonDocument doc = JsonDocument.Parse(
+                            await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, url, token: token).ConfigureAwait(false)
+                        );
+                        if (!doc.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+                            return;
+                        foreach (JsonElement item in data.EnumerateArray())
+                        {
+                            if (item.ValueKind != JsonValueKind.Object)
+                                continue;
+                            if (!item.TryGetProperty("targetId", out JsonElement idProp) || !idProp.TryGetInt64(out long targetId))
+                                continue;
+                            if (item.TryGetProperty("imageUrl", out JsonElement urlProp) && urlProp.ValueKind == JsonValueKind.String)
+                            {
+                                string? image = urlProp.GetString();
+                                if (!string.IsNullOrEmpty(image))
+                                {
+                                    lock (urls)
+                                        urls[targetId] = image;
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.WriteLine("LibraryViewModel", "Event thumbnail fetch failed: " + ex.Message);
+                    }
+                })
+        );
+
+        foreach (LibraryEventEntry entry in events)
+        {
+            if (entry.MediaId > 0 && urls.TryGetValue(entry.MediaId, out string? image))
+                entry.ThumbnailUrl = image;
+        }
+    }
+
+    private static string ReadEventText(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+    }
+
+    private static DateTime? ReadEventDate(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        return DateTime.TryParse(
+            value.GetString(),
+            null,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out DateTime parsed
+        )
+            ? parsed
+            : null;
+    }
+
+    private static async Task FetchVotesAsync(List<LibraryGameEntry> games, CancellationToken token = default)
+    {
+        List<long> ids = games.Select(g => g.UniverseId).ToList();
+        Dictionary<long, LibraryGameEntry> byUniverse = new();
+        foreach (LibraryGameEntry entry in games)
+            byUniverse[entry.UniverseId] = entry;
+
+        await Task.WhenAll(
+            Chunk(ids, 50)
+                .Select(async chunk =>
+                {
+                    try
+                    {
+                        string url = $"https://games.roblox.com/v1/games/votes?universeIds={chunk}";
+                        using JsonDocument doc = JsonDocument.Parse(
+                            await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, url, token: token).ConfigureAwait(false)
+                        );
+                        if (!doc.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+                            return;
+                        foreach (JsonElement item in data.EnumerateArray())
+                        {
+                            if (!item.TryGetProperty("id", out JsonElement idProp))
+                                continue;
+                            long universeId = idProp.GetInt64();
+                            long up = item.TryGetProperty("upVotes", out JsonElement upProp) ? upProp.GetInt64() : 0;
+                            long down = item.TryGetProperty("downVotes", out JsonElement downProp) ? downProp.GetInt64() : 0;
+                            if (byUniverse.TryGetValue(universeId, out LibraryGameEntry? game) && up + down > 0)
+                                game.LikePercent = $"{Math.Round(up * 100.0 / (up + down))}%";
+                        }
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.WriteLine("LibraryViewModel", "Votes fetch failed: " + ex.Message);
+                    }
+                })
+        );
+    }
+
+    private void RebuildSidebar(bool force = true)
+    {
+        string query = _sidebarSearch.Trim();
+        IEnumerable<LibraryGameEntry> filtered = _masterGames;
+        if (query.Length > 0)
+            filtered = filtered.Where(g => g.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
+        IEnumerable<LibraryGameEntry> ordered = filtered
+            .OrderByDescending(static game => game.IsPinned)
+            .ThenBy(static game => game.Name, StringComparer.OrdinalIgnoreCase);
+        _suppressSelectionReset = true;
+        try
+        {
+            if (force)
+                ReplaceCollection(SidebarGames, ordered);
+            else
+                ReplaceIfChanged(SidebarGames, ordered);
+        }
+        finally
+        {
+            _suppressSelectionReset = false;
+        }
+        if (_selectedGame != null)
+            OnPropertyChanged(nameof(SelectedGame));
+    }
+
+    private void SelectGame(LibraryGameEntry? game)
+    {
+        if (game == null)
+            return;
+        game = _masterGames.FirstOrDefault(entry => entry.UniverseId == game.UniverseId) ?? game;
+        SelectedGame = game;
+        if (!string.IsNullOrEmpty(game.ThumbnailUrl))
+            Voidstrap.Utility.DynamicRenderSystem.Prefetch(game.ThumbnailUrl, 1024);
+    }
+
+    private void GoHome()
+    {
+        _leavingGame = true;
+        SelectedGame = null;
+        _leavingGame = false;
+    }
+
+    private void Refresh()
+    {
+        _ = LoadAsync(true);
+        _ = Storefront.LoadAsync(force: true);
+    }
+
+    private Task LaunchSubplaceAsync(RobloxSubplaces.Place? place)
+    {
+        if (place == null || SubplacesLoading || !Subplaces.Contains(place))
+            return Task.CompletedTask;
+        return LaunchGameAsync(new LibraryGameEntry { PlaceId = place.Id });
+    }
+
+    private async Task LaunchGameAsync(LibraryGameEntry? game)
+    {
+        if (game == null || (game.PlaceId == 0 && game.UniverseId == 0))
+            return;
+        long placeId = await ResolveStartPlaceAsync(game);
+        if (placeId == 0)
+            return;
+        if (TryLaunchPlayer($"roblox://experiences/start?placeId={placeId}"))
+            Application.Current.Shutdown();
+    }
+
+    internal static bool TryLaunchPlayer(string uri)
+    {
+        try
+        {
+            string voidstrapPath = Paths.LaunchExecutable;
+            Process.Start(
+                new ProcessStartInfo
+                {
+                    FileName = voidstrapPath,
+                    Arguments = $"-player \"{uri}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = Path.GetDirectoryName(voidstrapPath) ?? "",
+                }
+            );
+            return true;
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("LibraryViewModel::LaunchPlayer", ex);
+            return false;
+        }
+    }
+
+    internal static async Task<long> ResolveStartPlaceAsync(LibraryGameEntry game, CancellationToken token = default)
+    {
+        if (game.UniverseId <= 0)
+            return game.PlaceId;
+        UniverseDetails? details = UniverseDetails.LoadFromCache(game.UniverseId);
+        if (details?.Data == null)
+        {
+            try
+            {
+                await UniverseDetails.FetchSingle(game.UniverseId, token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("LibraryViewModel::ResolveStartPlace", ex);
+            }
+            details = UniverseDetails.LoadFromCache(game.UniverseId);
+        }
+        long rootPlaceId = details?.Data?.RootPlaceId ?? 0;
+        if (rootPlaceId <= 0)
+            return game.PlaceId;
+        if (rootPlaceId != game.PlaceId)
+            App.Logger.WriteLine(
+                "LibraryViewModel::LaunchGame",
+                $"Joining the start place {rootPlaceId} of universe {game.UniverseId} instead of the last visited place {game.PlaceId}"
+            );
+        return rootPlaceId;
+    }
+
+    private async Task CreateShortcutAsync(LibraryGameEntry? game)
+    {
+        if (game == null)
+            return;
+        long placeId = await ResolveStartPlaceAsync(game);
+        if (placeId == 0)
+            return;
+        bool created = await GameShortcut.CreateOnDesktopAsync(game.Name, placeId, game.UniverseId);
+        StatusText = string.Format(created ? Strings.Library_ShortcutCreated : Strings.Library_ShortcutFailed, game.Name);
+    }
+
+    private static string GameUrl(LibraryGameEntry game) => $"https://www.roblox.com/games/{game.PlaceId}";
+
+    private static void ViewOnRoblox(LibraryGameEntry? game)
+    {
+        if (game != null && game.PlaceId > 0)
+            Utilities.OpenWebLink(GameUrl(game));
+    }
+
+    private static void CopyGameLink(LibraryGameEntry? game)
+    {
+        if (game == null || game.PlaceId <= 0)
+            return;
+        try
+        {
+            Clipboard.SetText(App.GameInviteLink(game.PlaceId));
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("LibraryViewModel::CopyGameLink", ex);
+        }
+    }
+
+    private void TogglePin(LibraryGameEntry? game)
+    {
+        if (game == null)
+            return;
+        List<AppSettings.LibraryPin> pins = Integrations.LibraryStore.Pins;
+        AppSettings.LibraryPin? existing = pins.FirstOrDefault(p => p.UniverseId == game.UniverseId);
+        if (existing != null)
+        {
+            pins.Remove(existing);
+            game.IsPinned = false;
+        }
+        else
+        {
+            pins.Add(
+                new AppSettings.LibraryPin
+                {
+                    PlaceId = game.PlaceId,
+                    UniverseId = game.UniverseId,
+                    Name = game.Name ?? "",
+                }
+            );
+            game.IsPinned = true;
+        }
+        Integrations.LibraryStore.SetFavoriteHidden(game.UniverseId, false);
+        Integrations.LibraryStore.Save();
+        RebuildSidebar();
+        if (game is StoreGameEntry)
+            _ = LoadAsync(true);
+    }
+
+    public static System.Collections.IComparer SidebarGroupOrder { get; } =
+        Comparer<object>.Create(
+            static (left, right) => (left as LibrarySidebarGroup)?.Order.CompareTo((right as LibrarySidebarGroup)?.Order ?? int.MaxValue) ?? 1
+        );
+
+    public bool IsInLibrary(LibraryGameEntry game)
+    {
+        return _masterGames.Any(entry => entry.UniverseId == game.UniverseId);
+    }
+
+    public void AddToCollection(LibraryGameEntry game, string collectionId)
+    {
+        Integrations.LibraryCollectionStore.Add(collectionId, game.UniverseId);
+        RebuildSidebar();
+    }
+
+    public void RemoveFromCollection(LibraryGameEntry game, string collectionId)
+    {
+        Integrations.LibraryCollectionStore.Remove(collectionId, game.UniverseId);
+        RebuildSidebar();
+    }
+
+    public void CreateCollection(LibraryGameEntry game)
+    {
+        string? name = AskForCollectionName("");
+        if (name == null || Integrations.LibraryCollectionStore.Create(name, game.UniverseId) == null)
+            return;
+        RebuildSidebar();
+    }
+
+    public void RenameCollection(LibrarySidebarGroup group)
+    {
+        if (group.CollectionId == null)
+            return;
+        string? name = AskForCollectionName(group.Name);
+        if (name == null)
+            return;
+        Integrations.LibraryCollectionStore.Rename(group.CollectionId, name);
+        RebuildSidebar();
+    }
+
+    public void DeleteCollection(LibrarySidebarGroup group)
+    {
+        if (group.CollectionId == null)
+            return;
+        MessageBoxResult result = UI.Frontend.ShowMessageBox(
+            string.Format(Strings.Library_DeleteCollectionConfirm, group.Name),
+            MessageBoxImage.Question,
+            MessageBoxButton.YesNo
+        );
+        if (result != MessageBoxResult.Yes)
+            return;
+        Integrations.LibraryCollectionStore.Delete(group.CollectionId);
+        RebuildSidebar();
+    }
+
+    private static string? AskForCollectionName(string initial)
+    {
+        UI.Elements.Dialogs.TextInputDialog dialog = new(Strings.Library_CollectionNamePrompt, initial);
+        dialog.Owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive);
+        dialog.ShowOwnedDialog();
+        return dialog.Confirmed && !string.IsNullOrWhiteSpace(dialog.Value) ? dialog.Value : null;
+    }
+
+    private async Task RemoveGameAsync(LibraryGameEntry? game)
+    {
+        if (game == null)
+            return;
+        MessageBoxResult result = UI.Frontend.ShowMessageBox(
+            string.Format(Strings.Library_RemoveConfirm, game.Name),
+            MessageBoxImage.Question,
+            MessageBoxButton.YesNo
+        );
+        if (result != MessageBoxResult.Yes)
+            return;
+        List<AppSettings.LibraryPin> pins = Integrations.LibraryStore.Pins;
+        pins.RemoveAll(p => p.UniverseId == game.UniverseId);
+        Integrations.LibraryStore.Save();
+        long universeId = game.UniverseId;
+        if (game.IsFavorite)
+            Integrations.LibraryStore.SetFavoriteHidden(universeId, true);
+        Integrations.LibraryCollectionStore.RemoveGame(universeId);
+        await Task.Run(() =>
+        {
+            List<string> sessionKeys = RemoveFromHistoryFile(universeId);
+            Integrations.PlayTimeStore.RemoveUniverse(universeId, sessionKeys);
+        });
+        if (_selectedGame?.UniverseId == universeId)
+            GoHome();
+        await LoadAsync();
+    }
+
+    private List<string> RemoveFromHistoryFile(long universeId)
+    {
+        List<string> removedKeys = new();
+        try
+        {
+            List<Models.Entities.ActivityData> history = ReadHistoryFile();
+            List<Models.Entities.ActivityData> kept = new();
+            foreach (Models.Entities.ActivityData session in history)
+            {
+                if (session.UniverseId == universeId)
+                    removedKeys.Add($"{session.PlaceId}_{session.JobId}");
+                else
+                    kept.Add(session);
+            }
+            if (removedKeys.Count > 0)
+                JsonFile.SerializeAtomic(_historyFilePath, kept, JsonOptions.Indented);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "History remove failed: " + ex.Message);
+        }
+        return removedKeys;
+    }
+
+    private async Task AddGameFromTextAsync()
+    {
+        string text = AddGameText.Trim();
+        if (text.Length == 0)
+            return;
+        long placeId = ParsePlaceId(text);
+        if (placeId <= 0)
+        {
+            StatusText = Strings.Library_InvalidPlace;
+            return;
+        }
+        StatusText = "";
+        try
+        {
+            string url = $"https://apis.roblox.com/universes/v1/places/{placeId}/universe";
+            using JsonDocument doc = JsonDocument.Parse(await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, url));
+            if (!doc.RootElement.TryGetProperty("universeId", out JsonElement idProp) || idProp.ValueKind != JsonValueKind.Number)
+            {
+                StatusText = Strings.Library_PlaceNotFound;
+                return;
+            }
+            long universeId = idProp.GetInt64();
+            List<AppSettings.LibraryPin> pins = Integrations.LibraryStore.Pins;
+            AppSettings.LibraryPin? pin = pins.FirstOrDefault(p => p.UniverseId == universeId);
+            if (pin == null)
+            {
+                pin = new AppSettings.LibraryPin
+                {
+                    PlaceId = placeId,
+                    UniverseId = universeId,
+                    Name = $"Place {placeId}",
+                };
+                pins.Add(pin);
+            }
+            else
+            {
+                pin.PlaceId = placeId;
+                if (string.IsNullOrWhiteSpace(pin.Name))
+                    pin.Name = $"Place {placeId}";
+            }
+            Integrations.LibraryStore.Save();
+            Integrations.LibraryStore.SetFavoriteHidden(universeId, false);
+            AddGameText = "";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Add game failed: " + ex.Message);
+            StatusText = Strings.Library_PlaceNotFound;
+        }
+    }
+
+    private static long ParsePlaceId(string text)
+    {
+        if (long.TryParse(text, out long direct))
+            return direct;
+        int index = text.IndexOf("/games/", StringComparison.OrdinalIgnoreCase);
+        if (index >= 0)
+        {
+            string rest = text.Substring(index + 7);
+            string digits = new string(rest.TakeWhile(char.IsDigit).ToArray());
+            if (long.TryParse(digits, out long fromUrl))
+                return fromUrl;
+        }
+        return 0;
+    }
+
+    private async Task LoadGamePassesAsync(long universeId, long version, CancellationTokenSource cancellation)
+    {
+        CancellationToken ct = cancellation.Token;
+        try
+        {
+            if (_gamePassCache.TryGetValue(universeId, out List<GamePassEntry>? cached))
+            {
+                ApplyGamePasses(universeId, version, cached);
+                return;
+            }
+            ct.ThrowIfCancellationRequested();
+            List<GamePassEntry> passes = new();
+            List<long> forSaleIds = new();
+            string url = $"https://apis.roblox.com/game-passes/v1/universes/{universeId}/game-passes?limit=100&sortOrder=1";
+            using (JsonDocument doc = JsonDocument.Parse(await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, url, token: ct)))
+            {
+                if (doc.RootElement.TryGetProperty("gamePasses", out JsonElement data) && data.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement item in data.EnumerateArray())
+                    {
+                        long id = item.TryGetProperty("id", out JsonElement idProp) ? idProp.GetInt64() : 0;
+                        if (id == 0)
+                            continue;
+                        string name =
+                            item.TryGetProperty("displayName", out JsonElement dispProp) && dispProp.ValueKind == JsonValueKind.String
+                                ? dispProp.GetString() ?? ""
+                                : "";
+                        if (
+                            name.Length == 0
+                            && item.TryGetProperty("name", out JsonElement nameProp)
+                            && nameProp.ValueKind == JsonValueKind.String
+                        )
+                            name = nameProp.GetString() ?? "";
+                        bool forSale =
+                            item.TryGetProperty("isForSale", out JsonElement saleProp) && saleProp.ValueKind == JsonValueKind.True;
+                        if (forSale)
+                            forSaleIds.Add(id);
+                        passes.Add(
+                            new GamePassEntry
+                            {
+                                Id = id,
+                                Name = name,
+                                PriceDisplay = forSale ? "For sale" : "Off sale",
+                            }
+                        );
+                    }
+                }
+            }
+            foreach (GamePassEntry[] batch in passes.Where(p => forSaleIds.Contains(p.Id)).Take(40).Chunk(8))
+            {
+                ct.ThrowIfCancellationRequested();
+                await Task.WhenAll(
+                    batch.Select(async pass =>
+                    {
+                        try
+                        {
+                            using JsonDocument info = JsonDocument.Parse(
+                                await Voidstrap.Utility.Http.GetStringBoundedAsync(
+                                    _http,
+                                    $"https://apis.roblox.com/game-passes/v1/game-passes/{pass.Id}/product-info",
+                                    token: ct
+                                )
+                            );
+                            if (
+                                info.RootElement.TryGetProperty("PriceInRobux", out JsonElement priceProp)
+                                && priceProp.ValueKind == JsonValueKind.Number
+                            )
+                                pass.PriceDisplay = $"R$ {priceProp.GetInt32():N0}";
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Logger.WriteLine("LibraryViewModel", "Gamepass price failed: " + ex.Message);
+                        }
+                    })
+                );
+            }
+            if (passes.Count > 0)
+            {
+                try
+                {
+                    string iconUrl =
+                        $"https://thumbnails.roblox.com/v1/game-passes?gamePassIds={string.Join(',', passes.Select(p => p.Id).Take(100))}&size=150x150&format=Png";
+                    using JsonDocument iconDoc = JsonDocument.Parse(
+                        await Voidstrap.Utility.Http.GetStringBoundedAsync(_http, iconUrl, token: ct)
+                    );
+                    if (iconDoc.RootElement.TryGetProperty("data", out JsonElement iconData) && iconData.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement item in iconData.EnumerateArray())
+                        {
+                            long targetId = item.TryGetProperty("targetId", out JsonElement idProp) ? idProp.GetInt64() : 0;
+                            string? image =
+                                item.TryGetProperty("imageUrl", out JsonElement urlProp) && urlProp.ValueKind == JsonValueKind.String
+                                    ? urlProp.GetString()
+                                    : null;
+                            GamePassEntry? pass = passes.FirstOrDefault(p => p.Id == targetId);
+                            if (pass != null)
+                                pass.IconUrl = image;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.WriteLine("LibraryViewModel", "Gamepass icons failed: " + ex.Message);
+                }
+            }
+            ct.ThrowIfCancellationRequested();
+            _gamePassCache[universeId] = passes;
+            ApplyGamePasses(universeId, version, passes);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Gamepass fetch failed: " + ex.Message);
+            if (IsCurrentGamePassLoad(universeId, version))
+                GamePassStatus = "Could not load this game's store right now.";
+        }
+        finally
+        {
+            if (ReferenceEquals(_gamePassLoadCts, cancellation))
+            {
+                _gamePassLoadCts = null;
+                GamePassesLoading = false;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private void OpenBadge(LibraryBadgeEntry? badge)
+    {
+        if (badge == null || badge.Id <= 0)
+            return;
+        try
+        {
+            Utilities.OpenWebLink($"https://www.roblox.com/badges/{badge.Id}");
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("LibraryViewModel::OpenBadge", ex);
+        }
+    }
+
+    private void RefreshBadges()
+    {
+        if (_selectedGame != null)
+            StartBadgeLoad(_selectedGame, refreshAwarded: true);
+    }
+
+    private void StartBadgeLoad(LibraryGameEntry? game, bool refreshAwarded)
+    {
+        CancellationTokenSource? previous = _badgeLoadCts;
+        _badgeLoadCts = null;
+        previous?.Cancel();
+        long version = Interlocked.Increment(ref _badgeLoadVersion);
+        Badges.Clear();
+        SetBadgeSummary(0, 0);
+        BadgeStatus = "";
+        BadgesLoading = false;
+        if (game == null || game.UniverseId <= 0)
+            return;
+        CancellationTokenSource current = new();
+        _badgeLoadCts = current;
+        BadgesLoading = true;
+        _ = LoadBadgesAsync(game.UniverseId, version, refreshAwarded, current);
+    }
+
+    private bool IsCurrentBadgeLoad(long universeId, long version)
+    {
+        return _selectedGame?.UniverseId == universeId && Interlocked.Read(ref _badgeLoadVersion) == version;
+    }
+
+    private async Task LoadBadgesAsync(long universeId, long version, bool refreshAwarded, CancellationTokenSource cancellation)
+    {
+        CancellationToken token = cancellation.Token;
+        try
+        {
+            RobloxBadges.Progress progress = await RobloxBadges.GetProgressAsync(universeId, refreshAwarded, token, foreground: true);
+            token.ThrowIfCancellationRequested();
+            ApplyBadgeProgressToEntries(universeId, progress);
+            if (!IsCurrentBadgeLoad(universeId, version))
+                return;
+            List<LibraryBadgeEntry> entries = progress
+                .Badges.Select(badge =>
+                {
+                    bool earned = progress.Awarded.TryGetValue(badge.Id, out DateTime when);
+                    return new LibraryBadgeEntry
+                    {
+                        Id = badge.Id,
+                        Name = badge.Name,
+                        Description = badge.Description,
+                        Earned = earned,
+                        AwardedUtc = earned ? when : DateTime.MinValue,
+                        WinRate = badge.WinRate,
+                    };
+                })
+                .OrderByDescending(static entry => entry.Earned)
+                .ThenByDescending(static entry => entry.AwardedUtc)
+                .ThenByDescending(static entry => entry.WinRate)
+                .ToList();
+            Badges.Clear();
+            foreach (LibraryBadgeEntry entry in entries)
+                Badges.Add(entry);
+            if (progress.Total == 0)
+                BadgeStatus = Strings.Library_Badges_None;
+            else if (!progress.SignedIn)
+                BadgeStatus = Strings.Library_Badges_SignedOut;
+            SetBadgeSummary(progress.SignedIn ? progress.Earned : 0, progress.SignedIn ? progress.Total : 0);
+            BadgesLoading = false;
+            if (entries.Count == 0)
+                return;
+            IReadOnlyDictionary<long, string> icons = await RobloxBadges.GetIconsAsync(
+                entries.Select(static entry => entry.Id).ToList(),
+                token
+            );
+            token.ThrowIfCancellationRequested();
+            if (!IsCurrentBadgeLoad(universeId, version))
+                return;
+            foreach (LibraryBadgeEntry entry in entries)
+            {
+                if (icons.TryGetValue(entry.Id, out string? icon))
+                    entry.IconUrl = icon;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("LibraryViewModel", "Badges could not be loaded for universe " + universeId + ": " + ex.Message);
+            if (IsCurrentBadgeLoad(universeId, version) && Badges.Count == 0)
+                BadgeStatus = Strings.Library_Badges_Failed;
+        }
+        finally
+        {
+            if (ReferenceEquals(_badgeLoadCts, cancellation))
+            {
+                _badgeLoadCts = null;
+                BadgesLoading = false;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private void ApplyBadgeProgressToEntries(long universeId, RobloxBadges.Progress progress)
+    {
+        ApplyBadgeSummaryToEntries(universeId, progress.SignedIn ? progress.Earned : -1, progress.Total);
+    }
+
+    private void ApplyBadgeSummaryToEntries(long universeId, int earned, int total)
+    {
+        foreach (LibraryGameEntry entry in _masterGames)
+        {
+            if (entry.UniverseId == universeId)
+                entry.SetBadgeProgress(earned, total);
+        }
+        if (_selectedGame?.UniverseId == universeId)
+            _selectedGame.SetBadgeProgress(earned, total);
+    }
+
+    private void StartBadgeFill(List<LibraryGameEntry> games)
+    {
+        List<long> universes = games.Where(static game => game.UniverseId > 0).Select(static game => game.UniverseId).Distinct().ToList();
+        CancellationTokenSource? previous = _badgeFillCts;
+        CancellationTokenSource current = new();
+        _badgeFillCts = current;
+        previous?.Cancel();
+        _ = FillBadgeProgressAsync(universes, current);
+    }
+
+    private async Task FillBadgeProgressAsync(List<long> universes, CancellationTokenSource cancellation)
+    {
+        CancellationToken token = cancellation.Token;
+        try
+        {
+            long userId = await RobloxBadges.GetSignedInUserIdAsync(token).ConfigureAwait(false);
+            List<long> stale = new();
+            List<(long Universe, int Earned, int Total)> stored = new();
+            foreach (long universeId in universes)
+            {
+                if (RobloxBadges.TryGetStoredSummary(universeId, userId, out int earned, out int total, out bool fresh))
+                {
+                    stored.Add((universeId, earned, total));
+                    if (fresh)
+                        continue;
+                }
+                stale.Add(universeId);
+            }
+            if (stored.Count > 0)
+            {
+                await UpdateUiAsync(() =>
+                    {
+                        foreach ((long universe, int earned, int total) in stored)
+                            ApplyBadgeSummaryToEntries(universe, earned, total);
+                    })
+                    .ConfigureAwait(false);
+            }
+            foreach (long universeId in stale)
+            {
+                token.ThrowIfCancellationRequested();
+                await RobloxBadges.WaitForForegroundAsync(token).ConfigureAwait(false);
+                try
+                {
+                    RobloxBadges.Progress progress = await RobloxBadges
+                        .GetProgressAsync(universeId, refreshAwarded: false, token)
+                        .ConfigureAwait(false);
+                    await UpdateUiAsync(() => ApplyBadgeProgressToEntries(universeId, progress)).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.WriteLine("LibraryViewModel", "Badge progress skipped for universe " + universeId + ": " + ex.Message);
+                }
+                await Task.Delay(1500, token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally
+        {
+            RobloxBadges.SaveNow();
+            if (ReferenceEquals(_badgeFillCts, cancellation))
+                _badgeFillCts = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private bool IsCurrentGamePassLoad(long universeId, long version)
+    {
+        return _selectedGame?.UniverseId == universeId && Interlocked.Read(ref _gamePassLoadVersion) == version;
+    }
+
+    private void ApplyGamePasses(long universeId, long version, List<GamePassEntry> passes)
+    {
+        if (!IsCurrentGamePassLoad(universeId, version))
+            return;
+        GamePasses.Clear();
+        foreach (GamePassEntry pass in passes)
+            GamePasses.Add(pass);
+        GamePassStatus = passes.Count == 0 ? "This game does not sell any gamepasses." : "";
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}

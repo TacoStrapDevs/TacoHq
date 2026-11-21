@@ -1,0 +1,607 @@
+﻿<ui:UiPage x:Class="Voidstrap.UI.Elements.Settings.Pages.OverlaysPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:controls="clr-namespace:Voidstrap.UI.Elements.Controls" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:models="clr-namespace:Voidstrap.UI.ViewModels" xmlns:pages="clr-namespace:Voidstrap.UI.Elements.Settings.Pages" xmlns:resources="clr-namespace:Voidstrap.Resources" xmlns:conv="clr-namespace:Voidstrap.Converters" xmlns:converters="clr-namespace:Voidstrap.UI.Converters" xmlns:settings="clr-namespace:Voidstrap.UI.ViewModels.Settings" xmlns:platform="clr-namespace:Voidstrap.UI" xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" xmlns:gif="clr-namespace:WpfAnimatedGif;assembly=WpfAnimatedGif" Title="OverlaysPage" ui:Breadcrumb.Header="{resources:Loc Ui_Mods_Overlays}" Scrollable="True">
+  <FrameworkElement.Resources>
+    <ResourceDictionary>
+      <conv:EnumToVisibilityConverter x:Key="EnumToVisibilityConverter" />
+      <conv:EnumNotEqualsVisibilityConverter x:Key="EnumNotEqualsVisibilityConverter" />
+      <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </ResourceDictionary>
+  </FrameworkElement.Resources>
+  <StackPanel Margin="0,0,14,14">
+    <StackPanel Margin="0" Height="Auto">
+
+      <ui:CardExpander IsExpanded="False">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Mods_SessionDock}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap" Text="{Binding SessionDockDescription}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Margin="12,0,12,0" Orientation="Horizontal">
+              <Button Margin="0,0,12,0" VerticalAlignment="Center" Content="{resources:Loc Ui_Mods_ResetShortcut}" Command="{Binding ResetSessionDockShortcutCommand}" IsEnabled="{Binding CanResetSessionDockShortcut}" />
+              <ui:ToggleSwitch VerticalAlignment="Center" IsChecked="{Binding SessionDockEnabled, Mode=TwoWay}" />
+            </StackPanel>
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+          <controls:OptionControl Margin="0,-8,0,0" Header="{resources:Loc Ui_Mods_SessionDockSpotify_Title}" Description="{resources:Loc Ui_Mods_SessionDockSpotify_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding SessionDockSpotify, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_OverlayStudio_ShowServerLocation}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleServerLocation, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_OverlayStudio_ShowClock}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleClock, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_OverlayStudio_EnableCrosshair}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleCrosshair, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_Title}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleKeystrokes, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_SessionNotify_DockNews_Title}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleNews, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_MusicIsland_Title}" Description="{resources:Loc Ui_Mods_SessionDockShortcut_Description}" IsEnabled="{Binding SessionDockEnabled}">
+            <ui:ToggleSwitch IsChecked="{Binding DockToggleMusicIsland, Mode=TwoWay}" />
+          </controls:OptionControl>
+        </StackPanel>
+      </ui:CardExpander>
+
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="{Binding MusicIslandOverlay, Mode=OneWay}">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_MusicIsland_Title}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" TextWrapping="Wrap" Text="{resources:Loc Ui_MusicIsland_Description}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" IsChecked="{Binding MusicIslandOverlay, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+        <controls:OptionControl Margin="0,-8,0,0" Header="{resources:Loc Ui_MusicIsland_Position}" IsEnabled="{Binding MusicIslandOverlay}">
+          <ComboBox Width="200" ItemsSource="{Binding MusicIslandPositions}" SelectedIndex="{Binding MusicIslandPositionIndex, Mode=TwoWay}" />
+        </controls:OptionControl>
+        <controls:OptionControl Header="{resources:Loc Ui_MusicIsland_Interactive}" Description="{resources:Loc Ui_MusicIsland_InteractiveDescription}" IsEnabled="{Binding MusicIslandOverlay}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+          <ui:ToggleSwitch IsChecked="{Binding MusicIslandInteractive, Mode=TwoWay}" />
+        </controls:OptionControl>
+        </StackPanel>
+      </ui:CardExpander>
+
+      <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/#notifications" Header="{resources:Loc Ui_Mods_ScreenshotNotify_Title}" Description="{resources:Loc Ui_Mods_ScreenshotNotify_Description}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+        <ui:ToggleSwitch IsChecked="{Binding ScreenshotNotifications, Mode=TwoWay}" />
+      </controls:OptionControl>
+
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Keystrokes_Title}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Keystrokes_Description}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" IsChecked="{Binding KeystrokesOverlayEnabled, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+          <ui:InfoBar Margin="0,0,0,12" Padding="8" Severity="Warning" IsClosable="False" IsOpen="True" Message="{resources:Loc Ui_Keystrokes_LinuxInputNotice}" Visibility="{Binding KeystrokesLinuxInputNoticeVisible, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+          <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/#keystrokes" Header="{resources:Loc Ui_Keystrokes_Theme}" Description="{resources:Loc Ui_Keystrokes_ThemeDescription}">
+            <StackPanel Orientation="Horizontal">
+              <ComboBox MinWidth="210" Padding="10,5" ItemsSource="{Binding KeystrokeThemeOptions}" SelectedItem="{Binding SelectedKeystrokeTheme, Mode=TwoWay}" SelectedIndex="{Binding SelectedKeystrokeThemeIndex, Mode=TwoWay}" />
+              <ui:Button Margin="8,0,0,0" Icon="Play24" Content="{resources:Loc CustomTheme_Editor_Preview}" VerticalAlignment="Center" Command="{Binding PreviewKeystrokesCommand}" />
+              <ui:Button Margin="8,0,0,0" Icon="DesktopEdit24" Content="{resources:Loc Ui_Appearance_OpenEditor}" VerticalAlignment="Center" Command="{Binding EditKeystrokeThemeCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_Size}" Description="{resources:Loc Ui_Keystrokes_SizeDescription}">
+            <ComboBox MinWidth="150" Padding="10,5" ItemsSource="{Binding KeystrokesScalePresets}" SelectedItem="{Binding SelectedKeystrokesScalePreset, Mode=TwoWay}" />
+          </controls:OptionControl>
+
+          <Grid Margin="0,8,0,12">
+            <ui:CardExpander Style="{StaticResource NoUserExpansionCardExpanderStyle}" IsExpanded="True">
+              <HeaderedContentControl.Header>
+                <StackPanel>
+                  <TextBlock FontSize="14" Text="{resources:Loc Ui_Keystrokes_ThemeCreator}" />
+                  <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Keystrokes_ThemeCreatorDescription}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+              </HeaderedContentControl.Header>
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="250" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <ListBox Name="CustomKeystrokeThemesListBox" Height="220" Grid.Row="0" Grid.Column="0" Margin="0,0,5,0" ItemsSource="{Binding CustomKeystrokeThemes, Mode=OneWay}" SelectedIndex="{Binding SelectedCustomKeystrokeThemeIndex, Mode=TwoWay}" />
+
+                <Grid Grid.Row="1" Grid.Column="0" Margin="0,8,5,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <ui:Button Grid.Column="0" Margin="0,0,4,0" Icon="Add24" Content="{resources:Loc Ui_Appearance_NewTheme}" Appearance="Primary" HorizontalAlignment="Stretch" Command="{Binding AddCustomKeystrokeThemeCommand, Mode=OneTime}" />
+                  <ui:Button Grid.Column="1" Margin="4,0,0,0" Icon="Delete24" Content="{resources:Loc Common_Delete}" Appearance="Danger" HorizontalAlignment="Stretch" IsEnabled="{Binding IsCustomKeystrokeThemeSelected, Mode=OneWay}" Command="{Binding DeleteCustomKeystrokeThemeCommand, Mode=OneTime}" />
+                </Grid>
+
+                <StackPanel Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Margin="8,0,0,0">
+                  <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                      <Setter Property="Visibility" Value="Visible" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsCustomKeystrokeThemeSelected}" Value="False">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </StackPanel.Style>
+
+                  <TextBlock Text="{resources:Loc Ui_Appearance_ThemeName}" FontWeight="SemiBold" />
+                  <Grid Margin="0,5,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBox Grid.Column="0" Text="{Binding SelectedCustomKeystrokeThemeName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <ui:Button Grid.Column="1" Margin="8,0,0,0" Icon="Save24" Content="{resources:Loc Ui_Appearance_SaveName}" Command="{Binding RenameCustomKeystrokeThemeCommand, Mode=OneTime}" />
+                  </Grid>
+
+                  <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <ui:Button Grid.Column="0" Margin="0,0,4,0" Icon="DesktopEdit24" Content="{resources:Loc Ui_Appearance_OpenEditor}" Appearance="Primary" HorizontalAlignment="Stretch" Command="{Binding EditCustomKeystrokeThemeCommand, Mode=OneTime}" />
+                    <ui:Button Grid.Column="1" Margin="4,0,0,0" Icon="Play24" Content="{resources:Loc CustomTheme_Editor_Preview}" HorizontalAlignment="Stretch" Command="{Binding PreviewCustomKeystrokeThemeCommand}" />
+                  </Grid>
+
+                  <Expander Margin="0,10,0,0" Header="{resources:Loc Ui_Appearance_MoreActions}" IsExpanded="False">
+                    <Grid Margin="0,8,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <ui:Button Grid.Column="0" Margin="0,0,4,0" Icon="ImageMultiple24" Content="{resources:Loc Ui_Appearance_ViewFiles}" HorizontalAlignment="Stretch" Command="{Binding ViewCustomKeystrokeThemeFilesCommand, Mode=OneTime}" />
+                      <ui:Button Grid.Column="1" Margin="4,0,0,0" Icon="ArrowExportRtl24" Content="{resources:Loc Common_Export}" HorizontalAlignment="Stretch" Command="{Binding ExportCustomKeystrokeThemeCommand, Mode=OneTime}" />
+                    </Grid>
+                  </Expander>
+                </StackPanel>
+
+                <TextBlock Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Margin="8,0,0,0" Text="{resources:Loc Ui_Appearance_SelectThemeHint}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Visibility" Value="Visible" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsCustomKeystrokeThemeSelected}" Value="True">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Grid>
+            </ui:CardExpander>
+          </Grid>
+
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_ShowKeys}" Description="{resources:Loc Ui_Keystrokes_ShowKeysHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesShowKeys, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_ShowMouseButtons}" Description="{resources:Loc Ui_Keystrokes_ShowMouseButtonsHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesShowMouseButtons, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_ShowSpaceAndShift}" Description="{resources:Loc Ui_Keystrokes_ShowSpaceAndShiftHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesShowSpaceAndShift, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_ShowCps}" Description="{resources:Loc Ui_Keystrokes_ShowCpsHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesShowCps, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_KeyboardSound}" Description="{resources:Loc Ui_Keystrokes_KeyboardSoundHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesKeyboardSound, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_KeyboardSoundPack}" Description="{resources:Loc Ui_Keystrokes_KeyboardSoundPackHint}" Visibility="{Binding KeystrokesKeyboardSound, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding KeystrokesKeyboardSoundPackOptions}" SelectedItem="{Binding SelectedKeystrokesKeyboardSoundPack, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_KeyboardCustomWav}" Description="{Binding KeystrokesKeyboardCustomWavName}" Visibility="{Binding KeystrokesKeyboardIsCustom, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Orientation="Horizontal">
+              <Button Width="110" Content="{resources:Loc Ui_Keystrokes_ChooseFile}" Command="{Binding BrowseKeyboardCustomWavCommand}" />
+              <Button Width="80" Margin="8,0,0,0" Content="{resources:Loc Ui_Clipper_Reset}" Command="{Binding ClearKeyboardCustomWavCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_KeyboardVolume}" Description="{resources:Loc Ui_Keystrokes_KeyboardVolumeHint}" Visibility="{Binding KeystrokesKeyboardSound, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="100" TickFrequency="5" VerticalAlignment="Center" Value="{Binding KeystrokesKeyboardVolume, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding KeystrokesKeyboardVolumeText}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_MouseSound}" Description="{resources:Loc Ui_Keystrokes_MouseSoundHint}">
+            <ui:ToggleSwitch IsChecked="{Binding KeystrokesMouseSound, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_MouseSoundPack}" Description="{resources:Loc Ui_Keystrokes_MouseSoundPackHint}" Visibility="{Binding KeystrokesMouseSound, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding KeystrokesMouseSoundPackOptions}" SelectedItem="{Binding SelectedKeystrokesMouseSoundPack, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_MouseCustomWav}" Description="{Binding KeystrokesMouseCustomWavName}" Visibility="{Binding KeystrokesMouseIsCustom, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Orientation="Horizontal">
+              <Button Width="110" Content="{resources:Loc Ui_Keystrokes_ChooseFile}" Command="{Binding BrowseMouseCustomWavCommand}" />
+              <Button Width="80" Margin="8,0,0,0" Content="{resources:Loc Ui_Clipper_Reset}" Command="{Binding ClearMouseCustomWavCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Keystrokes_MouseVolume}" Description="{resources:Loc Ui_Keystrokes_MouseVolumeHint}" Visibility="{Binding KeystrokesMouseSound, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="100" TickFrequency="5" VerticalAlignment="Center" Value="{Binding KeystrokesMouseVolume, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding KeystrokesMouseVolumeText}" />
+            </StackPanel>
+          </controls:OptionControl>
+        </StackPanel>
+      </ui:CardExpander>
+
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="False" Header="{resources:Loc Ui_Mods_Display}" Visibility="{x:Static platform:PlatformFeatureVisibility.NotMacOS}">
+        <StackPanel>
+                  <StackPanel Margin="0,8,0,0" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+        <StackPanel>
+          <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/#visual-filters" Header="{resources:Loc Ui_Mods_Saturation}" Description="{resources:Loc Ui_Mods_100IsNormal}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="200" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding Saturation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding SaturationDisplay}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Contrast}" Description="{resources:Loc Ui_Mods_100IsNormal}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="200" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding Contrast, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding ContrastDisplay}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Warmth}" Description="{resources:Loc Ui_Mods_NegativeIsCoolerPositiveIsWarmer}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="-100" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding ColorTemperature, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding ColorTemperatureDisplay}" />
+            </StackPanel>
+          </controls:OptionControl>
+        </StackPanel>
+      </StackPanel>
+
+      <StackPanel Margin="0,14,0,0" Visibility="{x:Static platform:PlatformFeatureVisibility.NotMacOS}">
+        <StackPanel>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_AntiAliasing}" Description="{resources:Loc Ui_Mods_SmoothsJaggedEdgesUsingYourGpu}">
+            <ComboBox Padding="10,5,10,5" MinWidth="140" ItemsSource="{Binding AntiAliasingMethodNames, Mode=OneTime}" SelectedIndex="{Binding AntiAliasingMethodIndex, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_MotionBlur}" Description="{resources:Loc Ui_Mods_AddsAMotionTrailToMovement}" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+            <ComboBox Padding="10,5,10,5" MinWidth="140" ItemsSource="{Binding MotionBlurStrengthNames, Mode=OneTime}" SelectedIndex="{Binding MotionBlurStrengthIndex, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <StackPanel Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+            <controls:OptionControl Header="{resources:Loc Ui_Mods_CustomMotionBlur}" Description="{resources:Loc Ui_Mods_100IsNormal200IsExtreme}" Visibility="{Binding MotionBlurCustomOpen, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <StackPanel Orientation="Horizontal">
+                <Slider Width="200" Minimum="{Binding MotionBlurCustomMin, Mode=OneTime}" Maximum="{Binding MotionBlurCustomMax, Mode=OneTime}" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding MotionBlurCustomAmount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding MotionBlurCustomAmount, Mode=OneWay}" />
+              </StackPanel>
+            </controls:OptionControl>
+          </StackPanel>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_FrameGenerationV100}" Description="{resources:Loc Ui_Mods_AddsGeneratedFramesBetweenRealOnes}" Visibility="{x:Static platform:PlatformFeatureVisibility.FrameGeneration}">
+            <ui:ToggleSwitch IsChecked="{Binding FrameGenEnabled, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_ShowGeneratedFrames}" Description="{resources:Loc Ui_Mods_DisplaysHowManyFramesAreBeing}" Visibility="{x:Static platform:PlatformFeatureVisibility.FrameGeneration}">
+            <ui:ToggleSwitch IsChecked="{Binding FrameGenOverlayShow, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <StackPanel Visibility="{x:Static platform:PlatformFeatureVisibility.FrameGeneration}">
+            <ui:InfoBar Margin="0,8,0,0" Severity="Warning" IsClosable="False" IsOpen="{Binding FrameGenCapWarningOpen, Mode=OneWay}" Message="{Binding FrameGenCapWarningMessage, Mode=OneWay}" Visibility="{Binding FrameGenCapWarningOpen, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <Button Content="{resources:Loc Ui_Mods_FixFrameCap}" Command="{Binding FixFrameCapCommand}" />
+            </ui:InfoBar>
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="False" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Mods_ColorBlindness}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Mods_RecolorsTheScreenSoColorsAre}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" IsChecked="{Binding ColorBlindnessEnabled, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+          <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/#server-readout" Header="{resources:Loc ContextMenu_ServerInformation_Type}">
+            <ComboBox SelectedIndex="{Binding ColorBlindnessType, Mode=TwoWay}">
+              <ComboBoxItem Content="Protanopia (red/green)" />
+              <ComboBoxItem Content="Deuteranopia (red/green)" />
+              <ComboBoxItem Content="Tritanopia (blue/yellow)" />
+            </ComboBox>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Strength}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="100" TickFrequency="25" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding ColorBlindnessSeverity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding ColorBlindnessSeverityDisplay}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_SimulateInstead}" Description="{resources:Loc Ui_Mods_ShowsWhatColorBlindPeopleSee}">
+            <ui:ToggleSwitch IsChecked="{Binding ColorBlindnessSimulate, Mode=TwoWay}" />
+          </controls:OptionControl>
+        </StackPanel>
+      </ui:CardExpander>
+
+        </StackPanel>
+      </ui:CardExpander>
+
+      <TextBlock Margin="2,20,0,0" FontSize="16" FontWeight="SemiBold" Text="{resources:Loc Ui_Appearance_Background}" />
+                  <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Mods_HomepageBackground}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Mods_ReplaceTheDarkRobloxHomeBackground}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" IsChecked="{Binding HomepageBackgroundOverlayEnabled, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+          <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/" Header="{resources:Loc Menu_Appearance_Style_Title}" Description="{resources:Loc Ui_Mods_WhatToShowBehindTheHome}">
+            <ComboBox Width="190" Padding="10,5" ItemsSource="{Binding HomepageBackgroundModes}" SelectedItem="{Binding SelectedHomepageBackgroundMode, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/overlays/#crosshair" Header="{resources:Loc Ui_Appearance_Color}" Visibility="{Binding ShowHomepageSolidColor, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Button Width="120" Content="{Binding HomepageBackgroundOverlayColor}" Command="{Binding PickHomepageBackgroundColorCommand}" />
+          </controls:OptionControl>
+          <StackPanel Visibility="{Binding ShowHomepageGradient, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <controls:OptionControl Header="{resources:Loc Ui_Mods_Colors}" Description="{resources:Loc Ui_Mods_StartAndEndOfTheGradient}">
+              <StackPanel Orientation="Horizontal">
+                <Button Width="110" Content="{Binding HomepageBackgroundOverlayColor}" Command="{Binding PickHomepageBackgroundColorCommand}" />
+                <Button Width="110" Margin="8,0,0,0" Content="{Binding HomepageBackgroundOverlayGradientColor}" Command="{Binding PickHomepageBackgroundGradientColorCommand}" />
+              </StackPanel>
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Mods_Direction}">
+              <StackPanel Orientation="Horizontal">
+                <Slider Width="200" Minimum="0" Maximum="360" TickFrequency="1" VerticalAlignment="Center" Value="{Binding HomepageBackgroundOverlayGradientAngle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding HomepageBackgroundOverlayGradientAngleDisplay}" />
+              </StackPanel>
+            </controls:OptionControl>
+          </StackPanel>
+          <StackPanel Visibility="{Binding ShowHomepageMedia, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <controls:OptionControl Header="{resources:Loc Ui_Mods_File}" Description="{Binding HomepageBackgroundOverlayMediaName}">
+              <ui:Button MinWidth="120" Content="{Binding HomepageBackgroundMediaButtonText}" Command="{Binding ToggleHomepageBackgroundMediaCommand}">
+                <FrameworkElement.Style>
+                  <Style BasedOn="{StaticResource {x:Type ui:Button}}" TargetType="{x:Type ui:Button}">
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding HasHomepageBackgroundMedia}" Value="True">
+                        <Setter Property="Appearance" Value="Danger" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </FrameworkElement.Style>
+              </ui:Button>
+            </controls:OptionControl>
+            <Border Height="150" Margin="0,8,0,4" CornerRadius="6"
+                    Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                    BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="1"
+                    ClipToBounds="True" SnapsToDevicePixels="True"
+                    Visibility="{Binding HasHomepageBackgroundMedia, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <Grid>
+                <Grid Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
+                  <Image Stretch="UniformToFill" IsHitTestVisible="False"
+                         Source="{Binding HomepageMediaStillSource}"
+                         Visibility="{Binding HomepageMediaIsStill, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                  <Image Stretch="UniformToFill" IsHitTestVisible="False"
+                         gif:ImageBehavior.RepeatBehavior="Forever"
+                         gif:ImageBehavior.AnimatedSource="{Binding HomepageMediaAnimatedSource}"
+                         Visibility="{Binding HomepageMediaIsAnimated, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                  <controls:HomepageMediaPreviewVideo IsHitTestVisible="False"
+                                                      Visibility="{Binding HomepageMediaIsVideo, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                </Grid>
+                <controls:HomepageMediaPreviewVideo IsHitTestVisible="False"
+                                                    SourcePath="{Binding HomepageBackgroundOverlayMediaPath}"
+                                                    Visibility="{x:Static platform:PlatformFeatureVisibility.PortableImages}" />
+                <TextBlock Margin="10" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap"
+                           TextAlignment="Center" Opacity="0.7" Text="{Binding HomepageMediaPreviewMessage}"
+                           Visibility="{Binding HasHomepageMediaPreviewMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
+              </Grid>
+            </Border>
+          </StackPanel>
+        </StackPanel>
+      </ui:CardExpander>
+
+      <TextBlock Margin="2,20,0,0" FontSize="16" FontWeight="SemiBold" Text="{resources:Loc Ui_VoidEdit_Section}" Visibility="{x:Static platform:PlatformFeatureVisibility.VoidEdit}" />
+      <StackPanel x:Name="VoidEditPanel" DataContext="{x:Null}" Margin="0,8,0,0" Visibility="{x:Static platform:PlatformFeatureVisibility.VoidEdit}">
+        <ui:InfoBar Padding="8" IsClosable="False" IsOpen="True" Severity="Warning" Message="{resources:Loc Ui_VoidEdit_AlphaNotice}" />
+        <ui:CardAction x:Name="VoidEditCard" Margin="0,8,0,0" MinHeight="78" Icon="Video24" IsEnabled="False" Click="VoidEditCard_Click">
+          <StackPanel>
+            <TextBlock FontSize="14" FontWeight="Medium" Text="Void Edit" />
+            <TextBlock x:Name="VoidEditCardStatus" Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_VoidEdit_Card_Install}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+        </ui:CardAction>
+        <ui:CardExpander Margin="0,8,0,0" IsExpanded="False" Visibility="{x:Static platform:PlatformFeatureVisibility.NotMacOS}">
+          <HeaderedContentControl.Header>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel VerticalAlignment="Center">
+                <TextBlock FontSize="14" Text="{resources:Loc Ui_Clipper_Title}" />
+                <TextBlock Margin="0,2,0,0" FontSize="12" Text="{Binding ClipperDescription}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,8,0">
+                <Button Margin="0,0,12,0" VerticalAlignment="Center" Content="{resources:Loc Ui_Mods_ResetShortcut}" Command="{Binding ResetClipperShortcutCommand}" IsEnabled="{Binding CanResetClipperShortcut}" />
+                <ui:ToggleSwitch VerticalAlignment="Center" IsChecked="{Binding ClipperEnabled, Mode=TwoWay}" />
+              </StackPanel>
+            </Grid>
+          </HeaderedContentControl.Header>
+          <StackPanel>
+            <controls:OptionControl HelpLink="https://wiki.voidstrapp.pages.dev/features/rishade/#video-clipper" Header="{resources:Loc Ui_Clipper_RecordingMode}" Description="{resources:Loc Ui_Clipper_RecordingModeHint}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperModeOptions}" SelectedItem="{Binding SelectedClipperMode, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_BufferLength}" Description="{resources:Loc Ui_Clipper_BufferLengthHint}" Visibility="{Binding ClipperIsClipMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperBufferOptions}" SelectedItem="{Binding SelectedClipperBuffer, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_RecordOnGameStart}" Description="{resources:Loc Ui_Clipper_RecordOnGameStartHint}">
+              <ui:ToggleSwitch IsChecked="{Binding ClipperRecordOnGameStart, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_RedBorder}" Description="{resources:Loc Ui_Clipper_RedBorderHint}">
+              <ui:ToggleSwitch IsChecked="{Binding ClipperRedBorder, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_VideoQuality}" Description="{resources:Loc Ui_Clipper_VideoQualityHint}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperQualityOptions}" SelectedItem="{Binding SelectedClipperQuality, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_Resolution}" Description="{resources:Loc Ui_Clipper_ResolutionHint}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperResolutionOptions}" SelectedItem="{Binding SelectedClipperResolution, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_FrameRate}" Description="{resources:Loc Ui_Clipper_FrameRateHint}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperFpsOptions}" SelectedItem="{Binding SelectedClipperFps, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_Codec}" Description="{resources:Loc Ui_Clipper_CodecHint}">
+              <ComboBox Width="200" Padding="10,5" ItemsSource="{Binding ClipperCodecOptions}" SelectedItem="{Binding SelectedClipperCodec, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_GameAudio}" Description="{resources:Loc Ui_Clipper_GameAudioHint}">
+              <ui:ToggleSwitch IsChecked="{Binding ClipperGameAudio, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_Microphone}" Description="{resources:Loc Ui_Clipper_MicrophoneHint}">
+              <ui:ToggleSwitch IsChecked="{Binding ClipperMicrophone, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_StatusIndicator}" Description="{resources:Loc Ui_Clipper_StatusIndicatorHint}">
+              <ui:ToggleSwitch IsChecked="{Binding ClipperShowIndicator, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_VoidEdit_AskRecordings_Title}" Description="{resources:Loc Ui_VoidEdit_AskRecordings_Description}" Visibility="{x:Static platform:PlatformFeatureVisibility.VoidEdit}">
+              <ui:ToggleSwitch IsChecked="{Binding VoidEditAskForRecordings, Mode=TwoWay}" />
+            </controls:OptionControl>
+            <controls:OptionControl Header="{resources:Loc Ui_Clipper_ClipsFolder}" Description="{resources:Loc Ui_Clipper_ClipsFolderHint}">
+              <Button Width="140" Content="{resources:Loc Ui_Clipper_OpenFolder}" Command="{Binding OpenClipsFolderCommand}" />
+            </controls:OptionControl>
+          </StackPanel>
+        </ui:CardExpander>
+      </StackPanel>
+
+      <TextBlock Margin="2,20,0,0" FontSize="16" FontWeight="SemiBold" Text="{resources:Loc Ui_Mods_Display}" />
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Mods_Clock}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Mods_ShowsTheTimeInTheCorner}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" IsChecked="{Binding CurrentTimeDisplay, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+      <StackPanel IsEnabled="{Binding CurrentTimeDisplay}">
+        <controls:OptionControl Header="{resources:Loc Ui_Mods_TimeZone}" Description="{resources:Loc Ui_Mods_SystemFollowsThisComputer}">
+          <ComboBox Width="280" Padding="10,5,10,5" SelectedValuePath="Id" DisplayMemberPath="Display"
+                    ItemsSource="{Binding ClockTimeZones, Mode=OneTime}"
+                    SelectedValue="{Binding ClockTimeZoneId, Mode=TwoWay}" />
+        </controls:OptionControl>
+        <controls:OptionControl Header="{resources:Loc Ui_Mods_24HourClock}" Description="{resources:Loc Ui_Mods_1430InsteadOf230}">
+          <ui:ToggleSwitch IsChecked="{Binding Clock24Hour, Mode=TwoWay}" />
+        </controls:OptionControl>
+      </StackPanel>
+      </ui:CardExpander>
+      <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+        <HeaderedContentControl.Header>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock FontSize="14" Text="{resources:Loc Ui_Mods_Crosshair}" />
+              <TextBlock Margin="0,2,0,0" FontSize="12" Text="{resources:Loc Ui_Mods_DrawYourOwnCrosshairOverThe}" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" IsChecked="{Binding Crosshair, Mode=TwoWay}" />
+          </Grid>
+        </HeaderedContentControl.Header>
+        <StackPanel>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_CrosshairShortcut_Title}" Description="{resources:Loc Ui_Mods_CrosshairShortcut_Description}">
+            <ui:ToggleSwitch IsChecked="{Binding CrosshairShortcutEnabled, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_CrosshairShortcut_Key}" IsEnabled="{Binding CrosshairShortcutEnabled}">
+            <StackPanel>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Loaded="CrosshairKeyBox_Loaded" MinWidth="130" Height="34" BorderThickness="1"
+                           Click="CrosshairKeyBox_Click" PreviewKeyDown="CrosshairKeyBox_KeyDown" LostKeyboardFocus="CrosshairKeyBox_LostFocus">
+                  <TextBlock Margin="4,0" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" />
+                </ui:Button>
+                <ui:Button Height="34" Margin="8,0,0,0" Focusable="False" Content="{resources:Loc Common_Reset}" Click="CrosshairKeyReset_Click" />
+              </StackPanel>
+              <TextBlock Loaded="CrosshairKeyStatus_Loaded" Margin="0,6,0,0" MaxWidth="320" HorizontalAlignment="Right" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Visibility="Collapsed" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Appearance_Shape}">
+            <ComboBox Width="160" ItemsSource="{Binding CrosshairShapes}" SelectedItem="{Binding SelectedShape, Mode=TwoWay}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_GifLink}" Description="{resources:Loc Ui_Mods_AnimatedGifUrlToUseAs}" Visibility="{Binding SelectedShape, Converter={StaticResource EnumToVisibilityConverter}, ConverterParameter=Image}">
+            <ui:TextBox Width="260" Text="{Binding ImageUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Colors}" Description="{resources:Loc Ui_Mods_FillAndOutline}" Visibility="{Binding SelectedShape, Converter={StaticResource EnumNotEqualsVisibilityConverter}, ConverterParameter=Image}">
+            <StackPanel Orientation="Horizontal">
+              <ui:TextBox Width="100" Text="{Binding CursorColorHex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <ui:Button Content="{resources:Loc Ui_Mods_Pick}" Margin="4,0,10,0" Command="{Binding PickCursorColorCommand}" />
+              <ui:TextBox Width="100" Text="{Binding CursorOutlineColorHex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+              <ui:Button Content="{resources:Loc Ui_Mods_Pick}" Margin="4,0,0,0" Command="{Binding PickOutlineColorCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Size}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="4" Maximum="60" VerticalAlignment="Center" Value="{Binding CursorSize, Mode=TwoWay}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding CursorSize}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Thickness}" Visibility="{Binding SelectedShape, Converter={StaticResource EnumNotEqualsVisibilityConverter}, ConverterParameter=Image}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="1" Maximum="10" VerticalAlignment="Center" Value="{Binding CrosshairThickness, Mode=TwoWay}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding CrosshairThickness}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_CenterGap}" Visibility="{Binding SelectedShape, Converter={StaticResource EnumNotEqualsVisibilityConverter}, ConverterParameter=Image}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0" Maximum="32" VerticalAlignment="Center" Value="{Binding Gap, Mode=TwoWay}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding Gap}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_Opacity}">
+            <StackPanel Orientation="Horizontal">
+              <Slider Width="200" Minimum="0.1" Maximum="1.0" VerticalAlignment="Center" Value="{Binding CursorOpacity, Mode=TwoWay}" />
+              <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding CursorOpacity, StringFormat=0.00}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc CustomTheme_Editor_Preview}">
+            <Border Width="160" Height="160" BorderThickness="1" BorderBrush="{DynamicResource ControlElevationBorderBrush}" CornerRadius="6">
+              <Image Stretch="Uniform" Margin="8" Source="{Binding CursorPreview, TargetNullValue={x:Null}}" />
+            </Border>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Menu_About_Contributors_Code}" Description="{resources:Loc Ui_Mods_ShareOrPasteACrosshairCode}">
+            <StackPanel Orientation="Horizontal">
+              <ui:TextBox Width="200" Text="{Binding CursorCode, Mode=TwoWay}" />
+              <ui:Button Content="{resources:Loc Ui_Mods_Generate}" Margin="4,0,0,0" Command="{Binding GenerateCursorCodeCommand}" />
+              <ui:Button Content="{resources:Loc Mtu_Apply}" Margin="4,0,0,0" Command="{Binding ApplyCursorCodeCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+          <controls:OptionControl Header="{resources:Loc Ui_Mods_SaveAsFile}">
+            <StackPanel Orientation="Horizontal">
+              <ui:Button Content=".CUR" Margin="0,0,4,0" Command="{Binding DownloadCurCommand}" />
+              <ui:Button Content=".PNG" Command="{Binding DownloadPngCommand}" />
+            </StackPanel>
+          </controls:OptionControl>
+        </StackPanel>
+      </ui:CardExpander>
+    </StackPanel>
+  </StackPanel>
+</ui:UiPage>

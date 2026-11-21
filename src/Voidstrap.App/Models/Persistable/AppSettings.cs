@@ -1,0 +1,663 @@
+﻿using System.Collections.ObjectModel;
+using System.IO;
+using System.Text.Json.Serialization;
+using Voidstrap.Enums;
+using Voidstrap.Platform.Linux;
+
+namespace Voidstrap.Models.Persistable
+{
+    /// <summary>
+    /// Represents configuration settings for Voidstrap.
+    /// </summary>
+    public class AppSettings
+    {
+        // General Configuration
+        public BootstrapperStyle BootstrapperStyle { get; set; } =
+            !OperatingSystem.IsWindows()
+                ? BootstrapperStyle.FluentDialog
+                : (
+                    OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                        ? BootstrapperStyle.FluentAeroDialog
+                        : BootstrapperStyle.FluentDialog
+                );
+        public BootstrapperScale BootstrapperScale { get; set; } = BootstrapperScale.Normal;
+        public BootstrapperIcon BootstrapperIcon { get; set; } = BootstrapperIcon.IconVoidstrap;
+        public BootstrapperIcon StudioBootstrapperIcon { get; set; }
+        public bool LaunchGameIcon { get; set; } = true;
+        private bool _riShadeEnabled;
+        public bool RiShadeEnabled
+        {
+            get => App.RiShadeAvailable && _riShadeEnabled;
+            set => _riShadeEnabled = App.RiShadeAvailable && value;
+        }
+        public string RiShadeDepthModel { get; set; } = "RiDepth";
+        public bool RiShadePerformancePromptShown { get; set; }
+        public OverlayShortcut RiShadeOverlayShortcut { get; set; } = new() { Modifiers = 0, Key = 0x24 };
+        public bool StudioReShadeEnabled { get; set; } = false;
+        public int AntiAliasingMethodIndex { get; set; } = 0;
+        public int MotionBlurStrengthIndex { get; set; } = 0;
+        public int MotionBlurCustomAmount { get; set; } = 100;
+        public int FrameGenModeIndex { get; set; } = 0;
+        public bool FrameGenOverlayShow { get; set; } = false;
+        public int FrameGenResumeIndex { get; set; } = 0;
+        public bool FrameGenAutoElevate { get; set; } = true;
+        public bool FrameGenUncap { get; set; } = false;
+        public bool? FpsUnlockerEnabled { get; set; }
+        public bool FrameGenSplitCompare { get; set; } = false;
+        public int FrameGenTargetFps { get; set; } = 0;
+
+        [JsonIgnore]
+        public BootstrapperIcon ActiveBootstrapperIcon
+        {
+            get
+            {
+                if (
+                    App.LaunchSettings == null
+                    || (
+                        App.LaunchSettings.RobloxLaunchMode != LaunchMode.Studio
+                        && App.LaunchSettings.RobloxLaunchMode != LaunchMode.StudioAuth
+                    )
+                )
+                    return BootstrapperIcon;
+                return StudioBootstrapperIcon;
+            }
+        }
+
+        public CleanerOptions CleanerOptions { get; set; } = CleanerOptions.Never;
+        public List<string> CleanerDirectories { get; set; } = [];
+        public Dictionary<string, uint> OriginalNetworkMtuValues { get; set; } = [];
+        public string BootstrapperTitle { get; set; } = App.ProjectName;
+        public string BootstrapperIconCustomLocation { get; set; } = "";
+        public List<string> RecentCustomIcons { get; set; } = [];
+        public Theme Theme2 { get; set; } = Theme.Dark;
+        public string? CustomAccentColor { get; set; }
+        public string? CustomAccentGradient { get; set; }
+        public Dictionary<string, Models.SettingTasks.ShortcutAppearance> ShortcutAppearances { get; set; } = new();
+        public BackdropType WindowBackdrop { get; set; } = DefaultWindowBackdrop;
+        public int WindowBackdropResetVersion { get; set; }
+
+        public static BackdropType DefaultWindowBackdrop =>
+            OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? BackdropType.Aero : BackdropType.None;
+        public string? SelectedCustomTheme { get; set; } = null;
+        public bool CheckForUpdates { get; set; } = true;
+        public bool AssetWarpPreloadFlagsOwned { get; set; }
+        public Dictionary<string, string?> AssetWarpPreloadFlagBackup { get; set; } = [];
+        public bool BlockRobloxTelemetry { get; set; }
+        public bool SpotifySignedIn { get; set; }
+
+        public bool SpotifyMiniPlayer { get; set; }
+
+        public string RobloxTheme { get; set; } = "";
+
+        public bool RobloxMinimizeToTray { get; set; }
+        public bool RobloxLaunchAtStartup { get; set; }
+        public bool StudioPluginEnabled { get; set; }
+        public Dictionary<string, bool> PluginConsent { get; set; } = [];
+
+        public Dictionary<string, long> GameOutfits { get; set; } = [];
+        public bool DuckRobloxAudioOnUnfocus { get; set; }
+        public bool EnableHeadsetLoudness { get; set; }
+        public string RobloxAudioOutputDevice { get; set; } = "";
+        public int RobloxAudioEqualizer { get; set; }
+        public bool RobloxAudioOutputPersisted { get; set; }
+        public bool SnapTapEnabled { get; set; }
+        public int SnapTapMode { get; set; }
+        public string SnapTapKeys { get; set; } = Voidstrap.KeyRouting.OpposingKeyResolver.DefaultKeys;
+        public bool ResetRobloxAudioOnNextLaunch { get; set; } = true;
+        public double Saturation { get; set; } = 100.0;
+        public double Contrast { get; set; } = 100.0;
+        public double ColorTemperature { get; set; }
+        public bool ColorBlindnessEnabled { get; set; } = false;
+        public int ColorBlindnessType { get; set; } = 1;
+        public double ColorBlindnessSeverity { get; set; } = 100.0;
+        public bool ColorBlindnessSimulate { get; set; } = false;
+        public bool MultiAccount { get; set; }
+        public int MaxConcurrentDownloads { get; set; } = 20;
+        public int MaxDownloadSegments { get; set; } = 12;
+        public int DownloadBufferKb { get; set; } = 2048;
+        public int DownloadPipelineVersion { get; set; } = 3;
+        public bool ConfirmLaunches { get; set; } = true;
+        public bool CompressRobloxInstalls { get; set; }
+        public bool LaunchWithoutVoidstrap { get; set; }
+        public bool ReopenAfterRobloxCloses { get; set; }
+        public string VoidstrapMatchmakerPresetUrl { get; set; } = "";
+        public int LaunchSelectionIndex { get; set; }
+
+        public bool LaunchDropdownOnRight { get; set; }
+        public bool LaunchRobloxWebsite
+        {
+            get => false;
+            set { }
+        }
+        public string SelectedCpuPriority { get; set; } = "Automatic";
+        public int MaxCpuCores { get; set; } = Environment.ProcessorCount;
+        public int TotalLogicalCores { get; set; } = Environment.ProcessorCount;
+        public int TotalPhysicalCores { get; set; } = Environment.ProcessorCount;
+        public bool IsChannelEnabled { get; set; } = false;
+        public bool UpdateRoblox { get; set; } = true;
+        public string RobloxUpdateDelivery { get; set; } = "Normal";
+
+        public bool ForceRobloxReinstall { get; set; } = false;
+
+        public double CustomFontScale { get; set; } = 1.0;
+
+        public double CustomDeathSoundVolume { get; set; } = 1.0;
+
+        public int CleanRobloxNumber = 0;
+        public string EditorBackground { get; set; } = "";
+
+        public string EditorForeground { get; set; } = "";
+
+        public string EditorFontFamily { get; set; } = "JetBrains Mono, Cascadia Mono, Consolas";
+
+        public double EditorFontSize { get; set; } = 13;
+
+        public bool EditorWordWrap { get; set; }
+
+        public bool EditorLineNumbers { get; set; } = true;
+
+        public bool EditorHighlightLine { get; set; } = true;
+
+        public string EditorBackgroundImage { get; set; } = "";
+
+        public double EditorBackgroundImageOpacity { get; set; } = 0.15;
+
+        public Dictionary<string, Dictionary<string, ModRollbackValue>> ModRollback { get; set; } = [];
+
+        public GridEditorAppearance FastFlagEditorAppearance { get; set; } = new();
+
+        public GridEditorAppearance NvidiaEditorAppearance { get; set; } = new();
+
+        public bool DisableCrash { get; set; } = false;
+        public string UseCustomIcon { get; set; } = "";
+        public string CustomGameName { get; set; } = "";
+        public string PriorityLimit { get; set; } = "Normal";
+        public string SelectedStatus { get; set; } = "Gray";
+
+        public bool DisableSplashScreen { get; set; } = true;
+        public bool EnableAnalytics { get; set; } = true;
+        public bool ShouldExportConfig { get; set; } = true;
+        public bool ShouldExportLogs { get; set; } = true;
+        public bool UseFastFlagManager { get; set; } = true;
+        public bool? SoberAllowGamepadPermission { get; set; }
+        public bool? SoberCloseOnLeave { get; set; }
+        public bool? SoberDiscordRpcEnabled { get; set; }
+        public bool? SoberDiscordRpcShowJoinButton { get; set; }
+        public bool? SoberEnableGameMode { get; set; }
+        public bool? SoberEnableHiDpi { get; set; }
+        public bool? SoberEnableMobileHomeScreen { get; set; }
+        public SoberGraphicsOptimizationMode? SoberGraphicsOptimizationMode { get; set; }
+        public bool? SoberServerLocationIndicatorEnabled { get; set; }
+        public SoberTouchMode? SoberTouchMode { get; set; }
+        public bool? SoberUseConsoleExperience { get; set; }
+        public bool? SoberUseLibsecret { get; set; }
+        public string SoberTermsAccepted { get; set; } = "";
+        public bool? SoberUseOpenGl { get; set; }
+        public VinegarRenderer? VinegarRenderer { get; set; }
+        public bool? VinegarEnableGameMode { get; set; }
+        public bool? VinegarDiscordRpcEnabled { get; set; }
+        public string VinegarGpu { get; set; } = "";
+        public string VinegarVirtualDesktop { get; set; } = "";
+        public string VinegarLauncher { get; set; } = "";
+        public string VinegarForcedVersion { get; set; } = "";
+        public string VinegarChannel { get; set; } = "";
+        public string VinegarWineRoot { get; set; } = "";
+        public bool VinegarApplyFastFlags { get; set; } = true;
+        public bool WPFSoftwareRender { get; set; } = false;
+
+        public int SoberSharpness { get; set; } = 0;
+
+        public bool SoberAutoFullscreen { get; set; } = false;
+
+        public bool SoberPreferXWayland { get; set; } = false;
+
+        public string SoberLauncher { get; set; } = "";
+
+        public string LinuxPlayerRuntime { get; set; } = "sober";
+
+        public string LinuxStudioRuntime { get; set; } = "vinegar";
+
+        public string RosemarySwapInterval { get; set; } = "";
+
+        public string RosemaryDecorations { get; set; } = "client";
+
+        public string RosemaryCommandKey { get; set; } = "super";
+
+        public bool RosemaryConfinePointer { get; set; } = false;
+
+        public bool RosemaryPlainControlClick { get; set; } = true;
+
+        public bool RosemaryForceOpenGl { get; set; } = false;
+        public bool SmooothBARRyesirikikthxlucipook { get; set; } = false; // wanna keep this on false so people may not be annoyed by it being on
+        public bool HasLaunchedGame { get; set; } = false;
+        public bool NotificationWindowShow { get; set; } = true;
+        public bool NotifyUpdates { get; set; } = true;
+        public bool NotifyRoblox { get; set; } = true;
+        public bool NotifyRecovery { get; set; } = true;
+        public bool NotifyErrors { get; set; } = true;
+        public bool NotifyGameJoins { get; set; } = true;
+        public bool BackgroundWindow { get; set; } = true;
+        public bool UsePlaceId { get; set; } = false;
+        public bool ClearFont { get; set; } = false;
+
+        public WindowCornerStyle WindowCornerStyle { get; set; } = WindowCornerStyle.Rounded;
+
+        public double UiCornerScale { get; set; } = 1.0;
+
+        public bool Fleasion { get; set; } = false;
+        public bool RojoEnabled { get; set; } = false;
+        public string RojoProjectPath { get; set; } = "";
+        public string PlaceId { get; set; } = "";
+        public bool OptimizeRoblox { get; set; } = false;
+
+        public bool RobloxEfficiencyMode { get; set; } = false;
+        public bool RobloxMemoryLimitEnabled { get; set; } = false;
+        public int RobloxMemoryLimitMb { get; set; } = 4096;
+        public bool ReduceMemoryOutOfFocus { get; set; } = false;
+        public bool TasxOptimization { get; set; } = false;
+        public bool BackgroundUpdatesEnabled { get; set; } = true;
+        public bool VoidNotify { get; set; } = true;
+        public bool ShowServerDetailsUI { get; set; } = false;
+        public bool EnableCustomStatusDisplay { get; set; } = true;
+        public bool RenameClientToEuroTrucks2 { get; set; } = false;
+        public bool SnowWOWSOCOOLWpfSnowbtw { get; set; } = false;
+
+        public string ClientPath { get; set; } = Path.Combine(Paths.Base, "Roblox", "Player");
+
+        public string Locale { get; set; } = "nil";
+        public string BufferSizeKbte { get; set; } = "1024";
+        public string BufferSizeKbtes { get; set; } = "2048";
+        public string SkyboxName { get; set; } = "Default";
+        public string FontName { get; set; } = "Default";
+        public string LastServerSave { get; set; } = "112757576021097";
+        public bool SkyBoxDataSending { get; set; } = false;
+
+        public bool FFlagRPCDisplayer { get; set; } = false;
+
+        public bool CurrentTimeDisplay { get; set; } = false;
+        public int ClockOverlayResetVersion { get; set; }
+
+        public string ClockTimeZoneId { get; set; } = "";
+
+        public bool Clock24Hour { get; set; } = false;
+        public bool ExclusiveFullscreen { get; set; } = false;
+        public bool Crosshair { get; set; } = false;
+        public bool CrosshairShortcutEnabled { get; set; } = false;
+        public OverlayShortcut CrosshairShortcut { get; set; } = new() { Modifiers = OverlayShortcut.Alt, Key = 0x58 };
+        public int CrosshairShapeIndex { get; set; }
+        public string CrosshairImagePath { get; set; } = "";
+        public string CrosshairColorHex { get; set; } = "#FF00FF00";
+        public string CrosshairOutlineColorHex { get; set; } = "#FF000000";
+        public int CrosshairSize { get; set; } = 20;
+        public int CrosshairLineThickness { get; set; } = 2;
+        public int CrosshairOutlineThickness { get; set; } = 1;
+        public bool OverlayBrowserKeepRunning { get; set; } = false;
+        public int CrosshairGap { get; set; } = 4;
+        public double CrosshairOpacity { get; set; } = 1.0;
+        public bool GameWIP { get; set; } = false;
+
+        // Analytics & Tracking
+        public bool DarkTextures { get; set; } = false;
+        public bool EnableActivityTracking { get; set; } = true;
+        public bool OverClockCPU { get; set; } = false;
+        public bool ExitOnDissy { get; set; } = false;
+        public bool ServerUptimeBetterBLOXcuzitsbetterXD { get; set; } = true;
+
+        public string DownloadingStringFormat { get; set; } = Strings.Bootstrapper_Status_Downloading + " {0} - {1}MB / {2}MB";
+        public bool ConnectCloset { get; set; } = false;
+
+        public string LinuxRenderBackend { get; set; } = "Auto";
+
+        public bool GameIconChecked { get; set; } = true;
+        public bool ServerLocationGame { get; set; } = false;
+        public bool GameNameChecked { get; set; } = true;
+        public bool GameCreatorChecked { get; set; } = true;
+        public bool GameStatusChecked { get; set; } = true;
+
+        // Rich Presence (Discord Integration)
+        public bool UseDiscordRichPresence { get; set; } = true;
+        public bool HideRPCButtons { get; set; } = true;
+        public bool AllowDiscordInvites { get; set; } = false;
+        public bool WindowControlEnabled { get; set; } = false;
+        public bool WindowControlMove { get; set; } = true;
+        public bool WindowControlTitle { get; set; } = true;
+        public bool WindowControlTransparency { get; set; } = true;
+        public bool ShowDiscordPartySize { get; set; } = true;
+        public bool ShowAccountOnRichPresence { get; set; } = true;
+        public bool ShowServerDetails { get; set; } = true;
+
+        public bool ClassicTopBarEnabled { get; set; } = false;
+
+        public bool MacVirtualDisplayEnabled { get; set; } = false;
+
+        public int MacVirtualDisplayRefreshRate { get; set; } = App.MacVirtualDisplayDefaultRefreshRate;
+
+        public bool ClassicTopBarHideAllCoreGui { get; set; } = false;
+
+        public bool SessionDockEnabled { get; set; } = true;
+
+        public bool SessionDockSpotify { get; set; } = true;
+
+        public bool DockToggleServerLocation { get; set; }
+
+        public bool DockToggleClock { get; set; }
+
+        public bool DockToggleCrosshair { get; set; }
+
+        public bool DockToggleKeystrokes { get; set; }
+
+        public bool DockToggleNews { get; set; }
+
+        public bool DockToggleMusicIsland { get; set; }
+
+        public bool ScreenshotNotifications { get; set; } = true;
+
+        public NotificationAppearance NotificationAppearance { get; set; } = new();
+
+        public OverlayLayoutSettings OverlayLayout { get; set; } = new();
+
+        // Shortcut that opens the session dock, Ctrl+Alt+L by default; a key of 0 means no shortcut
+        public OverlayShortcut SessionDockShortcut { get; set; } = new();
+
+        public bool ClipperEnabled { get; set; } = false;
+
+        public string ClipperMode { get; set; } = "record";
+
+        public bool ClipperRecordOnGameStart { get; set; } = false;
+
+        public bool ClipperRedBorder { get; set; } = true;
+
+        public OverlayShortcut ClipperShortcut { get; set; } = new() { Modifiers = OverlayShortcut.Alt, Key = 0x79 };
+
+        public int ClipperBufferSeconds { get; set; } = 30;
+
+        public int ClipperResolutionHeight { get; set; } = 1080;
+
+        public int ClipperFps { get; set; } = 60;
+
+        public int ClipperQuality { get; set; } = 2;
+
+        public string ClipperCodec { get; set; } = "h264";
+
+        public bool ClipperGameAudio { get; set; } = true;
+
+        public bool ClipperMicrophone { get; set; } = false;
+
+        public bool ClipperCaptureCursor { get; set; } = false;
+
+        public bool ClipperShowIndicator { get; set; } = true;
+
+        public bool VoidEditAskForRecordings { get; set; } = true;
+
+        public string ClipperOutputFolder { get; set; } = string.Empty;
+
+        public bool KeystrokesOverlayEnabled { get; set; } = false;
+        public bool KeystrokesShowKeys { get; set; } = true;
+        public bool KeystrokesShowMouseButtons { get; set; } = true;
+        public bool KeystrokesShowSpaceAndShift { get; set; } = true;
+        public bool KeystrokesShowCps { get; set; } = true;
+        public bool KeystrokesKeyboardSound { get; set; } = false;
+        public string KeystrokesKeyboardSoundPack { get; set; } = "Mechanical";
+        public string KeystrokesKeyboardCustomWav { get; set; } = string.Empty;
+        public double KeystrokesKeyboardVolume { get; set; } = 0.5;
+        public bool KeystrokesMouseSound { get; set; } = false;
+        public string KeystrokesMouseSoundPack { get; set; } = "Crisp";
+        public string KeystrokesMouseCustomWav { get; set; } = string.Empty;
+        public double KeystrokesMouseVolume { get; set; } = 0.5;
+        private string _keystrokesThemeName = "Voidstrap (Default)";
+        public string KeystrokesThemeName
+        {
+            get => _keystrokesThemeName;
+            set => _keystrokesThemeName = string.IsNullOrWhiteSpace(value) ? "Voidstrap (Default)" : value;
+        }
+        private string _keystrokesScalePreset = "Normal";
+        public string KeystrokesScalePreset
+        {
+            get => _keystrokesScalePreset;
+            set => _keystrokesScalePreset = string.IsNullOrWhiteSpace(value) ? "Normal" : value;
+        }
+        public string? SelectedCustomKeystrokeTheme { get; set; } = null;
+
+        // Off shows the server details as a Windows notification instead of the in game one
+        public bool ServerDetailsInOverlay { get; set; } = true;
+
+        // Off unless turned on, it checks every friend's status every 30 seconds while a game is open
+        public bool NotifyFriends { get; set; } = false;
+
+        public bool NotifyBadges { get; set; } = true;
+
+        // On reminds about the dock shortcut every time a game starts, off only the very first time
+        public bool NotifyShortcutEveryGame { get; set; } = false;
+
+        public bool ShowDockNews { get; set; } = true;
+
+        public bool MusicIslandOverlay { get; set; } = false;
+
+        public MusicIslandPosition MusicIslandPosition { get; set; } = MusicIslandPosition.BottomRight;
+
+        public bool MusicIslandInteractive { get; set; } = false;
+
+        public bool Ps4ButtonsEnabled { get; set; } = false;
+
+        public bool ModPacksNoticeShown { get; set; } = false;
+
+        public bool HomepageBackgroundOverlayEnabled { get; set; } = false;
+
+        public string HomepageBackgroundOverlayColor { get; set; } = "#121215";
+
+        public string HomepageBackgroundOverlayMediaPath { get; set; } = "";
+
+        public bool HomepageBackgroundOverlayGradientEnabled { get; set; } = false;
+
+        public string HomepageBackgroundOverlayGradientColor { get; set; } = "#5B2EFF";
+
+        public double HomepageBackgroundOverlayGradientAngle { get; set; } = 90;
+
+        public string HomepageBackgroundOverlayMode { get; set; } = "Auto";
+
+        // Mod Settings
+        public string CustomFontLocation { get; set; } = string.Empty;
+        public CursorType CursorType { get; set; } = CursorType.VoidstrapDefault;
+        public bool HasSelectedCursorType { get; set; }
+        public bool RobloxCursorOverride { get; set; }
+        public int RobloxCursorOverrideSize { get; set; } = 32;
+        public bool RobloxCursorOverrideCentered { get; set; }
+
+        // Custom Integrations
+        public ObservableCollection<CustomIntegration> CustomIntegrations { get; set; } = [];
+
+        // Mod Preset Configuration
+        public bool UseDisableAppPatch { get; set; } = false;
+
+        // Roblox Deployment Settings
+        public string Channel { get; set; } = RobloxInterfaces.Deployment.DefaultChannel;
+        public string ChannelHash { get; set; } = "";
+        public string PreferredMirror { get; set; } = "";
+        [JsonPropertyName("AllowPreReleaseUpdatesV2")]
+        public bool AllowPreReleaseUpdates { get; set; } = false;
+
+        public string LaunchGameID { get; set; } = "";
+        public bool IsGameEnabled { get; set; } = false;
+        public bool MatchUniverseId { get; set; } = true;
+        public long? TargetUniverseId { get; set; }
+        public bool IsBetterServersEnabled { get; set; } = false;
+        public bool OverClockGPU { get; set; } = false;
+        public bool GRADmentFR { get; set; } = false;
+        public bool VoidRPC { get; set; } = true;
+
+        public ResolutionSetting? InGameResolution { get; set; }
+
+        public string AppFontPath { get; set; } = "";
+        public bool AutoTranslate { get; set; } = false;
+        public string AutoTranslateLanguage { get; set; } = "";
+
+        public string BrandName { get; set; } = "";
+
+        public string DiscordRpcLanguage { get; set; } = "";
+        public bool CycleTitleWithGameName { get; set; } = true;
+        public bool UseGameIconForRobloxWindow { get; set; } = true;
+        public string DMMouseLeft { get; set; } = "A";
+        public string DMMouseMiddle { get; set; } = "";
+        public string DMMouseRight { get; set; } = "B";
+        public double DMMouseSensitivity { get; set; } = 3.0;
+        public string DMMouseX1 { get; set; } = "";
+        public string DMMouseX2 { get; set; } = "";
+        public string DMScrollDown { get; set; } = "DPadDown";
+        public string DMScrollUp { get; set; } = "DPadUp";
+        public string DoubleMovementControllerType { get; set; } = "Xbox360";
+        public string DoubleMovementCurve { get; set; } = "Linear";
+        public bool DoubleMovementEnabled { get; set; } = false;
+        public double DoubleMovementForwardAngle { get; set; } = 55.0;
+        public List<Voidstrap.Models.DMKeybind> DoubleMovementKeybinds { get; set; } = [];
+        public double DoubleMovementSensitivity { get; set; } = 1.0;
+        public int DoubleMovementSocdMode { get; set; } = 0;
+        public double DoubleMovementStrafeAngle { get; set; } = 55.0;
+        public bool FakeBorderlessFullscreen { get; set; } = false;
+
+        public bool HideFullscreenTitleBar { get; set; } = false;
+        public bool FakeExclusiveFullscreen { get; set; } = false;
+        public Dictionary<long, string> PerGamePreferredDatacenters { get; set; } = [];
+        public List<long> FavoriteGamePlaceIds { get; set; } = [];
+        public List<long> FavoriteStudioUniverseIds { get; set; } = [];
+        public bool MatchmakerAskBeforeMoving { get; set; } = true;
+        public List<long> MatchmakerExcludedPlaceIds { get; set; } = [];
+        public BootstrapperIcon RobloxIcon { get; set; } = BootstrapperIcon.IconVoidstrap;
+        public string RobloxIconCustomLocation { get; set; } = "";
+        public List<Voidstrap.Models.RobloxWindowIconOverride> RobloxWindowIconOverrides { get; set; } = [];
+        public string RobloxTitle { get; set; } = "Voidstrap";
+        public int RobloxWindowBackdropType { get; set; } = 0;
+        public bool RpcAutoTranslate { get; set; } = false;
+        public string? RpcIdleIcon { get; set; } = "blue";
+        public int ServerMatchmakerMaxRetries { get; set; } = 3;
+        public bool ShowServerInfoInTitle { get; set; } = false;
+        public int ServerInfoInTitleResetVersion { get; set; }
+        public string StudioRpcClientId { get; set; } = "";
+        public bool StudioRpcShowPlace { get; set; } = true;
+        public bool StudioRpcShowScript { get; set; } = true;
+        public bool StudioRpcShowState { get; set; } = true;
+        public double SidebarWidth { get; set; } = 225;
+        public Dictionary<string, string> SidebarNames { get; set; } = [];
+        public Dictionary<string, string> SidebarIcons { get; set; } = [];
+        public Dictionary<string, string> SidebarIconImages { get; set; } = [];
+        public List<string> SidebarOrder { get; set; } = [];
+        public List<string> SidebarHiddenItems { get; set; } = [];
+
+        public double LibrarySidebarWidth { get; set; } = 225;
+        public double PrivateServersSidebarWidth { get; set; } = 225;
+        public double AccountsSidebarWidth { get; set; } = 225;
+        public List<string> ColorPickerRecent { get; set; } = [];
+        public List<string> HomeSectionOrder { get; set; } = [];
+        public List<string> HomeStudioSectionOrder { get; set; } = [];
+        public List<string> HomeHiddenSections { get; set; } = [];
+        public List<string> ColorPickerSaved { get; set; } = [];
+        public int UiZoomPercent { get; set; } = 100;
+        public bool VoidstrapMatchmakerAutoCandidates { get; set; } = true;
+        public List<string> VoidstrapMatchmakerDisabledDatacenters { get; set; } = [];
+        public bool VoidstrapMatchmakerEnabled { get; set; } = false;
+        public List<string> VoidstrapMatchmakerKickDatacenters { get; set; } = [];
+        public int VoidstrapMatchmakerLearningGamesPlayed { get; set; } = 0;
+        public int VoidstrapMatchmakerMaxCandidates { get; set; } = 14;
+        public bool VoidstrapMatchmakerPreferEmpty { get; set; } = false;
+        public string VoidstrapMatchmakerPreferredDatacenter { get; set; } = "";
+        public bool VoidstrapMatchmakerRejoinDisabledDatacenters { get; set; } = false;
+        public int VoidstrapMatchmakerGamejoinApiVersion { get; set; } = 1;
+        public bool WebAccurateContinue { get; set; } = true;
+        public string PlayerInstallLocation { get; set; } = "";
+        public string VngInstallLocation { get; set; } = "";
+        public bool UseVng { get; set; }
+        public bool SteamVrEnabledVr { get; set; }
+        public string StudioInstallLocation { get; set; } = "";
+        public bool StaticDirectory { get; set; } = false;
+        public string ClassicInstallLocation { get; set; } = "";
+        public string ClassicSourceLocation { get; set; } = "";
+        public string ClassicDownloadBaseUrl { get; set; } = "";
+        public string ClassicSelectedMap { get; set; } = "";
+        public string LaunchSelectedClient { get; set; } = "";
+        public bool ClassicCommunityContent { get; set; } = false;
+        public bool WebAvatarBorder { get; set; } = true;
+        public bool WebBannedUserViewer { get; set; } = true;
+        public bool WebBulkLeaveGroups { get; set; } = true;
+        public bool WebCategorizeWearing { get; set; } = true;
+        public bool WebCurrentlyPlayingLink { get; set; } = true;
+        public Voidstrap.Enums.ModApplyTarget ModApplyTarget { get; set; } = Voidstrap.Enums.ModApplyTarget.Both;
+        public Voidstrap.Enums.ModApplyTarget FastFlagApplyTarget { get; set; } = Voidstrap.Enums.ModApplyTarget.Both;
+
+        public bool WebCustomBackgroundBlur { get; set; } = false;
+        public bool WebCustomBackgroundEnabled { get; set; } = false;
+        public int WebCustomBackgroundOpacity { get; set; } = 100;
+        public string? WebCustomBackgroundPath { get; set; } = null;
+        public ObservableCollection<Voidstrap.Models.CustomBackground> WebCustomBackgrounds { get; set; } = [];
+        public bool WebViewDevTools { get; set; } = false;
+        public bool WebDevProductsTab { get; set; } = true;
+        public bool WebEventsTimeline { get; set; } = true;
+        public bool WebFavoriteFriends { get; set; } = true;
+        public bool WebFriendRequestActions { get; set; } = true;
+        public bool WebGamepassViewer { get; set; } = true;
+        public bool WebGroupGameViewer { get; set; } = true;
+        public bool WebGroupMembersScanner { get; set; } = true;
+        public bool WebHiddenBadges { get; set; } = true;
+        public bool WebHiddenGamesViewer { get; set; } = true;
+        public bool WebInstantJoiner { get; set; } = true;
+        public bool WebItemSales { get; set; } = true;
+        public bool WebItemTrading { get; set; } = true;
+        public bool WebLastPlayedTogether { get; set; } = true;
+        public bool WebMutualFriends { get; set; } = true;
+        public bool WebOutfitViewer { get; set; } = true;
+        public bool WebPendingRobux { get; set; } = true;
+        public bool WebPriceFloor { get; set; } = true;
+        public bool WebPrivateGames { get; set; } = true;
+        public bool WebProfileRap { get; set; } = true;
+        public bool WebProfileViews { get; set; } = true;
+        public bool WebQuickPlay { get; set; } = true;
+        public bool WebSearchSuggestions { get; set; } = true;
+        public bool WebServerList { get; set; } = true;
+        public bool WebSubplacesTab { get; set; } = true;
+        public bool WebTradingEnhancer { get; set; } = true;
+        public bool WebTransactionHistory { get; set; } = true;
+        public bool WebUsernameColor { get; set; } = true;
+        public bool WebViewDevMode { get; set; } = false;
+
+        public int TextureParticleStyle { get; set; } = 0;
+        public int TextureParticleOpacity { get; set; } = 100;
+        public int TextureStudStyle { get; set; } = 0;
+        public int TextureStudShade { get; set; } = 50;
+        public bool TextureTerrainEnabled { get; set; } = false;
+        public double TextureTerrainSize { get; set; } = 0.5;
+        public double TextureTerrainRepeat { get; set; } = 4;
+        public int TextureWaterStyle { get; set; } = 0;
+        public int TextureWaterStrength { get; set; } = 100;
+        public int TextureWaterSpeed { get; set; } = 1;
+        public int TextureWaterFrame { get; set; } = 1;
+        public int TextureWaterGlitch { get; set; } = 50;
+
+        public List<LibraryPin> LibraryPins { get; set; } = [];
+
+        public bool LibraryShowRobloxFavorites { get; set; } = true;
+
+        public bool FavoriteUpdateAlerts { get; set; }
+
+        public class LibraryPin
+        {
+            public long PlaceId { get; set; }
+            public long UniverseId { get; set; }
+            public string Name { get; set; } = "";
+            public string CreatorName { get; set; } = "";
+            public string Description { get; set; } = "";
+            public string IconUrl { get; set; } = "";
+            public string ThumbnailUrl { get; set; } = "";
+            public long Visits { get; set; }
+            public int MaxPlayers { get; set; }
+            public string Genre { get; set; } = "";
+            public DateTime? Created { get; set; }
+            public DateTime? Updated { get; set; }
+        }
+
+        public class ResolutionSetting
+        {
+            public int Width { get; set; }
+            public int Height { get; set; }
+            public int RefreshRate { get; set; }
+            public string? Monitor { get; set; }
+        }
+    }
+}

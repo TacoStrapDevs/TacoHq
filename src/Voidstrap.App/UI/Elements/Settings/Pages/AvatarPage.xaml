@@ -1,0 +1,228 @@
+<ui:UiPage
+    x:Class="Voidstrap.UI.Elements.Settings.Pages.AvatarPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    xmlns:resources="clr-namespace:Voidstrap.Resources"
+    xmlns:util="clr-namespace:Voidstrap.Utility"
+    xmlns:controls="clr-namespace:Voidstrap.UI.Elements.Controls"
+    Title="{resources:Loc Accounts_Avatar_Title}"
+    ui:Breadcrumb.Header="{resources:Loc Accounts_Avatar_Title}"
+    Scrollable="False">
+  <FrameworkElement.Resources>
+    <ResourceDictionary>
+      <DataTemplate x:Key="AvatarItemTile">
+        <ui:Button Width="134" Margin="0,0,6,10" Padding="4" VerticalAlignment="Top" Appearance="Transparent" ToolTip="{Binding Name}" Command="{Binding DataContext.ToggleItemCommand, RelativeSource={RelativeSource AncestorType=ui:UiPage}}" CommandParameter="{Binding}" ContextMenuOpening="OnItemMenuOpening">
+          <FrameworkElement.ContextMenu>
+            <ContextMenu>
+              <MenuItem Tag="wear" Header="{resources:Loc Accounts_Outfits_Wear}" Click="OnItemMenuClick" Visibility="{Binding Worn, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+              <MenuItem Tag="wear" Header="{resources:Loc Accounts_Remove}" Click="OnItemMenuClick" Visibility="{Binding Worn, Converter={StaticResource BooleanToVisibilityConverter}}" />
+              <MenuItem Tag="adjust" Header="{resources:Loc Accounts_Avatar_AdjustAccessories}" Click="OnItemMenuClick" />
+              <Separator />
+              <MenuItem Tag="outfit-update" Header="{resources:Loc Accounts_Outfits_UpdateCurrent}" Click="OnItemMenuClick" />
+              <MenuItem Tag="outfit-rename" Header="{resources:Loc Accounts_Outfits_Rename}" Click="OnItemMenuClick" />
+              <MenuItem Tag="outfit-delete" Header="{resources:Loc Accounts_Outfits_Delete}" Click="OnItemMenuClick" />
+              <MenuItem Tag="view" Header="{resources:Loc Library_ViewOnRoblox}" Click="OnItemMenuClick" />
+              <MenuItem Tag="copy" Header="{resources:Loc Accounts_CopyId}" Click="OnItemMenuClick" />
+            </ContextMenu>
+          </FrameworkElement.ContextMenu>
+          <StackPanel>
+            <Grid Width="126" Height="126" util:RoundedClip.Radius="8">
+              <Border Background="{DynamicResource ControlFillColorSecondaryBrush}" />
+              <Image Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" util:DynamicRenderSystem.LazyImageSource="{Binding ImageUrl, TargetNullValue={x:Null}, FallbackValue={x:Null}}" />
+              <ui:SymbolIcon Margin="0,6,6,0" HorizontalAlignment="Right" VerticalAlignment="Top" Symbol="CheckmarkCircle24" Filled="True" FontSize="20" Foreground="{DynamicResource SystemAccentColorPrimaryBrush}" Visibility="{Binding Worn, Converter={StaticResource BooleanToVisibilityConverter}}" />
+              <ui:ProgressRing Width="20" Height="20" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </Grid>
+            <TextBlock Height="36" Margin="2,6,2,0" FontSize="13" FontWeight="Medium" LineHeight="18" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding Name}" />
+          </StackPanel>
+        </ui:Button>
+      </DataTemplate>
+      <DataTemplate x:Key="AvatarWearingTile">
+        <ui:Button Margin="0,0,6,6" Padding="0" Appearance="Transparent" ToolTip="{Binding Name}" Command="{Binding DataContext.ToggleItemCommand, RelativeSource={RelativeSource AncestorType=ui:UiPage}}" CommandParameter="{Binding}" ContextMenuOpening="OnItemMenuOpening">
+          <FrameworkElement.ContextMenu>
+            <ContextMenu>
+              <MenuItem Tag="wear" Header="{resources:Loc Accounts_Outfits_Wear}" Click="OnItemMenuClick" Visibility="{Binding Worn, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+              <MenuItem Tag="wear" Header="{resources:Loc Accounts_Remove}" Click="OnItemMenuClick" Visibility="{Binding Worn, Converter={StaticResource BooleanToVisibilityConverter}}" />
+              <MenuItem Tag="adjust" Header="{resources:Loc Accounts_Avatar_AdjustAccessories}" Click="OnItemMenuClick" />
+              <Separator />
+              <MenuItem Tag="outfit-update" Header="{resources:Loc Accounts_Outfits_UpdateCurrent}" Click="OnItemMenuClick" />
+              <MenuItem Tag="outfit-rename" Header="{resources:Loc Accounts_Outfits_Rename}" Click="OnItemMenuClick" />
+              <MenuItem Tag="outfit-delete" Header="{resources:Loc Accounts_Outfits_Delete}" Click="OnItemMenuClick" />
+              <MenuItem Tag="view" Header="{resources:Loc Library_ViewOnRoblox}" Click="OnItemMenuClick" />
+              <MenuItem Tag="copy" Header="{resources:Loc Accounts_CopyId}" Click="OnItemMenuClick" />
+            </ContextMenu>
+          </FrameworkElement.ContextMenu>
+          <Grid Width="62" Height="62" util:RoundedClip.Radius="6">
+            <Border Background="{DynamicResource ControlFillColorSecondaryBrush}" />
+            <Image Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" util:DynamicRenderSystem.LazyImageSource="{Binding ImageUrl, TargetNullValue={x:Null}, FallbackValue={x:Null}}" />
+            <ui:ProgressRing Width="16" Height="16" IsIndeterminate="True" Visibility="{Binding Busy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+          </Grid>
+        </ui:Button>
+      </DataTemplate>
+    </ResourceDictionary>
+  </FrameworkElement.Resources>
+  <Grid Margin="0,0,14,14">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="296" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+    <Grid Margin="0,0,16,0">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <controls:AvatarPreviewControl Width="280" Height="250" HorizontalAlignment="Left" Scene="{Binding Scene}" ImageUrl="{Binding AvatarImageUrl}" BackgroundUrl="{Binding BackgroundUrl}" BackgroundImage="{Binding BackgroundImage}" IsLoading="{Binding PreviewLoading}" />
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="0,0,12,0">
+        <Border Margin="0,12,0,0" Padding="14,12" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" Background="{DynamicResource ControlFillColorDefaultBrush}">
+          <StackPanel>
+            <DockPanel LastChildFill="True">
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="R6" />
+                <ui:ToggleSwitch Margin="8,0" VerticalAlignment="Center" IsChecked="{Binding IsR15, Mode=TwoWay}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_AvatarType}" />
+                <TextBlock VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="R15" />
+              </StackPanel>
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_AvatarType}" />
+            </DockPanel>
+            <Border Height="1" Margin="0,10" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <DockPanel Margin="0,0,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding BodyType, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_BodyType}" />
+            </DockPanel>
+            <Slider Margin="0,6,0,0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding BodyType, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_BodyType}" />
+            <DockPanel Margin="0,10,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding ScaleHeight, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Height}" />
+            </DockPanel>
+            <Slider Margin="0,6,0,0" Minimum="90" Maximum="105" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ScaleHeight, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_Height}" />
+            <DockPanel Margin="0,10,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding ScaleWidth, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Width}" />
+            </DockPanel>
+            <Slider Margin="0,6,0,0" Minimum="70" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ScaleWidth, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_Width}" />
+            <DockPanel Margin="0,10,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding ScaleHead, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Head}" />
+            </DockPanel>
+            <Slider Margin="0,6,0,0" Minimum="95" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ScaleHead, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_Head}" />
+            <DockPanel Margin="0,10,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding ScaleProportion, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Proportions}" />
+            </DockPanel>
+            <Slider Margin="0,6,0,0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ScaleProportion, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_Proportions}" />
+            <Border Height="1" Margin="0,12,0,10" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+            <TextBlock FontSize="14" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_SkinColor}" />
+            <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Palette}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Width="22" Height="22" Margin="0,0,3,3" Padding="0" Cursor="Hand" BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" Background="{Binding}" ToolTip="{Binding}" Command="{Binding DataContext.SetSkinColorCommand, RelativeSource={RelativeSource AncestorType=ui:UiPage}}" CommandParameter="{Binding}">
+                    <Button.Template>
+                      <ControlTemplate TargetType="{x:Type Button}">
+                        <Border CornerRadius="4" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" />
+                      </ControlTemplate>
+                    </Button.Template>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+        <TextBlock Margin="0,10,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource SystemFillColorCriticalBrush}" Text="{Binding Status}" Visibility="{Binding StatusVisibility}" />
+        <DockPanel Margin="0,14,0,8" LastChildFill="True">
+          <ui:Button DockPanel.Dock="Right" Padding="6,2" Appearance="Transparent" FontSize="12" Content="{resources:Loc Accounts_Avatar_RemoveAccessories}" Command="{Binding RemoveAccessoriesCommand}" />
+          <TextBlock VerticalAlignment="Center" FontSize="16" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Wearing}" />
+        </DockPanel>
+        <ItemsControl ItemsSource="{Binding Wearing}" ItemTemplate="{StaticResource AvatarWearingTile}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+        </ItemsControl>
+        <Border Margin="0,14,0,0" Padding="14,12" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" Background="{DynamicResource ControlFillColorDefaultBrush}" Visibility="{Binding AdjustVisibility}">
+          <StackPanel>
+            <DockPanel LastChildFill="True">
+              <ui:Button DockPanel.Dock="Right" Padding="8,2" FontSize="12" Icon="ArrowReset24" Content="{resources:Loc Common_Reset}" Command="{Binding ResetAdjustCommand}" />
+              <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="Medium" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_AdjustAccessories}" />
+            </DockPanel>
+            <ComboBox Margin="0,10,0,0" HorizontalAlignment="Stretch" ItemsSource="{Binding Adjustable}" SelectedItem="{Binding SelectedAdjust, Mode=TwoWay}" DisplayMemberPath="Name" AutomationProperties.Name="{resources:Loc Accounts_Avatar_AdjustAccessories}" />
+            <TextBlock Margin="0,10,0,0" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Ui_SessionNotify_Position}" />
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="X" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustPositionX, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Y" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustPositionY, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Z" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustPositionZ, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <TextBlock Margin="0,10,0,0" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Rotation}" />
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="X" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustRotationX, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Y" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustRotationY, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <DockPanel Margin="0,4,0,0" LastChildFill="True">
+              <TextBlock Width="18" VerticalAlignment="Center" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Z" />
+              <Slider Minimum="-100" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustRotationZ, Mode=TwoWay, Delay=120}" />
+            </DockPanel>
+            <DockPanel Margin="0,10,0,0" LastChildFill="True">
+              <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{Binding AdjustScale, StringFormat={}{0:0}%}" />
+              <TextBlock VerticalAlignment="Center" FontSize="13" FontWeight="Medium" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Text="{resources:Loc Accounts_Avatar_Scale}" />
+            </DockPanel>
+            <Slider Margin="0,4,0,0" Minimum="{Binding AdjustScaleMin}" Maximum="{Binding AdjustScaleMax}" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding AdjustScale, Mode=TwoWay, Delay=120}" AutomationProperties.Name="{resources:Loc Accounts_Avatar_Scale}" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+    </Grid>
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <TabControl SelectedValuePath="Tag" SelectedValue="{Binding Category, Mode=TwoWay}">
+        <TabItem Tag="Recent" FontWeight="Medium" Header="{resources:Loc Ui_Session_Recent}" />
+        <TabItem Tag="Characters" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Characters}" />
+        <TabItem Tag="Body" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Body}" />
+        <TabItem Tag="Clothing" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Clothing}" />
+        <TabItem Tag="Accessories" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Accessories}" />
+        <TabItem Tag="Backgrounds" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Backgrounds}" />
+        <TabItem Tag="Animations" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Animations}" />
+        <TabItem Tag="Emotes" FontWeight="Medium" Header="{resources:Loc Accounts_Avatar_Emotes}" />
+      </TabControl>
+      <DockPanel Grid.Row="1" Margin="0,12,0,12" LastChildFill="True">
+        <ui:Button DockPanel.Dock="Right" Margin="8,0,0,0" Appearance="Primary" Icon="Save24" Content="{resources:Loc Accounts_Outfits_SaveCurrent}" Command="{Binding SaveOutfitCommand}" Visibility="{Binding OutfitsVisibility}" />
+        <ui:TextBox Icon="Search24" PlaceholderText="{resources:Loc Ui_Main_SearchPlaceholder}" Text="{Binding SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, Delay=200}" />
+      </DockPanel>
+      <ItemsControl Grid.Row="2" ItemsSource="{Binding Items}" ItemTemplate="{StaticResource AvatarItemTile}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLengthUnit="Page" VirtualizingPanel.CacheLength="1" ScrollViewer.CanContentScroll="True">
+        <ItemsControl.Template>
+          <ControlTemplate TargetType="ItemsControl">
+            <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <ItemsPresenter />
+            </ScrollViewer>
+          </ControlTemplate>
+        </ItemsControl.Template>
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <ui:VirtualizingWrapPanel ItemSize="140,180" SpacingMode="None" StretchItems="False" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+      </ItemsControl>
+      <ui:ProgressRing Grid.Row="2" Width="28" Height="28" Margin="0,40,0,0" VerticalAlignment="Top" IsIndeterminate="True" IsHitTestVisible="False" Visibility="{Binding Loading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+      <TextBlock Grid.Row="2" Margin="0,44,0,0" HorizontalAlignment="Center" VerticalAlignment="Top" FontSize="14" IsHitTestVisible="False" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Text="{resources:Loc Accounts_Avatar_Empty}" Visibility="{Binding EmptyVisibility}" />
+    </Grid>
+  </Grid>
+</ui:UiPage>

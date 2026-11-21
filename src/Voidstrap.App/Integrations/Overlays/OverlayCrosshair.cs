@@ -1,0 +1,197 @@
+using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using Vortice.Direct3D11;
+using Vortice.DXGI;
+using MapFlags = Vortice.Direct3D11.MapFlags;
+
+namespace Voidstrap.Integrations.Overlays
+{
+    internal sealed class OverlayCrosshair
+    {
+        public const int TexWidth = 128;
+        public const int TexHeight = 128;
+        internal const float RuntimeScale = 0.75f;
+
+        private ID3D11Device _device = null!;
+        private ID3D11Texture2D? _tex;
+        private ID3D11ShaderResourceView? _srv;
+        private Bitmap? _bitmap;
+        private Graphics? _graphics;
+        private string _last = "";
+
+        public ID3D11ShaderResourceView? Srv => _srv;
+
+        public void Init(ID3D11Device device)
+        {
+            Dispose();
+            _device = device;
+            _tex = _device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = TexWidth,
+                Height = TexHeight,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Dynamic,
+                BindFlags = BindFlags.ShaderResource,
+                CPUAccessFlags = CpuAccessFlags.Write,
+            });
+            _srv = _device.CreateShaderResourceView(_tex);
+            _bitmap = new Bitmap(TexWidth, TexHeight, PixelFormat.Format32bppArgb);
+            _graphics = Graphics.FromImage(_bitmap);
+            _graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            _graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            _last = "";
+        }
+
+        public static bool IsEnabled()
+        {
+            try
+            {
+                return OverlayHub.InGame && App.Settings?.Prop?.Crosshair == true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static bool CanComposite()
+        {
+            return false;
+        }
+
+        public void Update(ID3D11DeviceContext context)
+        {
+            if (_tex == null || _bitmap == null || _graphics == null)
+                return;
+
+            var prop = App.Settings.Prop;
+            int shape = Math.Clamp(prop.CrosshairShapeIndex, 0, 2);
+            float size = Math.Clamp(prop.CrosshairSize, 2, 60) * RuntimeScale;
+            float thickness = Math.Max(1f, Math.Clamp(prop.CrosshairLineThickness, 1, 16) * RuntimeScale);
+            float gap = Math.Clamp(prop.CrosshairGap, 0, 40) * RuntimeScale;
+            double opacity = Math.Clamp(prop.CrosshairOpacity, 0.05, 1.0);
+            float edge = Math.Clamp(prop.CrosshairOutlineThickness, 0, Voidstrap.UI.CrosshairRenderer.MaxOutlineThickness);
+            string signature = $"{shape}|{size}|{thickness}|{gap}|{opacity:0.00}|{prop.CrosshairColorHex}|{prop.CrosshairOutlineColorHex}|{prop.CrosshairOutlineThickness}";
+            if (signature == _last)
+                return;
+            _last = signature;
+
+            Color fill = ParseColor(prop.CrosshairColorHex, Color.Lime, opacity);
+            Color outline = ParseColor(prop.CrosshairOutlineColorHex, Color.Black, opacity);
+
+            _graphics.Clear(Color.Transparent);
+            using (var fillBrush = new SolidBrush(fill))
+            using (var outlineBrush = new SolidBrush(outline))
+            using (var outlinePen = new Pen(outline, thickness + edge * 2f))
+            using (var fillPen = new Pen(fill, thickness))
+            {
+                outlinePen.StartCap = LineCap.Round;
+                outlinePen.EndCap = LineCap.Round;
+                fillPen.StartCap = LineCap.Round;
+                fillPen.EndCap = LineCap.Round;
+                float cx = TexWidth / 2f;
+                float cy = TexHeight / 2f;
+                if (shape == 0)
+                {
+                    float inner = gap;
+                    float outer = size;
+                    DrawArm(outlinePen, fillPen, cx, cy - inner, cx, cy - outer);
+                    DrawArm(outlinePen, fillPen, cx, cy + inner, cx, cy + outer);
+                    DrawArm(outlinePen, fillPen, cx - inner, cy, cx - outer, cy);
+                    DrawArm(outlinePen, fillPen, cx + inner, cy, cx + outer, cy);
+                }
+                else if (shape == 1)
+                {
+                    float outerRadius = size / 3f + edge * 2f;
+                    float innerRadius = size / 3f;
+                    _graphics.FillEllipse(outlineBrush, cx - outerRadius, cy - outerRadius, outerRadius * 2f, outerRadius * 2f);
+                    _graphics.FillEllipse(fillBrush, cx - innerRadius, cy - innerRadius, innerRadius * 2f, innerRadius * 2f);
+                }
+                else
+                {
+                    float radius = size / 2f;
+                    if (edge > 0f)
+                        _graphics.DrawEllipse(outlinePen, cx - radius, cy - radius, radius * 2f, radius * 2f);
+                    _graphics.DrawEllipse(fillPen, cx - radius, cy - radius, radius * 2f, radius * 2f);
+                }
+            }
+
+            Upload(context);
+        }
+
+        private void DrawArm(Pen outlinePen, Pen fillPen, float x1, float y1, float x2, float y2)
+        {
+            if (outlinePen.Width > fillPen.Width)
+                _graphics!.DrawLine(outlinePen, x1, y1, x2, y2);
+            _graphics!.DrawLine(fillPen, x1, y1, x2, y2);
+        }
+
+        private static Color ParseColor(string? hex, Color fallback, double opacity)
+        {
+            Color parsed = fallback;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(hex))
+                {
+                    string trimmed = hex.TrimStart('#');
+                    if (trimmed.Length == 6 && int.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber, null, out int rgb))
+                        parsed = Color.FromArgb(255, (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+                    else if (trimmed.Length == 8 && uint.TryParse(trimmed, System.Globalization.NumberStyles.HexNumber, null, out uint argb))
+                        parsed = Color.FromArgb((int)((argb >> 24) & 0xFF), (int)((argb >> 16) & 0xFF), (int)((argb >> 8) & 0xFF), (int)(argb & 0xFF));
+                }
+            }
+            catch
+            {
+                parsed = fallback;
+            }
+            int alpha = (int)Math.Round(parsed.A * opacity);
+            return Color.FromArgb(Math.Clamp(alpha, 0, 255), parsed.R, parsed.G, parsed.B);
+        }
+
+        private void Upload(ID3D11DeviceContext context)
+        {
+            var locked = _bitmap!.LockBits(new Rectangle(0, 0, TexWidth, TexHeight), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var mapped = context.Map(_tex!, 0, MapMode.WriteDiscard, MapFlags.None);
+                try
+                {
+                    int rowBytes = TexWidth * 4;
+                    unsafe
+                    {
+                        byte* src = (byte*)locked.Scan0;
+                        byte* dst = (byte*)mapped.DataPointer;
+                        for (int py = 0; py < TexHeight; py++)
+                            Buffer.MemoryCopy(src + py * locked.Stride, dst + py * (int)mapped.RowPitch, rowBytes, rowBytes);
+                    }
+                }
+                finally
+                {
+                    context.Unmap(_tex!, 0);
+                }
+            }
+            finally
+            {
+                _bitmap.UnlockBits(locked);
+            }
+        }
+
+        public void Dispose()
+        {
+            _srv?.Dispose();
+            _tex?.Dispose();
+            _graphics?.Dispose();
+            _bitmap?.Dispose();
+            _srv = null;
+            _tex = null;
+            _graphics = null;
+            _bitmap = null;
+            _last = "";
+        }
+    }
+}

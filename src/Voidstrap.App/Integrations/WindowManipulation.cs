@@ -1,0 +1,810 @@
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Forms;
+using Windows.Win32.UI.Accessibility;
+using Voidstrap.Extensions;
+using Voidstrap.Models.Entities;
+using Voidstrap.Utility;
+
+namespace Voidstrap.Integrations
+{
+    public partial class WindowManipulation : IDisposable
+    {
+        private WINEVENTPROC? _setTitleHook;
+        private Windows.Win32.UnhookWinEventSafeHandle? _winEventHook;
+        private bool _disposed;
+
+        private HWND _hWnd;
+        private nint _hWndRaw;
+        private uint _robloxPID;
+
+        private const int WM_SETICON = 0x0080;
+        private const int WM_GETICON = 0x007F;
+        private const nint ICON_SMALL = 0;
+        private const nint ICON_BIG = 1;
+        private const uint SMTO_ABORTIFHUNG = 0x0002;
+        private const uint IconMessageTimeout = 1000;
+        private const int GameIconMaxBytes = 2 * 1024 * 1024;
+
+        private readonly object _iconGate = new object();
+        private nint _originalSmallIcon;
+        private nint _originalBigIcon;
+        private nint _ownedSmallIcon;
+        private nint _ownedBigIcon;
+
+        private volatile string _currentDesiredTitle;
+
+        private readonly ActivityWatcher? _activityWatcher;
+
+        private long _lastTitleSetTicks;
+        private int _titleRestorePending;
+        private static readonly TimeSpan TitleSetThrottle = TimeSpan.FromMilliseconds(100);
+
+        private RobloxWindowTitle? _titleUpdater;
+
+        public WindowManipulation(long windowHandle, long robloxProcessId, ActivityWatcher? activityWatcher = null)
+        {
+            const string LOG_IDENT = "WindowManipulation";
+
+            App.Logger.WriteLine(LOG_IDENT, $"Got window handle as {windowHandle}");
+            _hWnd = (HWND)new IntPtr(windowHandle);
+            _hWndRaw = (nint)windowHandle;
+            _robloxPID = (uint)robloxProcessId;
+            _activityWatcher = activityWatcher;
+
+            _currentDesiredTitle = string.IsNullOrWhiteSpace(App.Settings.Prop.RobloxTitle)
+                ? "Voidstrap"
+                : App.Settings.Prop.RobloxTitle;
+        }
+
+        public void Start()
+        {
+            ApplyWindowModifications();
+            ApplyWindowBackdrop();
+
+            bool useGameIcon = App.Settings.Prop.UseGameIconForRobloxWindow || RobloxWindowIcons.HasOverrides;
+
+            if (_activityWatcher != null && RobloxWindowTitle.WantsUpdates)
+                _titleUpdater = new RobloxWindowTitle(_activityWatcher, ApplyTitle);
+
+            if (_activityWatcher != null && (_titleUpdater != null || useGameIcon))
+            {
+                _activityWatcher.OnGameJoin += OnGameJoin;
+                _activityWatcher.OnGameLeave += OnGameLeave;
+
+                if (useGameIcon && _activityWatcher.InGame && _activityWatcher.Data?.UniverseId > 0)
+                {
+                    long universeId = _activityWatcher.Data.UniverseId;
+                    long placeId = _activityWatcher.Data.PlaceId;
+                    _ = Task.Run(() => ApplyGameIconAsync(universeId, placeId));
+                }
+            }
+        }
+
+        private void ApplyWindowModifications()
+        {
+            const string LOG_IDENT = "WindowManipulation::ApplyWindowModifications";
+            const int WINEVENT_OUTOFCONTEXT = 0x0;
+            const int EVENT_OBJECT_NAMECHANGE = 0x800C;
+
+            App.Logger.WriteLine(LOG_IDENT, "Applying window modifications");
+
+            _setTitleHook = new(SetWindowTitleHook);
+
+            try
+            {
+                App.Logger.WriteLine(LOG_IDENT, "Setting Roblox icon");
+                _originalSmallIcon = SendIconMessage(WM_GETICON, ICON_SMALL, 0);
+                _originalBigIcon = SendIconMessage(WM_GETICON, ICON_BIG, 0);
+                ApplyBaseIcon();
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine(LOG_IDENT, "Failed to set the Roblox icon: " + ex.Message);
+            }
+
+            App.Logger.WriteLine(LOG_IDENT, $"Setting Roblox title to '{_currentDesiredTitle}'");
+
+            PInvoke.SetWindowText(_hWnd, _currentDesiredTitle);
+
+            var dispatcher = App.Current?.Dispatcher;
+            if (dispatcher != null)
+            {
+                dispatcher.InvokeAsync(() =>
+                {
+                    if (_disposed)
+                        return;
+                    _winEventHook = PInvoke.SetWinEventHook(
+                        EVENT_OBJECT_NAMECHANGE,
+                        EVENT_OBJECT_NAMECHANGE,
+                        null,
+                        _setTitleHook,
+                        _robloxPID,
+                        0,
+                        WINEVENT_OUTOFCONTEXT);
+                    PInvoke.SetWindowText(_hWnd, _currentDesiredTitle);
+                });
+            }
+            else
+            {
+                _winEventHook = PInvoke.SetWinEventHook(
+                    EVENT_OBJECT_NAMECHANGE,
+                    EVENT_OBJECT_NAMECHANGE,
+                    null,
+                    _setTitleHook,
+                    _robloxPID,
+                    0,
+                    WINEVENT_OUTOFCONTEXT);
+                PInvoke.SetWindowText(_hWnd, _currentDesiredTitle);
+            }
+        }
+
+        private async void OnGameJoin(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (_disposed || _activityWatcher == null)
+                    return;
+
+                long universeId = _activityWatcher.Data?.UniverseId ?? 0;
+                if (universeId <= 0)
+                    return;
+
+                _titleUpdater?.Refresh();
+
+                if (App.Settings.Prop.UseGameIconForRobloxWindow || RobloxWindowIcons.HasOverrides)
+                    await ApplyGameIconAsync(universeId, _activityWatcher.Data?.PlaceId ?? 0);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("WindowManipulation::OnGameJoin", ex);
+            }
+        }
+
+        private void OnGameLeave(object? sender, EventArgs e)
+        {
+            if (_disposed)
+                return;
+
+            if (App.Settings.Prop.UseGameIconForRobloxWindow || RobloxWindowIcons.HasOverrides)
+                ApplyBaseIcon();
+
+            _titleUpdater?.Refresh();
+        }
+
+        public void SetGameTitle(string? title)
+        {
+            ApplyTitle(title ?? (string.IsNullOrWhiteSpace(App.Settings.Prop.RobloxTitle) ? "Voidstrap" : App.Settings.Prop.RobloxTitle));
+        }
+
+        private void ApplyTitle(string title)
+        {
+            if (_disposed)
+                return;
+            _currentDesiredTitle = title;
+            SetTitleSafe(title);
+        }
+
+        private void SetTitleSafe(string title)
+        {
+            Interlocked.Exchange(ref _lastTitleSetTicks, DateTime.UtcNow.Ticks);
+            PInvoke.SetWindowText(_hWnd, title);
+        }
+
+        // Called by Windows: an exception escaping a WinEvent callback terminates the process
+        private void SetWindowTitleHook(HWINEVENTHOOK hWinEventHook, uint iEvent, HWND hWnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        {
+            try
+            {
+                SetWindowTitleHookCore(hWnd, idObject);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine("WindowManipulation::SetWindowTitleHook", "Error: " + ex.Message);
+            }
+        }
+
+        private void SetWindowTitleHookCore(HWND hWnd, int idObject)
+        {
+            const string LOG_IDENT = "WindowManipulation::SetWindowTitleHook";
+
+            if (_disposed || hWnd != _hWnd || idObject != 0)
+                return;
+
+            Span<char> titleBuffer = stackalloc char[256];
+            int length = PInvoke.GetWindowText(_hWnd, titleBuffer);
+            string currentTitle = length > 0 ? new string(titleBuffer.Slice(0, length)) : string.Empty;
+
+            string desired = _currentDesiredTitle;
+            if (currentTitle == desired)
+                return;
+
+            var now = DateTime.UtcNow;
+            var lastSet = new DateTime(Interlocked.Read(ref _lastTitleSetTicks), DateTimeKind.Utc);
+            if (now - lastSet < TitleSetThrottle)
+            {
+                if (Interlocked.CompareExchange(ref _titleRestorePending, 1, 0) == 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TitleSetThrottle);
+                        Interlocked.Exchange(ref _titleRestorePending, 0);
+                        if (!_disposed)
+                            SetTitleSafe(_currentDesiredTitle);
+                    });
+                }
+                return;
+            }
+
+            App.Logger.WriteLine(LOG_IDENT, $"Title changed to '{currentTitle}', restoring to '{desired}'");
+            SetTitleSafe(desired);
+        }
+
+        private void ApplyWindowBackdrop()
+        {
+            const string LOG_IDENT = "WindowManipulation::ApplyWindowBackdrop";
+
+            int backdropType = App.Settings.Prop.RobloxWindowBackdropType;
+            if (backdropType <= 0 || backdropType == 1)
+                return;
+
+            if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                App.Logger.WriteLine(LOG_IDENT, "Windows 11 or later is required for window backdrop effects");
+                return;
+            }
+
+            try
+            {
+                IntPtr hwnd = (IntPtr)_hWnd;
+
+                int darkMode = 1;
+                DwmSetWindowAttributeInt(hwnd, 20, ref darkMode, sizeof(int));
+
+                if (backdropType == 5)
+                {
+                    MARGINS margins = new MARGINS { Left = -1, Top = -1, Right = -1, Bottom = -1 };
+                    DwmExtendFrameIntoClientArea(hwnd, ref margins);
+
+                    int accentState = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17134) ? 4 : 3;
+                    int color = unchecked((int)0x40000000);
+
+                    AccentPolicy policy = new AccentPolicy { State = accentState, Flags = 2, Color = color };
+                    int policySize = Marshal.SizeOf<AccentPolicy>();
+                    IntPtr policyPtr = Marshal.AllocHGlobal(policySize);
+                    try
+                    {
+                        Marshal.StructureToPtr(policy, policyPtr, false);
+                        WindowCompositionAttributeData data = new WindowCompositionAttributeData
+                        {
+                            Attribute = 19,
+                            Data = policyPtr,
+                            Size = policySize
+                        };
+                        if (SetWindowCompositionAttribute(hwnd, ref data) != 0)
+                        {
+                            App.Logger.WriteLine(LOG_IDENT, "Applied Aero glass blur backdrop to Roblox window");
+                        }
+                        else
+                        {
+                            App.Logger.WriteLine(LOG_IDENT, "SetWindowCompositionAttribute failed for Aero blur");
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.FreeHGlobal(policyPtr);
+                    }
+                    return;
+                }
+
+                MARGINS dwmMargins = new MARGINS { Left = -1, Top = -1, Right = -1, Bottom = -1 };
+                DwmExtendFrameIntoClientArea(hwnd, ref dwmMargins);
+
+                int dwmBackdrop = backdropType switch
+                {
+                    1 => 1,
+                    2 => 2,
+                    3 => 3,
+                    4 => 4,
+                    _ => 0
+                };
+
+                int hr = DwmSetWindowAttributeInt(hwnd, 38, ref dwmBackdrop, sizeof(int));
+
+                if (hr == 0)
+                {
+                    string backdropName = backdropType switch
+                    {
+                        1 => "None",
+                        2 => "Mica",
+                        3 => "Acrylic",
+                        4 => "Mica Alt",
+                        _ => "Unknown"
+                    };
+                    App.Logger.WriteLine(LOG_IDENT, $"Applied {backdropName} backdrop to Roblox window");
+                }
+                else
+                {
+                    App.Logger.WriteLine(LOG_IDENT, $"DwmSetWindowAttribute returned 0x{hr:X8}");
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException(LOG_IDENT, ex);
+            }
+        }
+
+
+
+        [LibraryImport("dwmapi.dll", EntryPoint = "DwmSetWindowAttribute")]
+        private static partial int DwmSetWindowAttributeInt(IntPtr hwnd, int attribute, ref int value, int size);
+
+        [LibraryImport("dwmapi.dll")]
+        private static partial int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS margins);
+
+        [LibraryImport("user32.dll")]
+        private static partial int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private partial struct MARGINS
+        {
+            public int Left;
+            public int Right;
+            public int Top;
+            public int Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private partial struct AccentPolicy
+        {
+            public int State;
+            public int Flags;
+            public int Color;
+            public int AnimationId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private partial struct WindowCompositionAttributeData
+        {
+            public int Attribute;
+            public IntPtr Data;
+            public int Size;
+        }
+
+        [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutA", SetLastError = true)]
+        private static partial nint SendMessageTimeout(nint hWnd, int message, nint wParam, nint lParam, uint flags, uint timeout, out nint result);
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool IsWindow(nint hWnd);
+
+        [LibraryImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool DestroyIcon(nint hIcon);
+
+        [LibraryImport("user32.dll")]
+        private static partial nint CopyIcon(nint hIcon);
+
+        private nint SendIconMessage(int message, nint wParam, nint lParam)
+        {
+            try
+            {
+                if (_hWndRaw == 0 || !IsWindow(_hWndRaw))
+                    return 0;
+
+                if (SendMessageTimeout(_hWndRaw, message, wParam, lParam, SMTO_ABORTIFHUNG, IconMessageTimeout, out nint result) == 0)
+                    return 0;
+
+                return result;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static void DestroyIconSafe(nint hIcon)
+        {
+            if (hIcon == 0)
+                return;
+
+            try
+            {
+                DestroyIcon(hIcon);
+            }
+            catch
+            {
+            }
+        }
+
+        private void ApplyIcons(nint small, nint big, bool owned)
+        {
+            if (small == 0)
+                small = big;
+            if (big == 0)
+                big = small;
+
+            if (small == 0 && big == 0)
+                return;
+
+            lock (_iconGate)
+            {
+                nint oldSmall = _ownedSmallIcon;
+                nint oldBig = _ownedBigIcon;
+
+                SendIconMessage(WM_SETICON, ICON_SMALL, small);
+                SendIconMessage(WM_SETICON, ICON_BIG, big);
+
+                _ownedSmallIcon = owned ? small : 0;
+                _ownedBigIcon = owned ? big : 0;
+
+                if (oldSmall != small && oldSmall != big)
+                    DestroyIconSafe(oldSmall);
+                if (oldBig != small && oldBig != big && oldBig != oldSmall)
+                    DestroyIconSafe(oldBig);
+            }
+        }
+
+        private void ResetIcons()
+        {
+            lock (_iconGate)
+            {
+                nint oldSmall = _ownedSmallIcon;
+                nint oldBig = _ownedBigIcon;
+
+                SendIconMessage(WM_SETICON, ICON_SMALL, _originalSmallIcon);
+                SendIconMessage(WM_SETICON, ICON_BIG, _originalBigIcon);
+
+                _ownedSmallIcon = 0;
+                _ownedBigIcon = 0;
+
+                DestroyIconSafe(oldSmall);
+                if (oldBig != oldSmall)
+                    DestroyIconSafe(oldBig);
+            }
+        }
+
+        private void ApplyBaseIcon()
+        {
+            const string LOG_IDENT = "WindowManipulation::ApplyBaseIcon";
+
+            if (_hWndRaw == 0)
+                return;
+
+            CreateBaseIcons(out nint small, out nint big);
+
+            if (small == 0 && big == 0)
+            {
+                App.Logger.WriteLine(LOG_IDENT, "No Voidstrap icon available, restoring the Roblox icon");
+                ResetIcons();
+                return;
+            }
+
+            ApplyIcons(small, big, true);
+        }
+
+        private static void CreateBaseIcons(out nint small, out nint big)
+        {
+            const string LOG_IDENT = "WindowManipulation::CreateBaseIcons";
+
+            small = 0;
+            big = 0;
+
+            System.Drawing.Icon? custom = null;
+
+            try
+            {
+                string location = App.Settings.Prop.RobloxIconCustomLocation;
+                if (App.Settings.Prop.RobloxIcon == BootstrapperIcon.IconCustom && !string.IsNullOrEmpty(location) && File.Exists(location))
+                {
+                    if (!string.Equals(Path.GetExtension(location), ".ico", StringComparison.OrdinalIgnoreCase))
+                    {
+                        using var bitmap = new Bitmap(location);
+                        small = HIconFromBitmap(bitmap, 32);
+                        big = HIconFromBitmap(bitmap, 64);
+                        if (small != 0 || big != 0)
+                            return;
+                    }
+                    else
+                    {
+                        custom = new System.Drawing.Icon(location);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine(LOG_IDENT, "Failed to load the custom icon: " + ex.Message);
+            }
+
+            try
+            {
+                System.Drawing.Icon? source = custom;
+
+                if (source == null)
+                {
+                    try
+                    {
+                        source = App.Settings.Prop.RobloxIcon.GetIcon();
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Logger.WriteLine(LOG_IDENT, "Failed to load the Voidstrap icon: " + ex.Message);
+                    }
+                }
+
+                if (source == null)
+                    return;
+
+                small = ScaleIconHandle(source, 32);
+                big = ScaleIconHandle(source, 64);
+            }
+            finally
+            {
+                custom?.Dispose();
+            }
+        }
+
+        private static nint ScaleIconHandle(System.Drawing.Icon source, int size)
+        {
+            try
+            {
+                using var sized = new System.Drawing.Icon(source, size, size);
+                return CopyIcon(sized.Handle);
+            }
+            catch
+            {
+                try
+                {
+                    return CopyIcon(source.Handle);
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+        }
+
+        private async Task ApplyGameIconAsync(long universeId, long placeId)
+        {
+            const string LOG_IDENT = "WindowManipulation::ApplyGameIcon";
+
+            try
+            {
+                if (_disposed)
+                    return;
+
+                string? overridePath = RobloxWindowIcons.Resolve(placeId, universeId);
+                if (overridePath != null)
+                {
+                    byte[]? custom = RobloxWindowIcons.ReadIcon(overridePath);
+                    if (custom != null && ApplyIconBytes(custom))
+                    {
+                        App.Logger.WriteLine(LOG_IDENT, $"Applying the custom icon for place {placeId}");
+                        return;
+                    }
+                }
+
+                if (!App.Settings.Prop.UseGameIconForRobloxWindow)
+                {
+                    ApplyBaseIcon();
+                    return;
+                }
+
+                string? url = await GetGameIconUrlAsync(universeId).ConfigureAwait(false);
+
+                if (_disposed)
+                    return;
+
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    App.Logger.WriteLine(LOG_IDENT, $"No icon for universe {universeId}, using the Voidstrap icon");
+                    ApplyBaseIcon();
+                    return;
+                }
+
+                byte[] data = await DownloadIconAsync(url).ConfigureAwait(false);
+
+                if (_disposed)
+                    return;
+
+                if (data.Length == 0)
+                {
+                    ApplyBaseIcon();
+                    return;
+                }
+
+                nint small;
+                nint big;
+
+                using (var stream = new MemoryStream(data))
+                using (var bitmap = new Bitmap(stream))
+                {
+                    small = HIconFromBitmap(bitmap, 32, true);
+                    big = HIconFromBitmap(bitmap, 64, true);
+                }
+
+                if (small == 0 && big == 0)
+                {
+                    ApplyBaseIcon();
+                    return;
+                }
+
+                App.Logger.WriteLine(LOG_IDENT, $"Applying the game icon for universe {universeId}");
+                ApplyIcons(small, big, true);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine(LOG_IDENT, "Failed to set the game icon: " + ex.Message);
+
+                try
+                {
+                    ApplyBaseIcon();
+                }
+                catch (Exception fallbackEx)
+                {
+                    App.Logger.WriteLine(LOG_IDENT, "Failed to restore the base icon: " + fallbackEx.Message);
+                }
+            }
+        }
+
+        private bool ApplyIconBytes(byte[] data)
+        {
+            if (_disposed)
+                return false;
+            try
+            {
+                nint small = 0;
+                nint big = 0;
+                if (data.Length >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0)
+                {
+                    try
+                    {
+                        using var icoStream = new MemoryStream(data);
+                        using var ico = new System.Drawing.Icon(icoStream);
+                        small = ScaleIconHandle(ico, 32);
+                        big = ScaleIconHandle(ico, 64);
+                    }
+                    catch
+                    {
+                        small = 0;
+                        big = 0;
+                    }
+                }
+                if (small == 0 && big == 0)
+                {
+                    using var stream = new MemoryStream(data);
+                    using var bitmap = new Bitmap(stream);
+                    small = HIconFromBitmap(bitmap, 32);
+                    big = HIconFromBitmap(bitmap, 64);
+                }
+                if (small == 0 && big == 0)
+                    return false;
+                ApplyIcons(small, big, true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine("WindowManipulation::ApplyIconBytes", "The custom icon could not be decoded: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static async Task<string?> GetGameIconUrlAsync(long universeId)
+        {
+            var details = UniverseDetails.LoadFromCache(universeId);
+
+            if (string.IsNullOrWhiteSpace(details?.Thumbnail?.ImageUrl))
+            {
+                await UniverseDetails.FetchSingle(universeId).ConfigureAwait(false);
+                details = UniverseDetails.LoadFromCache(universeId);
+            }
+
+            return details?.Thumbnail?.ImageUrl;
+        }
+
+        private static async Task<byte[]> DownloadIconAsync(string url)
+        {
+            using var response = await App.HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+                return Array.Empty<byte>();
+
+            return await Http.ReadBytesBoundedAsync(response.Content, GameIconMaxBytes, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        private static nint HIconFromBitmap(Bitmap source, int size, bool rounded = false)
+        {
+            try
+            {
+                using var scaled = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+
+                using (var graphics = Graphics.FromImage(scaled))
+                {
+                    graphics.Clear(System.Drawing.Color.Transparent);
+                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    graphics.SmoothingMode = SmoothingMode.HighQuality;
+                    graphics.DrawImage(source, new Rectangle(0, 0, size, size));
+                }
+
+                if (rounded)
+                    RoundBitmapCorners(scaled, size);
+
+                return scaled.GetHicon();
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static void RoundBitmapCorners(Bitmap bitmap, int size)
+        {
+            var data = bitmap.LockBits(new Rectangle(0, 0, size, size), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] pixels = new byte[size * size * 4];
+                for (int row = 0; row < size; row++)
+                    Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * size * 4, size * 4);
+                Raster.RoundCorners(pixels, size, size, size * 0.14f);
+                for (int row = 0; row < size; row++)
+                    Marshal.Copy(pixels, row * size * 4, data.Scan0 + row * data.Stride, size * 4);
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            _titleUpdater?.Dispose();
+            _titleUpdater = null;
+
+            try
+            {
+                ResetIcons();
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine("WindowManipulation::Dispose", "Failed to restore the Roblox icon: " + ex.Message);
+            }
+
+            if (_activityWatcher != null)
+            {
+                _activityWatcher.OnGameJoin -= OnGameJoin;
+                _activityWatcher.OnGameLeave -= OnGameLeave;
+            }
+
+            var hook = _winEventHook;
+            _winEventHook = null;
+            if (hook != null)
+            {
+                var dispatcher = App.Current?.Dispatcher;
+                if (dispatcher != null && !dispatcher.HasShutdownStarted)
+                {
+                    dispatcher.InvokeAsync(hook.Dispose);
+                }
+                else
+                {
+                    hook.Dispose();
+                }
+            }
+
+            GC.SuppressFinalize(this);
+        }
+    }
+}

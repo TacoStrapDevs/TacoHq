@@ -1,0 +1,21 @@
+[submodule "wpfui"]
+	path = external/wpfui
+	url = https://github.com/KloBraticc/wpfui
+[submodule "src/VirtualDisplay/virtualdisplay"]
+	path = src/VirtualDisplay/virtualdisplay
+	url = https://github.com/KloBraticc/virtualdisplay
+[submodule "external/RinColorPicker"]
+	path = external/RinColorPicker
+	url = https://github.com/KloBraticc/RinColorPicker
+	branch = main
+[submodule "external/Kiln"]
+	path = external/Kiln
+	url = https://github.com/KloBraticc/Kiln
+	branch = main
+[submodule "external/voidstrap-mods-library"]
+	path = external/voidstrap-mods-library
+	url = https://github.com/KloBraticc/voidstrap-mods-library
+	branch = main
+[submodule "external/VoidEdit"]
+	path = external/VoidEdit
+	url = https://github.com/KloBraticc/VoidEdit

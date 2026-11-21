@@ -1,0 +1,23 @@
+<Window x:Class="Voidstrap.Integrations.Keystrokes.KeystrokeOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Voidstrap Keystrokes"
+        AllowsTransparency="True"
+        Background="Transparent"
+        WindowStyle="None"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        SnapsToDevicePixels="True"
+        UseLayoutRounding="True"
+        SizeToContent="WidthAndHeight"
+        Loaded="OnOverlayLoaded"
+        Closed="OnOverlayClosed">
+  <Grid x:Name="RootLayout" Margin="4">
+    <Grid.LayoutTransform>
+      <ScaleTransform x:Name="OverlayScaleTransform" ScaleX="1.0" ScaleY="1.0" />
+    </Grid.LayoutTransform>
+
+    <ContentPresenter x:Name="ThemeHost" />
+  </Grid>
+</Window>

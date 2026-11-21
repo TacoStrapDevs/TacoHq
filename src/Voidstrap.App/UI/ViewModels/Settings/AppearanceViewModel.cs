@@ -1,0 +1,2308 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Xml.Linq;
+using CommunityToolkit.Mvvm.Input;
+using ICSharpCode.SharpZipLib.Zip;
+using Microsoft.Win32;
+using Voidstrap.Enums;
+using Voidstrap.Extensions;
+using Voidstrap.Models;
+using Voidstrap.Resources;
+using Voidstrap.UI;
+using Voidstrap.UI.Elements.Bootstrapper;
+using Voidstrap.UI.Elements.Dialogs;
+using Voidstrap.UI.Elements.Editor;
+using Voidstrap.UI.Elements.Settings;
+using Voidstrap.Utility;
+using SymbolRegular = Wpf.Ui.Common.SymbolRegular;
+
+namespace Voidstrap.UI.ViewModels.Settings;
+
+public class AppearanceViewModel : NotifyPropertyChangedViewModel, Voidstrap.UI.ViewModels.ISettingsRefreshable
+{
+
+    private bool _clearFont;
+
+    public static class AudioEvents
+    {
+        public static event Action<string?>? StartupAudioChanged;
+
+        public static void RaiseStartupAudioChanged(string? path)
+        {
+            AudioEvents.StartupAudioChanged?.Invoke(path);
+        }
+    }
+
+    public class BackgroundSettings
+    {
+        public string? BackgroundFilePath { get; set; }
+
+        public double GradientOpacity { get; set; } = 1.0;
+
+        public double BlackOverlayOpacity { get; set; }
+
+        public bool DisplayEverywhere { get; set; }
+    }
+
+    public sealed class SidebarItemEditor : NotifyPropertyChangedViewModel
+    {
+        private readonly Action<SidebarItemEditor> _changed;
+
+        private string _name;
+
+        private bool _isVisible;
+
+        private SymbolRegular _icon;
+
+        private bool _hasCustomSymbol;
+
+        private string? _customImagePath;
+
+        private BitmapSource? _previewImage;
+
+        public string Key { get; }
+
+        public string DefaultName { get; }
+
+        public string Section { get; }
+
+        public bool CanHide { get; }
+
+        public SymbolRegular DefaultIcon { get; }
+
+        public string Name
+        {
+            get => _name;
+            set
+            {
+                string normalized = MainWindow.NormalizeSidebarName(value, DefaultName);
+                if (_name == normalized)
+                {
+                    return;
+                }
+                _name = normalized;
+                OnPropertyChanged();
+                _changed(this);
+            }
+        }
+
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set
+            {
+                bool visible = !CanHide || value;
+                if (_isVisible == visible)
+                {
+                    return;
+                }
+                _isVisible = visible;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(VisibilityLabel));
+                _changed(this);
+            }
+        }
+
+        public string VisibilityLabel => IsVisible ? "Shown" : "Hidden";
+
+        private bool _canMoveUp;
+
+        private bool _canMoveDown;
+
+        public bool CanMoveUp
+        {
+            get => _canMoveUp;
+            internal set
+            {
+                if (_canMoveUp != value)
+                {
+                    _canMoveUp = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        public bool CanMoveDown
+        {
+            get => _canMoveDown;
+            internal set
+            {
+                if (_canMoveDown != value)
+                {
+                    _canMoveDown = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        public SymbolRegular Icon => _icon;
+
+        public bool UsesImagePreview => _previewImage != null;
+
+        public BitmapSource? PreviewImage => _previewImage;
+
+        public string IconLabel =>
+            _customImagePath != null ? "Image"
+            : _hasCustomSymbol ? _icon.ToString()
+            : "Default";
+
+        public SidebarItemEditor(
+            MainWindow.SidebarItemDefinition definition,
+            string name,
+            bool isVisible,
+            SymbolRegular icon,
+            bool hasCustomSymbol,
+            string? customImagePath,
+            Action<SidebarItemEditor> changed
+        )
+        {
+            Key = definition.Key;
+            DefaultName = definition.DisplayName;
+            Section = definition.Section;
+            CanHide = definition.CanHide;
+            DefaultIcon = definition.DefaultIcon;
+            _name = MainWindow.NormalizeSidebarName(name, DefaultName);
+            _isVisible = !CanHide || isVisible;
+            _changed = changed;
+            SetIcon(icon, hasCustomSymbol, customImagePath);
+        }
+
+        internal void SetIcon(SymbolRegular icon, bool hasCustomSymbol, string? customImagePath)
+        {
+            BitmapSource? image = string.IsNullOrWhiteSpace(customImagePath) ? null : SafeImaging.FromFile(customImagePath, 48);
+            _icon = icon;
+            _hasCustomSymbol = hasCustomSymbol && image == null;
+            _customImagePath = image == null ? null : customImagePath;
+            _previewImage =
+                image
+                ?? (
+                    Key == "SoberNavItem" && !_hasCustomSymbol
+                        ? SafeImaging.FromPack("pack://application:,,,/Resources/SoberIcon.png", 48)
+                        : null
+                );
+            OnPropertyChanged(nameof(Icon));
+            OnPropertyChanged(nameof(UsesImagePreview));
+            OnPropertyChanged(nameof(PreviewImage));
+            OnPropertyChanged(nameof(IconLabel));
+        }
+    }
+
+    public int[] ZoomOptions { get; } = new int[] { 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200 };
+
+    public ObservableCollection<SidebarItemEditor> SidebarItems { get; } = new ObservableCollection<SidebarItemEditor>();
+
+    public int UiZoomPercent
+    {
+        get { return App.Settings.Prop.UiZoomPercent; }
+        set
+        {
+            if (App.Settings.Prop.UiZoomPercent == value)
+            {
+                return;
+            }
+            App.Settings.Prop.UiZoomPercent = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(UiZoomPercent));
+            Voidstrap.UI.Elements.Settings.MainWindow.ApplyUiZoomToOpenWindows();
+        }
+    }
+
+    private static readonly Dictionary<string, byte[]> _appFontHeaders = new Dictionary<string, byte[]>
+    {
+        { "ttf", new byte[4] { 0, 1, 0, 0 } },
+        { "otf", new byte[4] { 79, 84, 84, 79 } },
+        { "ttc", new byte[4] { 116, 116, 99, 102 } },
+    };
+
+    private const string FileName = "BackgroundSettings.json";
+
+    private static readonly string FilePath = Paths.BackgroundSettings;
+
+    public static double SharedGradientOpacity { get; private set; } = LoadSharedGradientOpacity();
+
+    private static double LoadSharedGradientOpacity()
+    {
+        try
+        {
+            if (File.Exists(FilePath))
+            {
+                BackgroundSettings settings = JsonFile.Deserialize<BackgroundSettings>(FilePath, JsonOptions.Tolerant);
+                return Math.Clamp(settings.GradientOpacity, 0.0, 1.0);
+            }
+        }
+        catch (Exception) { }
+        return 1.0;
+    }
+
+    private BackgroundSettings _settings;
+
+    private static readonly object _saveLock = new object();
+
+    private static CancellationTokenSource? _saveCts;
+
+    private static int _saveGeneration;
+
+    public IEnumerable<Theme> BindableThemes => Voidstrap.Extensions.ThemeEx.Selections;
+
+    public string PageZoomDescription =>
+        "Zooms the settings pages like a browser. " + (Voidstrap.Utility.Platform.IsMacOS ? "⌘ Scroll" : "Ctrl+Scroll") + " for hotkey";
+
+    public IEnumerable<BackdropType> BackdropOptions { get; } =
+        Voidstrap.Utility.Platform.IsMacOS
+            ?
+            [
+                BackdropType.Default,
+                BackdropType.Sidebar,
+                BackdropType.Popover,
+                BackdropType.Hud,
+                BackdropType.UnderWindow,
+                BackdropType.UnderPage,
+                BackdropType.None,
+            ]
+            : Enum.GetValues<BackdropType>().Where(value => value <= BackdropType.None);
+
+    public ICommand PreviewBootstrapperCommand => new RelayCommand(PreviewBootstrapper);
+
+    public ICommand ChooseAccentCommand => new RelayCommand(ChooseAccent);
+
+    public ICommand ResetAccentCommand => new RelayCommand(ResetAccent);
+
+    public bool AccentGradientEnabled
+    {
+        get => App.Settings.Prop.CustomAccentGradient != null;
+        set
+        {
+            if (value == AccentGradientEnabled)
+                return;
+            SystemAccent.SaveGradient(value ? SystemAccent.CreateDefaultGradient() : null);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(AccentGradientDisabled));
+        }
+    }
+
+    public bool AccentGradientDisabled => !AccentGradientEnabled;
+
+    private void ChooseAccent()
+    {
+        using var dialog = new Voidstrap.UI.Elements.Controls.RinColorPickerDialog(
+            SystemAccent.Get(),
+            title: Strings.Menu_Appearance_Accent_Picker
+        );
+        Window? owner = Application.Current?.Windows.OfType<Window>().LastOrDefault(window => window.IsActive && window != dialog);
+        if (owner != null)
+            dialog.Owner = owner;
+        if (dialog.ShowDialog() != true)
+            return;
+        Color color = dialog.SelectedColor;
+        string value = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+        if (string.Equals(App.Settings.Prop.CustomAccentColor, value, StringComparison.OrdinalIgnoreCase))
+            return;
+        App.Settings.Prop.CustomAccentColor = value;
+        App.Settings.SaveDeferred();
+        SystemAccent.Refresh();
+    }
+
+    private void ResetAccent()
+    {
+        if (App.Settings.Prop.CustomAccentColor == null && App.Settings.Prop.CustomAccentGradient == null)
+            return;
+        App.Settings.Prop.CustomAccentColor = null;
+        App.Settings.Prop.CustomAccentGradient = null;
+        App.Settings.SaveDeferred();
+        SystemAccent.Refresh();
+        OnPropertyChanged(nameof(AccentGradientEnabled));
+        OnPropertyChanged(nameof(AccentGradientDisabled));
+    }
+
+    public ICommand BrowseCustomIconLocationCommand => new RelayCommand(BrowseCustomIconLocation);
+
+    public ICommand AddCustomThemeCommand => new RelayCommand(AddCustomTheme);
+
+    public ICommand DeleteCustomThemeCommand => new AsyncRelayCommand(DeleteCustomThemeAsync);
+
+    public ICommand RenameCustomThemeCommand => new AsyncRelayCommand(RenameCustomThemeAsync);
+
+    public ICommand EditCustomThemeCommand => new RelayCommand(EditCustomTheme);
+
+    public ICommand ExportCustomThemeCommand => new RelayCommand(ExportCustomTheme);
+
+    public ICommand ViewCustomThemeFilesCommand => new AsyncRelayCommand(ViewCustomThemeFilesAsync);
+
+    public ICommand ImportBackgroundCommand { get; }
+
+    public ICommand RemoveBackgroundCommand { get; }
+
+    public ICommand ImportStartupAudioCommand { get; }
+
+    public ICommand RemoveStartupAudioCommand { get; }
+
+    public bool HasLauncherBackground => HasMedia("bootstrapper_bg.*");
+
+    public bool HasStartupAudio => HasMedia("startup_audio.*");
+
+    private static bool HasMedia(string pattern)
+    {
+        try
+        {
+            return Directory.Exists(Paths.Media) && Directory.EnumerateFiles(Paths.Media, pattern).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    public ICommand ManageAppFontCommand => new RelayCommand(ManageAppFont);
+
+    public IReadOnlyList<WindowCornerStyle> WindowCornerStyles { get; } = Enum.GetValues<WindowCornerStyle>();
+
+    public WindowCornerStyle WindowCornerStyle
+    {
+        get => App.Settings.Prop.WindowCornerStyle;
+        set
+        {
+            if (App.Settings.Prop.WindowCornerStyle == value)
+                return;
+            App.Settings.Prop.WindowCornerStyle = value;
+            App.Settings.SaveDeferred();
+            CornerStyle.ApplyWindowCorners();
+            OnPropertyChanged(nameof(WindowCornerStyle));
+        }
+    }
+
+    public double UiCornerScale
+    {
+        get => CornerStyle.ControlScale;
+        set
+        {
+            double scale = double.IsFinite(value) ? Math.Round(Math.Clamp(value, CornerStyle.MinScale, CornerStyle.MaxScale), 2) : 1.0;
+            if (App.Settings.Prop.UiCornerScale == scale)
+                return;
+            App.Settings.Prop.UiCornerScale = scale;
+            App.Settings.SaveDeferred();
+            CornerStyle.ApplyControlScale();
+            OnPropertyChanged(nameof(UiCornerScale));
+        }
+    }
+
+    private string _brandNameText = App.Settings.Prop.BrandName ?? "";
+
+    public string BrandName
+    {
+        get => _brandNameText;
+        set
+        {
+            string text = value ?? "";
+            if (text == _brandNameText)
+                return;
+            _brandNameText = text;
+            OnPropertyChanged(nameof(BrandName));
+            string trimmed = text.Trim();
+            if (trimmed.Length > 0 && !Branding.IsValidName(trimmed))
+                return;
+            LiveLanguageRefresher.SetBrandName(trimmed);
+        }
+    }
+
+    public ImageSource? AppIconPreview => Branding.Icon ?? SafeImaging.FromPack("pack://application:,,,/Voidstrap.png", 64);
+
+    public Visibility ResetAppIconVisibility => Branding.HasCustomIcon ? Visibility.Visible : Visibility.Collapsed;
+
+    public ICommand ChooseAppIconCommand => new RelayCommand(ChooseAppIcon);
+
+    public ICommand ResetAppIconCommand => new RelayCommand(ResetAppIcon);
+
+    private void ChooseAppIcon()
+    {
+        OpenFileDialog dialog = new OpenFileDialog
+        {
+            Title = "Choose an app icon",
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.tif;*.tiff;*.tga;*.ico|All files|*.*",
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+        try
+        {
+            Branding.ImportIcon(dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("AppearanceViewModel::ChooseAppIcon", ex);
+            Frontend.ShowMessageBox("The icon could not be used: " + ex.Message, MessageBoxImage.Warning);
+            return;
+        }
+        RefreshAppIcon();
+    }
+
+    private void ResetAppIcon()
+    {
+        try
+        {
+            Branding.RemoveIcon();
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("AppearanceViewModel::ResetAppIcon", ex);
+            Frontend.ShowMessageBox("The custom icon could not be removed: " + ex.Message, MessageBoxImage.Warning);
+        }
+        RefreshAppIcon();
+    }
+
+    private void RefreshAppIcon()
+    {
+        OnPropertyChanged(nameof(AppIconPreview));
+        OnPropertyChanged(nameof(ResetAppIconVisibility));
+        LiveLanguageRefresher.ApplyBranding();
+        if (Voidstrap.Utility.Platform.UsesLinuxHost)
+            LinuxApplicationIdentity.Refresh();
+        else if (Voidstrap.Utility.Platform.IsMacOS)
+            Voidstrap.Utility.Branding.ApplyDockIcon();
+        else
+            TaskbarJumpList.Apply();
+    }
+
+    public ICommand MoveSidebarItemUpCommand { get; }
+
+    public ICommand MoveSidebarItemDownCommand { get; }
+
+    public ICommand ToggleSidebarItemVisibilityCommand { get; }
+
+    public ICommand ResetSidebarCommand { get; }
+
+    public Visibility ChooseAppFontVisibility
+    {
+        get
+        {
+            if (!AppFont.HasCustomFont)
+            {
+                return Visibility.Visible;
+            }
+            return Visibility.Collapsed;
+        }
+    }
+
+    public Visibility RemoveAppFontVisibility
+    {
+        get
+        {
+            if (!AppFont.HasCustomFont)
+            {
+                return Visibility.Collapsed;
+            }
+            return Visibility.Visible;
+        }
+    }
+
+    public System.Windows.Media.FontFamily AppFontFamily => AppFont.CurrentFontFamily;
+
+    public string AppFontName
+    {
+        get
+        {
+            string currentFontName = AppFont.CurrentFontName;
+            if (!string.IsNullOrWhiteSpace(currentFontName))
+            {
+                return currentFontName;
+            }
+            return "Remove Custom Font";
+        }
+    }
+
+    public bool Snowww
+    {
+        get { return App.Settings.Prop.SnowWOWSOCOOLWpfSnowbtw; }
+        set
+        {
+            if (App.Settings.Prop.SnowWOWSOCOOLWpfSnowbtw == value)
+            {
+                return;
+            }
+            App.Settings.Prop.SnowWOWSOCOOLWpfSnowbtw = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(Snowww));
+            ApplyToMainWindow(
+                delegate (MainWindow mainWindow)
+                {
+                    mainWindow.ApplySnow(value);
+                }
+            );
+        }
+    }
+
+    public bool GRADmentFR
+    {
+        get { return App.Settings.Prop.GRADmentFR; }
+        set
+        {
+            if (App.Settings.Prop.GRADmentFR == value)
+            {
+                return;
+            }
+            App.Settings.Prop.GRADmentFR = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(GRADmentFR));
+            ApplyToMainWindow(
+                delegate (MainWindow mainWindow)
+                {
+                    mainWindow.ApplyGradientMovement(value);
+                }
+            );
+        }
+    }
+
+    public System.Windows.Visibility WindowsOnlyVisibility =>
+        Voidstrap.Utility.Platform.IsWindows ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+    public bool ClearFont
+    {
+        get { return _clearFont; }
+        set
+        {
+            if (_clearFont == value)
+            {
+                return;
+            }
+            _clearFont = value;
+            OnPropertyChanged(nameof(ClearFont));
+            ApplyClearFontSetting();
+        }
+    }
+
+    private void ApplyClearFontSetting()
+    {
+        App.Settings.Prop.ClearFont = _clearFont;
+        App.Settings.SaveDeferred();
+        App.ApplyClearFontToOpenWindows();
+    }
+
+    public bool SmooothBARRyesirikikthxlucipook
+    {
+        get { return App.Settings.Prop.SmooothBARRyesirikikthxlucipook; }
+        set
+        {
+            if (App.Settings.Prop.SmooothBARRyesirikikthxlucipook == value)
+            {
+                return;
+            }
+            App.Settings.Prop.SmooothBARRyesirikikthxlucipook = value;
+            App.Settings.Save();
+            Wpf.Ui.Controls.SmoothScroll.SetGlobalEnabled(value);
+        }
+    }
+
+    public string? BackgroundFilePath
+    {
+        get { return _settings.BackgroundFilePath; }
+        set
+        {
+            value = string.IsNullOrWhiteSpace(value) ? null : Path.GetFullPath(value);
+            if (_settings.BackgroundFilePath != value)
+            {
+                _settings.BackgroundFilePath = value;
+                OnPropertyChanged(nameof(BackgroundFilePath));
+                SaveSettings();
+                PushGlobalBackground();
+            }
+        }
+    }
+
+    public double GradientOpacity
+    {
+        get { return _settings.GradientOpacity; }
+        set
+        {
+            value = Math.Clamp(value, 0.0, 1.0);
+            if (_settings.GradientOpacity != value)
+            {
+                _settings.GradientOpacity = value;
+                SharedGradientOpacity = value;
+                OnPropertyChanged(nameof(GradientOpacity));
+                SaveSettings();
+                PushGlobalBackground();
+                Voidstrap.UI.WindowBackdrop.ApplyGradientOpacityChange();
+            }
+        }
+    }
+
+    public double BlackOverlayOpacity
+    {
+        get { return _settings.BlackOverlayOpacity; }
+        set
+        {
+            value = Math.Clamp(value, 0.0, 1.0);
+            if (_settings.BlackOverlayOpacity != value)
+            {
+                _settings.BlackOverlayOpacity = value;
+                OnPropertyChanged(nameof(BlackOverlayOpacity));
+                SaveSettings();
+                PushGlobalBackground();
+            }
+        }
+    }
+
+    public bool BackgroundEverywhere
+    {
+        get { return _settings.DisplayEverywhere; }
+        set
+        {
+            if (_settings.DisplayEverywhere != value)
+            {
+                _settings.DisplayEverywhere = value;
+                OnPropertyChanged(nameof(BackgroundEverywhere));
+                SaveSettings();
+                PushGlobalBackground();
+            }
+        }
+    }
+
+    public bool HasCustomBackground =>
+        !string.IsNullOrEmpty(_settings.BackgroundFilePath) && System.IO.File.Exists(_settings.BackgroundFilePath);
+
+    public void ApplyLiveBackgroundState(GlobalBackground.State state)
+    {
+        bool pathChanged = !string.Equals(_settings.BackgroundFilePath, state.FilePath, StringComparison.OrdinalIgnoreCase);
+        bool gradientChanged = _settings.GradientOpacity != state.GradientOpacity;
+        bool overlayChanged = _settings.BlackOverlayOpacity != state.BlackOverlayOpacity;
+        bool everywhereChanged = _settings.DisplayEverywhere != state.DisplayEverywhere;
+        _settings.BackgroundFilePath = state.FilePath;
+        _settings.GradientOpacity = state.GradientOpacity;
+        _settings.BlackOverlayOpacity = state.BlackOverlayOpacity;
+        _settings.DisplayEverywhere = state.DisplayEverywhere;
+        SharedGradientOpacity = state.GradientOpacity;
+        if (pathChanged)
+        {
+            OnPropertyChanged(nameof(BackgroundFilePath));
+            OnPropertyChanged(nameof(HasCustomBackground));
+        }
+        if (gradientChanged)
+        {
+            OnPropertyChanged(nameof(GradientOpacity));
+        }
+        if (overlayChanged)
+        {
+            OnPropertyChanged(nameof(BlackOverlayOpacity));
+        }
+        if (everywhereChanged)
+        {
+            OnPropertyChanged(nameof(BackgroundEverywhere));
+        }
+    }
+
+    public ICommand ImportBackgroundCommand2 { get; }
+
+    public ICommand RemoveBackgroundCommand2 { get; }
+
+    public IEnumerable<Theme> Themes { get; } = Enum.GetValues<Theme>().Cast<Theme>();
+
+    public BackdropType SelectedBackdrop
+    {
+        get
+        {
+            if (Voidstrap.Utility.Platform.IsMacOS && !BackdropOptions.Contains(App.Settings.Prop.WindowBackdrop))
+            {
+                App.Settings.Prop.WindowBackdrop = BackdropType.Default;
+                App.Settings.SaveDeferred();
+            }
+            if (
+                Voidstrap.Utility.Platform.IsWindows
+                && !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+                && App.Settings.Prop.WindowBackdrop != BackdropType.None
+            )
+            {
+                App.Settings.Prop.WindowBackdrop = BackdropType.None;
+                App.Settings.SaveDeferred();
+                OnPropertyChanged(nameof(SelectedBackdrop));
+            }
+            return App.Settings.Prop.WindowBackdrop;
+        }
+        set
+        {
+            if (App.Settings.Prop.WindowBackdrop == value)
+            {
+                ApplyBackdropToMainWindow();
+                return;
+            }
+            App.Settings.Prop.WindowBackdrop = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(SelectedBackdrop));
+            ApplyBackdropToMainWindow();
+        }
+    }
+
+    private static void ApplyBackdropToMainWindow()
+    {
+        if (Application.Current == null)
+        {
+            return;
+        }
+        foreach (Window window in Application.Current.Windows.Cast<Window>().ToArray())
+        {
+            if (window is Voidstrap.UI.Elements.Settings.MainWindow mainWindow)
+            {
+                Voidstrap.UI.WindowBackdrop.ApplyMainWindow(mainWindow);
+            }
+            else
+            {
+                Voidstrap.UI.WindowBackdrop.Apply(window);
+            }
+        }
+        foreach (
+            Voidstrap.UI.Elements.ContextMenu.MenuContainer menu in Application.Current.Windows.OfType<Voidstrap.UI.Elements.ContextMenu.MenuContainer>()
+        )
+        {
+            menu.ApplyBackdrop();
+        }
+    }
+
+    public Visibility CustomThemeEditorVisibility => App.Settings.Prop.Theme2 == Theme.Custom ? Visibility.Visible : Visibility.Collapsed;
+
+    public Theme Theme
+    {
+        get { return App.Settings.Prop.Theme2; }
+        set
+        {
+            if (App.Settings.Prop.Theme2 == value)
+            {
+                return;
+            }
+            App.Settings.Prop.Theme2 = value;
+            App.Settings.SaveDeferred();
+            Voidstrap.UI.ThemeTransition.RememberSystemTheme();
+            OnPropertyChanged(nameof(Theme));
+            OnPropertyChanged(nameof(CustomThemeEditorVisibility));
+            if (Application.Current == null)
+                return;
+            foreach (
+                Voidstrap.UI.Elements.Base.WpfUiWindow window in Application
+                    .Current.Windows.OfType<Voidstrap.UI.Elements.Base.WpfUiWindow>()
+                    .ToArray()
+            )
+                ThemeTransition.Animate(window, window.ApplyTheme);
+        }
+    }
+
+    private LanguageOption _selectedLanguage;
+
+    private string _selectedAutoTranslateLanguage;
+
+    public ObservableCollection<LanguageOption> LanguageOptions { get; } = LanguageOption.CreateAll();
+
+    public LanguageOption SelectedLanguage
+    {
+        get => _selectedLanguage;
+        set
+        {
+            if (value == null || ReferenceEquals(_selectedLanguage, value))
+            {
+                return;
+            }
+            _selectedLanguage = value;
+            OnPropertyChanged(nameof(SelectedLanguage));
+            OnPropertyChanged(nameof(AutoTranslateVisibility));
+            if (value.Id == LanguageOption.AutoTranslateId)
+            {
+                App.Settings.Prop.AutoTranslate = true;
+                App.Settings.Prop.AutoTranslateLanguage = GetSelectedAutoTranslateCode();
+                TranslationService.Initialize();
+                LiveLanguageRefresher.Initialize();
+                App.Settings.Save();
+                OnPropertyChanged(nameof(SelectedAutoTranslateLanguage));
+                LiveLanguageRefresher.RefreshAllOpenWindows();
+                ScheduleLanguageLabelRefresh();
+                return;
+            }
+            App.Settings.Prop.AutoTranslate = false;
+            App.Settings.Prop.Locale = value.Id;
+            App.Settings.Save();
+            Locale.Set(value.Id);
+            ScheduleLanguageLabelRefresh();
+        }
+    }
+
+    private void ScheduleLanguageLabelRefresh()
+    {
+        Application.Current?.Dispatcher.BeginInvoke((Action)RefreshLanguageLabels, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void RefreshLanguageLabels()
+    {
+        foreach (LanguageOption option in LanguageOptions)
+        {
+            option.RefreshName();
+        }
+    }
+
+    public List<string> AutoTranslateLanguages => TranslationService.AvailableLanguages.Values.OrderBy((string x) => x).ToList();
+
+    private const string DiscordLanguageOff = "System Default";
+
+    public List<string> DiscordRpcLanguages =>
+        [DiscordLanguageOff, .. TranslationService.AvailableLanguages.Values.OrderBy((string x) => x)];
+
+    public string SelectedDiscordRpcLanguage
+    {
+        get =>
+            TranslationService.AvailableLanguages.TryGetValue(App.Settings.Prop.DiscordRpcLanguage ?? "", out string? name)
+                ? name
+                : DiscordLanguageOff;
+        set
+        {
+            string code =
+                TranslationService.AvailableLanguages.FirstOrDefault((KeyValuePair<string, string> kv) => kv.Value == value).Key ?? "";
+            if (string.Equals(App.Settings.Prop.DiscordRpcLanguage ?? "", code, StringComparison.Ordinal))
+                return;
+            App.Settings.Prop.DiscordRpcLanguage = code;
+            App.Settings.SaveDeferred();
+            RpcText.Prewarm();
+            OnPropertyChanged(nameof(SelectedDiscordRpcLanguage));
+        }
+    }
+
+    public string SelectedAutoTranslateLanguage
+    {
+        get => _selectedAutoTranslateLanguage;
+        set
+        {
+            if (string.IsNullOrEmpty(value) || _selectedAutoTranslateLanguage == value)
+            {
+                return;
+            }
+            _selectedAutoTranslateLanguage = value;
+            OnPropertyChanged(nameof(SelectedAutoTranslateLanguage));
+            KeyValuePair<string, string> match = TranslationService.AvailableLanguages.FirstOrDefault(
+                (KeyValuePair<string, string> kv) => kv.Value == value
+            );
+            if (!string.IsNullOrEmpty(match.Key))
+            {
+                App.Settings.Prop.AutoTranslate = true;
+                App.Settings.Prop.AutoTranslateLanguage = match.Key;
+                TranslationService.Initialize();
+                LiveLanguageRefresher.Initialize();
+                App.Settings.Save();
+                Voidstrap.UI.LiveLanguageRefresher.RefreshAllOpenWindows();
+                ScheduleLanguageLabelRefresh();
+            }
+        }
+    }
+
+    public Visibility AutoTranslateVisibility =>
+        _selectedLanguage?.Id == LanguageOption.AutoTranslateId ? Visibility.Visible : Visibility.Collapsed;
+
+    public IEnumerable<BootstrapperStyle> Dialogs { get; } = BootstrapperStyleEx.Selections;
+
+    public BootstrapperStyle Dialog
+    {
+        get { return App.Settings.Prop.BootstrapperStyle; }
+        set
+        {
+            App.Settings.Prop.BootstrapperStyle = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(Dialog));
+            OnPropertyChanged(nameof(CustomThemesExpanded));
+            OnPropertyChanged(nameof(LauncherExtrasEnabled));
+        }
+    }
+
+    public bool CustomThemesExpanded => App.Settings.Prop.BootstrapperStyle == BootstrapperStyle.CustomDialog;
+
+    public bool LauncherExtrasEnabled => App.Settings.Prop.BootstrapperStyle != BootstrapperStyle.CustomDialog;
+
+    public IEnumerable<BootstrapperScale> BootstrapperScales { get; } = Enum.GetValues<BootstrapperScale>();
+
+    public BootstrapperScale BootstrapperScale
+    {
+        get { return App.Settings.Prop.BootstrapperScale; }
+        set { App.Settings.Prop.BootstrapperScale = value; }
+    }
+
+    public ObservableCollection<BootstrapperIconEntry> Icons { get; set; } = new ObservableCollection<BootstrapperIconEntry>();
+
+    public BootstrapperIcon Icon
+    {
+        get { return App.Settings.Prop.BootstrapperIcon; }
+        set
+        {
+            if (value == BootstrapperIcon.IconCustom && !HasValidCustomIcon() && !PromptCustomIcon())
+            {
+                OnPropertyChanged(nameof(Icon));
+                return;
+            }
+            App.Settings.Prop.BootstrapperIcon = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(Icon));
+            OnPropertyChanged(nameof(IsCustomIcon));
+            Voidstrap.UI.LinuxApplicationIdentity.Refresh();
+        }
+    }
+
+    public Visibility StudioIconVisibility
+    {
+        get
+        {
+            if (!App.IsStudioVisible)
+            {
+                return Visibility.Collapsed;
+            }
+            return Visibility.Visible;
+        }
+    }
+
+    public BootstrapperIcon StudioIcon
+    {
+        get { return App.Settings.Prop.StudioBootstrapperIcon; }
+        set
+        {
+            if (value == BootstrapperIcon.IconCustom && !HasValidCustomIcon() && !PromptCustomIcon())
+            {
+                OnPropertyChanged(nameof(StudioIcon));
+                return;
+            }
+            App.Settings.Prop.StudioBootstrapperIcon = value;
+            OnPropertyChanged(nameof(StudioIcon));
+            App.Settings.SaveDeferred();
+        }
+    }
+
+    public bool IsCustomIcon => Icon == BootstrapperIcon.IconCustom;
+
+    public bool LaunchGameIcon
+    {
+        get => App.Settings.Prop.LaunchGameIcon;
+        set => App.Settings.Prop.LaunchGameIcon = value;
+    }
+
+    public ObservableCollection<CustomIconChoice> CustomIconChoices { get; } = new();
+
+    public ICommand SelectCustomIconCommand => new RelayCommand<string>(SelectCustomIcon);
+
+    private void SelectCustomIcon(string? path)
+    {
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            CustomIconLocation = path;
+        else
+            RebuildCustomIconChoices();
+    }
+
+    private const int MaxRecentCustomIcons = 12;
+
+    private void RebuildCustomIconChoices()
+    {
+        string current = App.Settings.Prop.BootstrapperIconCustomLocation;
+        List<string> recent = App.Settings.Prop.RecentCustomIcons ??= [];
+        if (!string.IsNullOrEmpty(current) && File.Exists(current))
+        {
+            recent.RemoveAll(path => string.Equals(path, current, StringComparison.OrdinalIgnoreCase));
+            recent.Insert(0, current);
+        }
+        recent.RemoveAll(path => string.IsNullOrEmpty(path) || !File.Exists(path));
+        if (recent.Count > MaxRecentCustomIcons)
+            recent.RemoveRange(MaxRecentCustomIcons, recent.Count - MaxRecentCustomIcons);
+        CustomIconChoices.Clear();
+        foreach (string path in recent)
+        {
+            CustomIconChoices.Add(new CustomIconChoice
+            {
+                Path = path,
+                Image = AnimatedIcon.LoadFirstFrame(path, 64),
+                IsSelected = string.Equals(path, current, StringComparison.OrdinalIgnoreCase)
+            });
+        }
+    }
+
+    public string Title
+    {
+        get { return App.Settings.Prop.BootstrapperTitle; }
+        set { App.Settings.Prop.BootstrapperTitle = value; }
+    }
+
+    public string CustomIconLocation
+    {
+        get { return App.Settings.Prop.BootstrapperIconCustomLocation; }
+        set
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                if (App.Settings.Prop.BootstrapperIcon == BootstrapperIcon.IconCustom)
+                {
+                    App.Settings.Prop.BootstrapperIcon = BootstrapperIcon.IconVoidstrap;
+                }
+                if (App.Settings.Prop.StudioBootstrapperIcon == BootstrapperIcon.IconCustom)
+                {
+                    App.Settings.Prop.StudioBootstrapperIcon = BootstrapperIcon.IconVoidstrap;
+                }
+            }
+            else
+            {
+                App.Settings.Prop.BootstrapperIcon = BootstrapperIcon.IconCustom;
+            }
+            App.Settings.Prop.BootstrapperIconCustomLocation = value;
+            App.Settings.SaveDeferred();
+            RefreshCustomIconEntry();
+            RebuildCustomIconChoices();
+            OnPropertyChanged(nameof(Icon));
+            OnPropertyChanged(nameof(IsCustomIcon));
+            OnPropertyChanged(nameof(StudioIcon));
+            OnPropertyChanged(nameof(CustomIconLocation));
+            Voidstrap.UI.LinuxApplicationIdentity.Refresh();
+        }
+    }
+
+    public string? SelectedCustomTheme
+    {
+        get { return App.Settings.Prop.SelectedCustomTheme; }
+        set
+        {
+            App.Settings.Prop.SelectedCustomTheme = value;
+            App.Settings.SaveDeferred();
+            OnPropertyChanged(nameof(IsCustomThemeSelected));
+        }
+    }
+
+    public string SelectedCustomThemeName { get; set; } = "";
+
+    public int SelectedCustomThemeIndex { get; set; }
+
+    public ObservableCollection<string> CustomThemes { get; set; } = new ObservableCollection<string>();
+
+    public bool IsCustomThemeSelected => SelectedCustomTheme != null;
+
+    public bool IsReloadingThemes { get; private set; }
+
+    public void ReloadFromSettings()
+    {
+        IsReloadingThemes = true;
+        try
+        {
+            PopulateCustomThemes();
+        }
+        finally
+        {
+            IsReloadingThemes = false;
+        }
+        SelectedCustomThemeName = App.Settings.Prop.SelectedCustomTheme ?? "";
+        OnPropertyChanged(nameof(Dialog));
+        OnPropertyChanged(nameof(CustomThemesExpanded));
+        OnPropertyChanged(nameof(LauncherExtrasEnabled));
+        OnPropertyChanged(nameof(SelectedCustomTheme));
+        OnPropertyChanged(nameof(SelectedCustomThemeName));
+        OnPropertyChanged(nameof(IsCustomThemeSelected));
+        OnPropertyChanged(nameof(SelectedCustomThemeIndex));
+    }
+
+    private void ManageAppFont()
+    {
+        if (AppFont.HasCustomFont)
+        {
+            AppFont.Clear();
+        }
+        else
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog { Filter = Strings.Menu_FontFiles + "|*.ttf;*.otf;*.ttc" };
+            if (openFileDialog.ShowDialog() != true)
+            {
+                return;
+            }
+            try
+            {
+                string key = Path.GetExtension(openFileDialog.FileName).TrimStart('.').ToLowerInvariant();
+                byte[] array = File.ReadAllBytes(openFileDialog.FileName).Take(4).ToArray();
+                if (!_appFontHeaders.TryGetValue(key, out byte[]? value) || !value.SequenceEqual(array))
+                {
+                    Frontend.ShowMessageBox("Custom Font Invalid", MessageBoxImage.Hand);
+                    return;
+                }
+                if (!AppFont.SetFromFile(openFileDialog.FileName))
+                {
+                    Frontend.ShowMessageBox("Custom Font Invalid", MessageBoxImage.Hand);
+                    AppFont.Clear();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Frontend.ShowMessageBox("Could not load font: " + ex.Message, MessageBoxImage.Hand);
+                return;
+            }
+        }
+        OnPropertyChanged(nameof(ChooseAppFontVisibility));
+        OnPropertyChanged(nameof(RemoveAppFontVisibility));
+        OnPropertyChanged(nameof(AppFontName));
+        OnPropertyChanged(nameof(AppFontFamily));
+    }
+
+    public AppearanceViewModel()
+    {
+        _clearFont = App.Settings.Prop.ClearFont;
+        _selectedAutoTranslateLanguage = GetInitialAutoTranslateLanguageName();
+        _selectedLanguage = LanguageOption.Find(LanguageOptions, App.Settings.Prop.AutoTranslate, App.Settings.Prop.Locale);
+        ImportBackgroundCommand = new RelayCommand(() =>
+        {
+            ImportBackground();
+            OnPropertyChanged(nameof(HasLauncherBackground));
+        });
+        RemoveBackgroundCommand = new RelayCommand(() =>
+        {
+            RemoveBackground();
+            OnPropertyChanged(nameof(HasLauncherBackground));
+        });
+        ImportStartupAudioCommand = new RelayCommand(() =>
+        {
+            ImportStartupAudio();
+            OnPropertyChanged(nameof(HasStartupAudio));
+        });
+        RemoveStartupAudioCommand = new RelayCommand(() =>
+        {
+            RemoveStartupAudio();
+            OnPropertyChanged(nameof(HasStartupAudio));
+        });
+        MoveSidebarItemUpCommand = new RelayCommand<SidebarItemEditor>(item => MoveSidebarItem(item, -1));
+        MoveSidebarItemDownCommand = new RelayCommand<SidebarItemEditor>(item => MoveSidebarItem(item, 1));
+        ToggleSidebarItemVisibilityCommand = new RelayCommand<SidebarItemEditor>(ToggleSidebarItemVisibility);
+        ResetSidebarCommand = new RelayCommand(ResetSidebar);
+        _settings = LoadSettings();
+        SharedGradientOpacity = _settings.GradientOpacity;
+        ImportBackgroundCommand2 = new RelayCommand<object>(ImportFile);
+        RemoveBackgroundCommand2 = new RelayCommand<object>(RemoveFile);
+        RebuildIcons();
+        RebuildCustomIconChoices();
+        PopulateCustomThemes();
+        LoadSidebarItems();
+    }
+
+    private static string GetInitialAutoTranslateLanguageName()
+    {
+        string configured = App.Settings.Prop.AutoTranslateLanguage ?? "";
+        if (!string.IsNullOrEmpty(configured) && TranslationService.AvailableLanguages.TryGetValue(configured, out string? configuredName))
+        {
+            return configuredName;
+        }
+        string systemLanguage = System.Globalization.CultureInfo.CurrentUICulture.Name;
+        string normalized = systemLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase)
+            ? systemLanguage
+            : System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        if (TranslationService.AvailableLanguages.TryGetValue(normalized, out string? detected))
+        {
+            return detected;
+        }
+        return TranslationService.AvailableLanguages["en"];
+    }
+
+    private string GetSelectedAutoTranslateCode()
+    {
+        KeyValuePair<string, string> match = TranslationService.AvailableLanguages.FirstOrDefault(pair =>
+            pair.Value == _selectedAutoTranslateLanguage
+        );
+        return string.IsNullOrEmpty(match.Key) ? "en" : match.Key;
+    }
+
+    private static void ApplyToMainWindow(Action<MainWindow> action)
+    {
+        try
+        {
+            Application current = Application.Current;
+            if (current == null)
+            {
+                return;
+            }
+            foreach (Window window in current.Windows)
+            {
+                if (window is MainWindow obj)
+                {
+                    action(obj);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Logger?.WriteLine("AppearanceViewModel::ApplyToMainWindow", "Could not apply appearance changes: " + ex.Message);
+        }
+    }
+
+    private void LoadSidebarItems()
+    {
+        Dictionary<string, string> names = App.Settings.Prop.SidebarNames ??= new Dictionary<string, string>();
+        Dictionary<string, string> icons = App.Settings.Prop.SidebarIcons ??= new Dictionary<string, string>();
+        Dictionary<string, string> iconImages = App.Settings.Prop.SidebarIconImages ??= new Dictionary<string, string>();
+        List<string> hidden = App.Settings.Prop.SidebarHiddenItems ??= new List<string>();
+        List<string> savedOrder = App.Settings.Prop.SidebarOrder ??= new List<string>();
+        Dictionary<string, int> ranks = savedOrder
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.Ordinal)
+            .Select((key, index) => (key, index))
+            .ToDictionary(pair => pair.key, pair => pair.index, StringComparer.Ordinal);
+        Dictionary<string, int> defaults = MainWindow
+            .SidebarCustomizationItems.Select((item, index) => (item.Key, index))
+            .ToDictionary(pair => pair.Key, pair => pair.index, StringComparer.Ordinal);
+        SidebarItems.Clear();
+        foreach (
+            MainWindow.SidebarItemDefinition definition in MainWindow
+                .SidebarCustomizationItems.Where(item => MainWindow.IsSidebarItemAvailable(item.Key))
+                .OrderBy(item => SectionRank(item.Section))
+                .ThenBy(item => ranks.TryGetValue(item.Key, out int rank) ? rank : int.MaxValue)
+                .ThenBy(item => defaults[item.Key])
+        )
+        {
+            string name = names.TryGetValue(definition.Key, out string? customName) ? customName : definition.DisplayName;
+            bool visible = !hidden.Contains(definition.Key, StringComparer.Ordinal);
+            SymbolRegular customIcon = definition.DefaultIcon;
+            bool hasCustomSymbol =
+                icons.TryGetValue(definition.Key, out string? iconName)
+                && Enum.TryParse(iconName, out customIcon)
+                && Voidstrap.UI.Elements.Dialogs.SidebarIconPickerDialog.CanRender(customIcon);
+            string? customImagePath = iconImages.TryGetValue(definition.Key, out string? imagePath) ? imagePath : null;
+            SidebarItems.Add(
+                new SidebarItemEditor(
+                    definition,
+                    name,
+                    visible,
+                    hasCustomSymbol ? customIcon : definition.DefaultIcon,
+                    hasCustomSymbol,
+                    customImagePath,
+                    SaveSidebarItem
+                )
+            );
+        }
+        RefreshSidebarMoveState();
+    }
+
+    private void RefreshSidebarMoveState()
+    {
+        for (int i = 0; i < SidebarItems.Count; i++)
+        {
+            SidebarItemEditor item = SidebarItems[i];
+            item.CanMoveUp = i > 0 && SidebarItems[i - 1].Section == item.Section;
+            item.CanMoveDown = i < SidebarItems.Count - 1 && SidebarItems[i + 1].Section == item.Section;
+        }
+    }
+
+    private static int SectionRank(string section)
+    {
+        return section switch
+        {
+            "Core" => 0,
+            "Configuration" => 1,
+            _ => 3,
+        };
+    }
+
+    private void SaveSidebarItem(SidebarItemEditor item)
+    {
+        Dictionary<string, string> names = App.Settings.Prop.SidebarNames ??= new Dictionary<string, string>();
+        if (item.Name == item.DefaultName)
+        {
+            names.Remove(item.Key);
+        }
+        else
+        {
+            names[item.Key] = item.Name;
+        }
+        List<string> hidden = App.Settings.Prop.SidebarHiddenItems ??= new List<string>();
+        hidden.RemoveAll(key => string.Equals(key, item.Key, StringComparison.Ordinal));
+        if (!item.IsVisible && item.CanHide)
+        {
+            hidden.Add(item.Key);
+        }
+        SaveAndApplySidebar();
+    }
+
+    private void MoveSidebarItem(SidebarItemEditor? item, int direction)
+    {
+        if (item == null)
+        {
+            return;
+        }
+        int index = SidebarItems.IndexOf(item);
+        int target = index + direction;
+        if (index < 0 || target < 0 || target >= SidebarItems.Count || SidebarItems[target].Section != item.Section)
+        {
+            return;
+        }
+        SidebarItems.Move(index, target);
+        RefreshSidebarMoveState();
+        PersistSidebarOrder();
+        SaveAndApplySidebar();
+    }
+
+    private static void ToggleSidebarItemVisibility(SidebarItemEditor? item)
+    {
+        if (item == null || !item.CanHide)
+        {
+            return;
+        }
+        item.IsVisible = !item.IsVisible;
+    }
+
+    private void PersistSidebarOrder()
+    {
+        List<string> existing = App.Settings.Prop.SidebarOrder ??= new List<string>();
+        Dictionary<string, int> ranks = existing
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.Ordinal)
+            .Select((key, index) => (key, index))
+            .ToDictionary(pair => pair.key, pair => pair.index, StringComparer.Ordinal);
+        List<string> merged = new List<string>();
+        foreach (string section in new[] { "Core", "Configuration", "Footer" })
+        {
+            List<MainWindow.SidebarItemDefinition> definitions = MainWindow
+                .SidebarCustomizationItems.Where(item => item.Section == section)
+                .Select((item, index) => (item, index))
+                .OrderBy(pair => ranks.TryGetValue(pair.item.Key, out int rank) ? rank : int.MaxValue)
+                .ThenBy(pair => pair.index)
+                .Select(pair => pair.item)
+                .ToList();
+            Queue<string> available = new Queue<string>(SidebarItems.Where(item => item.Section == section).Select(item => item.Key));
+            foreach (MainWindow.SidebarItemDefinition definition in definitions)
+            {
+                merged.Add(MainWindow.IsSidebarItemAvailable(definition.Key) && available.Count > 0 ? available.Dequeue() : definition.Key);
+            }
+        }
+        App.Settings.Prop.SidebarOrder = merged;
+    }
+
+    public void SetSidebarSymbol(SidebarItemEditor item, SymbolRegular icon)
+    {
+        Dictionary<string, string> icons = App.Settings.Prop.SidebarIcons ??= new Dictionary<string, string>();
+        Dictionary<string, string> images = App.Settings.Prop.SidebarIconImages ??= new Dictionary<string, string>();
+        icons[item.Key] = icon.ToString();
+        images.Remove(item.Key);
+        item.SetIcon(icon, true, null);
+        SaveAndApplySidebar();
+    }
+
+    public void SetSidebarImage(SidebarItemEditor item, string path)
+    {
+        Dictionary<string, string> icons = App.Settings.Prop.SidebarIcons ??= new Dictionary<string, string>();
+        Dictionary<string, string> images = App.Settings.Prop.SidebarIconImages ??= new Dictionary<string, string>();
+        icons.Remove(item.Key);
+        images[item.Key] = path;
+        item.SetIcon(item.DefaultIcon, false, path);
+        SaveAndApplySidebar();
+    }
+
+    public void ResetSidebarIcon(SidebarItemEditor item)
+    {
+        Dictionary<string, string> icons = App.Settings.Prop.SidebarIcons ??= new Dictionary<string, string>();
+        Dictionary<string, string> images = App.Settings.Prop.SidebarIconImages ??= new Dictionary<string, string>();
+        icons.Remove(item.Key);
+        images.Remove(item.Key);
+        item.SetIcon(item.DefaultIcon, false, null);
+        SaveAndApplySidebar();
+    }
+
+    private void ResetSidebar()
+    {
+        App.Settings.Prop.SidebarNames = new Dictionary<string, string>();
+        App.Settings.Prop.SidebarIcons = new Dictionary<string, string>();
+        App.Settings.Prop.SidebarIconImages = new Dictionary<string, string>();
+        App.Settings.Prop.SidebarOrder = new List<string>();
+        App.Settings.Prop.SidebarHiddenItems = new List<string>();
+        App.Settings.SaveDeferred();
+        LoadSidebarItems();
+        ApplyToMainWindow(window => window.ApplySidebarCustomization());
+    }
+
+    private static void SaveAndApplySidebar()
+    {
+        App.Settings.SaveDeferred();
+        ApplyToMainWindow(window => window.ApplySidebarCustomization());
+    }
+
+    private void ImportFile(object? _)
+    {
+        OpenFileDialog openFileDialog = new OpenFileDialog
+        {
+            Filter = Voidstrap.Utility.Platform.IsMacOS
+                ? "Background Files|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.mp4;*.m4v;*.mov"
+                : "Background Files|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.mp4;*.webm;*.avi;*.mov",
+            Title = "Select Background File",
+        };
+        if (openFileDialog.ShowDialog() == true)
+        {
+            string selectedPath = Path.GetFullPath(openFileDialog.FileName);
+            if (string.Equals(BackgroundFilePath, selectedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Voidstrap.UI.GlobalBackground.Reload();
+            }
+            else
+            {
+                BackgroundFilePath = selectedPath;
+            }
+            double? recommended = RecommendGradientOpacity(selectedPath);
+            if (recommended.HasValue)
+            {
+                GradientOpacity = recommended.Value;
+            }
+        }
+    }
+
+    internal static byte[]? ReadBgraPixels(BitmapSource image)
+    {
+        int width = image.PixelWidth;
+        int height = image.PixelHeight;
+        if (width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        PixelFormat format = image.Format;
+        byte[] bgra = new byte[width * height * 4];
+
+        if (format == PixelFormats.Bgra32 || format == PixelFormats.Bgr32)
+        {
+            image.CopyPixels(bgra, width * 4, 0);
+            return bgra;
+        }
+
+        if (format == PixelFormats.Pbgra32)
+        {
+            image.CopyPixels(bgra, width * 4, 0);
+            for (int i = 0; i < bgra.Length; i += 4)
+            {
+                byte alpha = bgra[i + 3];
+                if (alpha == 0 || alpha == 255)
+                {
+                    continue;
+                }
+                bgra[i] = (byte)Math.Min(255, bgra[i] * 255 / alpha);
+                bgra[i + 1] = (byte)Math.Min(255, bgra[i + 1] * 255 / alpha);
+                bgra[i + 2] = (byte)Math.Min(255, bgra[i + 2] * 255 / alpha);
+            }
+            return bgra;
+        }
+
+        if (format == PixelFormats.Bgr24 || format == PixelFormats.Rgb24)
+        {
+            int stride = width * 3;
+            byte[] source = new byte[stride * height];
+            image.CopyPixels(source, stride, 0);
+            bool swap = format == PixelFormats.Rgb24;
+            for (int p = 0, q = 0; p < source.Length; p += 3, q += 4)
+            {
+                bgra[q] = swap ? source[p + 2] : source[p];
+                bgra[q + 1] = source[p + 1];
+                bgra[q + 2] = swap ? source[p] : source[p + 2];
+                bgra[q + 3] = 255;
+            }
+            return bgra;
+        }
+
+        if (format == PixelFormats.Gray8 || format == PixelFormats.Indexed8)
+        {
+            byte[] source = new byte[width * height];
+            image.CopyPixels(source, width, 0);
+            for (int p = 0, q = 0; p < source.Length; p++, q += 4)
+            {
+                bgra[q] = source[p];
+                bgra[q + 1] = source[p];
+                bgra[q + 2] = source[p];
+                bgra[q + 3] = 255;
+            }
+            return bgra;
+        }
+
+        try
+        {
+            FormatConvertedBitmap converted = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0.0);
+            byte[] fallback = new byte[converted.PixelWidth * 4 * converted.PixelHeight];
+            converted.CopyPixels(fallback, converted.PixelWidth * 4, 0);
+            return fallback;
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("AppearanceViewModel::ReadBgraPixels", "Could not convert " + format + ": " + ex.Message.Split('\n')[0]);
+            return null;
+        }
+    }
+
+    internal static double? RecommendGradientOpacity(string path)
+    {
+        if (Path.GetExtension(path).ToLowerInvariant() is ".mp4" or ".m4v" or ".webm" or ".avi" or ".mov")
+        {
+            return null;
+        }
+        try
+        {
+            BitmapSource? image = Voidstrap.Utility.SafeImaging.FromFile(path, 64);
+            if (image == null)
+            {
+                return null;
+            }
+            byte[]? pixels = ReadBgraPixels(image);
+            if (pixels == null || pixels.Length == 0)
+            {
+                return null;
+            }
+            double total = 0.0;
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                total += 0.0722 * pixels[i] + 0.7152 * pixels[i + 1] + 0.2126 * pixels[i + 2];
+            }
+            double luminance = total / (pixels.Length / 4) / 255.0;
+            return Math.Clamp(0.35 + luminance * 0.6, 0.35, 0.95);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("AppearanceViewModel::RecommendGradientOpacity", "Could not measure background lighting: " + ex.Message);
+            return null;
+        }
+    }
+
+    private void RemoveFile(object? _)
+    {
+        BackgroundFilePath = null;
+    }
+
+    internal static BackgroundSettings LoadSettings()
+    {
+        try
+        {
+            if (File.Exists(FilePath))
+            {
+                return JsonFile.Deserialize<BackgroundSettings>(FilePath, JsonOptions.Tolerant);
+            }
+        }
+        catch (Exception) { }
+        return new BackgroundSettings();
+    }
+
+    private void PushGlobalBackground()
+    {
+        OnPropertyChanged(nameof(HasCustomBackground));
+        Voidstrap.UI.GlobalBackground.Update(
+            _settings.BackgroundFilePath,
+            _settings.GradientOpacity,
+            _settings.BlackOverlayOpacity,
+            _settings.DisplayEverywhere
+        );
+    }
+
+    private void SaveSettings()
+    {
+        BackgroundSettings snapshot = new BackgroundSettings
+        {
+            BackgroundFilePath = _settings.BackgroundFilePath,
+            GradientOpacity = _settings.GradientOpacity,
+            BlackOverlayOpacity = _settings.BlackOverlayOpacity,
+            DisplayEverywhere = _settings.DisplayEverywhere,
+        };
+        CancellationTokenSource cts = new CancellationTokenSource();
+        int generation = Interlocked.Increment(ref _saveGeneration);
+        CancellationTokenSource? previous;
+        lock (_saveLock)
+        {
+            previous = _saveCts;
+            _saveCts = cts;
+        }
+        try
+        {
+            previous?.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+        previous?.Dispose();
+        CancellationToken token = cts.Token;
+        Task.Run(
+            async delegate
+            {
+                _ = 1;
+                try
+                {
+                    await Task.Delay(120, token).ConfigureAwait(continueOnCapturedContext: false);
+                    if (!token.IsCancellationRequested)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (generation == Volatile.Read(ref _saveGeneration))
+                            JsonFile.SerializeAtomic(FilePath, snapshot, JsonOptions.Indented);
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception) { }
+                finally
+                {
+                    lock (_saveLock)
+                    {
+                        if (ReferenceEquals(_saveCts, cts))
+                        {
+                            _saveCts = null;
+                        }
+                    }
+                    cts.Dispose();
+                }
+            }
+        );
+    }
+
+    private void PreviewBootstrapper()
+    {
+        IBootstrapperDialog bootstrapperDialog = App.Settings.Prop.BootstrapperStyle.GetNew();
+        bootstrapperDialog.Message = (
+            (App.Settings.Prop.BootstrapperStyle == BootstrapperStyle.ByfronDialog)
+                ? Strings.Bootstrapper_StylePreview_ImageCancel
+                : Strings.Bootstrapper_StylePreview_TextCancel
+        );
+        bootstrapperDialog.CancelEnabled = true;
+        AudioPlayerHelper.PlayStartupAudio();
+        if (bootstrapperDialog is Window window)
+        {
+            window.Closed += OnPreviewBootstrapperClosed;
+        }
+        bootstrapperDialog.ShowBootstrapper();
+    }
+
+    private static void OnPreviewBootstrapperClosed(object? sender, EventArgs e)
+    {
+        if (sender is Window window)
+            window.Closed -= OnPreviewBootstrapperClosed;
+        AudioPlayerHelper.StopAudio();
+    }
+
+    private static string CustomIconFilter =>
+        Strings.Menu_IconFiles + (Voidstrap.Utility.Platform.IsMacOS ? "|*.icns;" : "|") + Voidstrap.Utility.AnimatedIcon.FileFilterPatterns;
+
+    private void BrowseCustomIconLocation()
+    {
+        OpenFileDialog openFileDialog = new OpenFileDialog { Filter = CustomIconFilter };
+        if (openFileDialog.ShowDialog() == true)
+        {
+            CustomIconLocation = openFileDialog.FileName;
+        }
+    }
+
+    private void RefreshCustomIconEntry()
+    {
+        foreach (BootstrapperIconEntry entry in Icons)
+        {
+            if (entry.IconType == BootstrapperIcon.IconCustom)
+                entry.RefreshImage();
+        }
+    }
+
+    private void RebuildIcons()
+    {
+        Icons.Clear();
+        foreach (BootstrapperIcon selection in BootstrapperIconEx.Selections)
+        {
+            Icons.Add(new BootstrapperIconEntry { IconType = selection });
+        }
+        OnPropertyChanged(nameof(Icons));
+    }
+
+    private static bool HasValidCustomIcon()
+    {
+        string bootstrapperIconCustomLocation = App.Settings.Prop.BootstrapperIconCustomLocation;
+        if (!string.IsNullOrEmpty(bootstrapperIconCustomLocation))
+        {
+            return File.Exists(bootstrapperIconCustomLocation);
+        }
+        return false;
+    }
+
+    private bool PromptCustomIcon()
+    {
+        OpenFileDialog openFileDialog = new OpenFileDialog { Filter = CustomIconFilter };
+        if (openFileDialog.ShowDialog() != true)
+        {
+            return false;
+        }
+        App.Settings.Prop.BootstrapperIconCustomLocation = openFileDialog.FileName;
+        App.Settings.SaveDeferred();
+        OnPropertyChanged(nameof(CustomIconLocation));
+        RefreshCustomIconEntry();
+        RebuildCustomIconChoices();
+        return true;
+    }
+
+    private void AddCustomTheme()
+    {
+        AddCustomThemeDialog addCustomThemeDialog = new AddCustomThemeDialog();
+        addCustomThemeDialog.ShowOwnedDialog();
+        if (addCustomThemeDialog.Created)
+        {
+            CustomThemes.Add(addCustomThemeDialog.ThemeName);
+            SelectedCustomThemeIndex = CustomThemes.Count - 1;
+            OnPropertyChanged(nameof(SelectedCustomThemeIndex));
+            OnPropertyChanged(nameof(IsCustomThemeSelected));
+            if (addCustomThemeDialog.OpenEditor)
+            {
+                EditCustomTheme();
+            }
+        }
+    }
+
+    private void ImportStartupAudio()
+    {
+        OpenFileDialog openFileDialog = new OpenFileDialog
+        {
+            Title = "Select a Startup Sound",
+            Filter = "Audio Files|*.mp3;*.wav;*.ogg;*.flac;*.wma",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+        };
+        if (openFileDialog.ShowDialog() != true)
+        {
+            return;
+        }
+        string fileName = openFileDialog.FileName;
+        if (!File.Exists(fileName))
+        {
+            return;
+        }
+        try
+        {
+            Directory.CreateDirectory(Paths.Media);
+            string[] files = Directory.GetFiles(Paths.Media, "startup_audio.*");
+            foreach (string path in files)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch { }
+            }
+            string path2 = "startup_audio" + Path.GetExtension(fileName);
+            string text = Path.Combine(Paths.Media, path2);
+            File.Copy(fileName, text, overwrite: true);
+            AudioEvents.RaiseStartupAudioChanged(text);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("AppearanceViewModel::ImportStartupAudio", ex);
+        }
+    }
+
+    private void RemoveStartupAudio()
+    {
+        try
+        {
+            string[] files = Directory.GetFiles(Paths.Media, "startup_audio.*");
+            foreach (string path in files)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch { }
+            }
+            AudioEvents.RaiseStartupAudioChanged(null);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("AppearanceViewModel::RemoveStartupAudio", ex);
+        }
+    }
+
+    private async Task DeleteCustomThemeAsync()
+    {
+        string? name = SelectedCustomTheme;
+        App.Logger.WriteLine("AppearanceViewModel::DeleteCustomTheme", "Delete requested for " + (name ?? "nothing selected"));
+        if (name != null)
+        {
+            try
+            {
+                await DeleteCustomThemeStructure(name);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("AppearanceViewModel::DeleteCustomTheme", ex);
+                Frontend.ShowMessageBox(
+                    string.Format(Strings.Menu_Appearance_CustomThemes_DeleteFailed, name, ex.Message),
+                    MessageBoxImage.Hand
+                );
+                return;
+            }
+            CustomThemes.Remove(name);
+            if (CustomThemes.Any())
+            {
+                SelectedCustomThemeIndex = CustomThemes.Count - 1;
+                OnPropertyChanged(nameof(SelectedCustomThemeIndex));
+            }
+            SelectedCustomTheme = null;
+            App.Settings.Save();
+            App.Logger.WriteLine("AppearanceViewModel::DeleteCustomTheme", "Deleted " + name);
+        }
+    }
+
+    private async Task RenameCustomThemeAsync()
+    {
+        string? oldName = SelectedCustomTheme;
+        if (oldName == null)
+        {
+            return;
+        }
+
+        string newName = SelectedCustomThemeName;
+
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            Frontend.ShowMessageBox("Name cannot be empty.", MessageBoxImage.Hand);
+            return;
+        }
+
+        PathValidator.ValidationResult validationResult = PathValidator.IsFileNameValid(newName);
+        if (validationResult != PathValidator.ValidationResult.Ok)
+        {
+            object message = validationResult switch
+            {
+                PathValidator.ValidationResult.IllegalCharacter => "Name contains illegal characters.",
+                PathValidator.ValidationResult.ReservedFileName => "Name is reserved.",
+                _ => "Unknown validation error.",
+            };
+            App.Logger.WriteLine("AppearanceViewModel::RenameCustomTheme", "Validation result: " + validationResult);
+            Frontend.ShowMessageBox((string)message, MessageBoxImage.Hand);
+            return;
+        }
+
+        if (Voidstrap.Utility.Platform.IsWindows && (newName.EndsWith(' ') || newName.EndsWith('.')))
+        {
+            Frontend.ShowMessageBox("Windows does not allow names that end in a period or space.", MessageBoxImage.Hand);
+            return;
+        }
+
+        if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        foreach (string folder in Directory.GetDirectories(Paths.CustomThemes))
+        {
+            if (string.Equals(Path.GetFileName(folder), newName, StringComparison.OrdinalIgnoreCase))
+            {
+                Frontend.ShowMessageBox("A theme with that name already exists.", MessageBoxImage.Hand);
+                return;
+            }
+        }
+
+        try
+        {
+            await RenameCustomThemeStructure(oldName, newName);
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteException("AppearanceViewModel::RenameCustomTheme", ex);
+            Frontend.ShowMessageBox(
+                string.Format(Strings.Menu_Appearance_CustomThemes_RenameFailed, oldName, ex.Message),
+                MessageBoxImage.Hand
+            );
+            return;
+        }
+
+        int num = CustomThemes.IndexOf(oldName);
+        if (num != -1)
+        {
+            CustomThemes[num] = newName;
+            SelectedCustomThemeIndex = num;
+        }
+        if (App.Settings.Prop.SelectedCustomTheme == oldName)
+        {
+            App.Settings.Prop.SelectedCustomTheme = newName;
+            App.Settings.SaveDeferred();
+        }
+        SelectedCustomThemeName = newName;
+        OnPropertyChanged(nameof(SelectedCustomTheme));
+        OnPropertyChanged(nameof(SelectedCustomThemeName));
+        OnPropertyChanged(nameof(SelectedCustomThemeIndex));
+    }
+
+    private void EditCustomTheme()
+    {
+        if (SelectedCustomTheme != null)
+        {
+            new BootstrapperEditorWindow(SelectedCustomTheme).ShowOwnedDialog();
+        }
+    }
+
+    private async Task ViewCustomThemeFilesAsync()
+    {
+        if (SelectedCustomTheme == null)
+            return;
+
+        try
+        {
+            var files = await Voidstrap.Integrations.ThemeFiles.LoadAsync(SelectedCustomTheme).ConfigureAwait(true);
+
+            if (files.Count == 0)
+            {
+                Frontend.ShowMessageBox("That theme has no files yet.", MessageBoxImage.Asterisk);
+                return;
+            }
+
+            ThemeChangesDialog dialog = new ThemeChangesDialog(SelectedCustomTheme, files) { Owner = Application.Current.MainWindow };
+
+            dialog.ShowOwnedDialog();
+        }
+        catch (Exception ex)
+        {
+            Frontend.ShowMessageBox(ex.Message, MessageBoxImage.Hand);
+        }
+    }
+
+    private void ExportCustomTheme()
+    {
+        if (SelectedCustomTheme == null)
+        {
+            return;
+        }
+
+        string themeDir = Path.Combine(Paths.CustomThemes, SelectedCustomTheme);
+
+        if (!Directory.Exists(themeDir))
+        {
+            Frontend.ShowMessageBox("That theme folder no longer exists.", MessageBoxImage.Hand);
+            return;
+        }
+
+        string? problem = DescribeExportProblem(themeDir);
+        if (problem != null)
+        {
+            if (Frontend.ShowMessageBox(problem, MessageBoxImage.Exclamation, MessageBoxButton.YesNo) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+        }
+
+        SaveFileDialog saveFileDialog = new SaveFileDialog
+        {
+            FileName = SelectedCustomTheme + ".zip",
+            Filter = Strings.FileTypes_ZipArchive + "|*.zip",
+            OverwritePrompt = true,
+            AddExtension = true,
+            DefaultExt = "zip",
+        };
+
+        if (saveFileDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            using (FileStream destination = File.Create(saveFileDialog.FileName))
+            using (ZipOutputStream zipOutputStream = new ZipOutputStream(destination) { IsStreamOwner = false })
+            {
+                zipOutputStream.SetLevel(9);
+
+                foreach (string item in Directory.EnumerateFiles(themeDir, "*.*", SearchOption.AllDirectories))
+                {
+                    string relative = Path.GetRelativePath(themeDir, item).Replace(Path.DirectorySeparatorChar, '/');
+
+                    ZipEntry entry = new ZipEntry(relative) { DateTime = File.GetLastWriteTime(item) };
+
+                    zipOutputStream.PutNextEntry(entry);
+
+                    using FileStream fileStream = new FileStream(item, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    fileStream.CopyTo(zipOutputStream);
+                    zipOutputStream.CloseEntry();
+                }
+
+                zipOutputStream.Finish();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("AppearanceViewModel::ExportCustomTheme", "Export failed");
+            App.Logger.WriteException("AppearanceViewModel::ExportCustomTheme", ex);
+            Frontend.ShowMessageBox("Could not export the theme: " + ex.Message, MessageBoxImage.Hand);
+            return;
+        }
+
+        try
+        {
+            if (!Voidstrap.Utility.Platform.IsWindows)
+            {
+                Voidstrap.Utility.PlatformShell.TryRevealFile(saveFileDialog.FileName);
+            }
+            else
+            {
+                using Process? process = Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName = Voidstrap.Utility.PlatformShell.WindowsTool("explorer.exe"),
+                        Arguments = "/select,\"" + saveFileDialog.FileName + "\"",
+                        UseShellExecute = true,
+                    }
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine("AppearanceViewModel::ExportCustomTheme", "Could not reveal the archive: " + ex.Message);
+        }
+    }
+
+    private static string? DescribeExportProblem(string themeDir)
+    {
+        List<string> problems = new List<string>();
+
+        string themeFile = Path.Combine(themeDir, "Theme.xml");
+
+        if (!File.Exists(themeFile))
+        {
+            problems.Add("There is no Theme.xml in this folder, so the export will not load on another device.");
+        }
+        else
+        {
+            try
+            {
+                XElement root = XElement.Load(themeFile);
+
+                foreach (XAttribute attribute in root.DescendantsAndSelf().Attributes())
+                {
+                    string value = attribute.Value;
+
+                    if (value.Length > 2 && value[1] == ':' && (value[2] == '\\' || value[2] == '/'))
+                    {
+                        problems.Add(
+                            "<"
+                                + attribute.Parent!.Name
+                                + "> uses an absolute path in "
+                                + attribute.Name
+                                + ", which will not exist on another device. Use theme:// instead."
+                        );
+                        break;
+                    }
+                }
+
+                foreach (XAttribute attribute in root.DescendantsAndSelf().Attributes())
+                {
+                    string value = attribute.Value;
+
+                    if (!value.StartsWith("theme://", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string relative = value["theme://".Length..];
+                    int hash = relative.LastIndexOf('#');
+                    if (hash >= 0)
+                        relative = relative[..hash];
+
+                    string resolved = Path.Combine(themeDir, relative.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(resolved))
+                    {
+                        problems.Add("The file " + relative + " is referenced but missing from the theme folder.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                problems.Add("Theme.xml could not be read: " + ex.Message);
+            }
+        }
+
+        if (problems.Count == 0)
+            return null;
+
+        return "This theme may not work for other people:\n\n" + string.Join("\n", problems.Distinct()) + "\n\nExport anyway?";
+    }
+
+    private void ImportBackground()
+    {
+        OpenFileDialog openFileDialog = new OpenFileDialog
+        {
+            Title = "Select a Background Image",
+            Filter = "Image Files|*.png;*.jpg;*.jpeg;*.bmp;*.gif",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+        };
+        if (openFileDialog.ShowDialog() != true)
+        {
+            return;
+        }
+        string fileName = openFileDialog.FileName;
+        if (!File.Exists(fileName))
+        {
+            return;
+        }
+        try
+        {
+            Directory.CreateDirectory(Paths.Media);
+            string[] files = Directory.GetFiles(Paths.Media, "bootstrapper_bg.*");
+            foreach (string path in files)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch { }
+            }
+            string path2 = "bootstrapper_bg" + Path.GetExtension(fileName);
+            string text = Path.Combine(Paths.Media, path2);
+            File.Copy(fileName, text, overwrite: true);
+            BackgroundEvents.RaiseBackgroundChanged(text);
+        }
+        catch (Exception) { }
+    }
+
+    private static async Task DeleteCustomThemeStructure(string name)
+    {
+        string folder = Path.Combine(Paths.CustomThemes, name);
+
+        if (!Directory.Exists(folder))
+        {
+            App.Logger.WriteLine("AppearanceViewModel::DeleteCustomTheme", "Already gone from disk: " + folder);
+            return;
+        }
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                if (attempt < 2)
+                {
+                    await Task.Delay(250);
+                }
+            }
+        }
+
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        try
+        {
+            DeleteDirectoryTree(folder);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw new IOException(
+                "A file in the theme folder is in use and could not be deleted. Delete the folder manually: " + folder,
+                ex
+            );
+        }
+    }
+
+    private void RemoveBackground()
+    {
+        try
+        {
+            string[] files = Directory.GetFiles(Paths.Media, "bootstrapper_bg.*");
+            foreach (string path in files)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch { }
+            }
+            BackgroundEvents.RaiseBackgroundChanged(null);
+        }
+        catch (Exception) { }
+    }
+
+    private static async Task RenameCustomThemeStructure(string oldName, string newName)
+    {
+        string sourceDirName = Path.Combine(Paths.CustomThemes, oldName);
+        string destDirName = Path.Combine(Paths.CustomThemes, newName);
+
+        if (!Directory.Exists(sourceDirName))
+        {
+            throw new FileNotFoundException("That theme folder no longer exists.");
+        }
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.Move(sourceDirName, destDirName);
+                return;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                if (attempt < 2)
+                {
+                    await Task.Delay(250);
+                }
+            }
+        }
+
+        try
+        {
+            Directory.CreateDirectory(destDirName);
+            CopyDirectoryContents(sourceDirName, destDirName);
+            DeleteDirectoryTree(sourceDirName);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw new IOException(
+                "The theme could not be fully renamed because a file in it is in use. If a folder with the new name was created, delete the old folder manually: "
+                    + sourceDirName,
+                ex
+            );
+        }
+    }
+
+    private static void CopyDirectoryContents(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+
+        foreach (string file in Directory.GetFiles(sourceDir))
+        {
+            string destFile = Path.Combine(destDir, Path.GetFileName(file));
+            using FileStream source = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using FileStream target = new FileStream(destFile, FileMode.Create, FileAccess.Write, FileShare.None);
+            source.CopyTo(target);
+        }
+
+        foreach (string sub in Directory.GetDirectories(sourceDir))
+        {
+            CopyDirectoryContents(sub, Path.Combine(destDir, Path.GetFileName(sub)));
+        }
+    }
+
+    private static void DeleteDirectoryTree(string dir)
+    {
+        foreach (string file in Directory.GetFiles(dir))
+        {
+            File.Delete(file);
+        }
+
+        foreach (string sub in Directory.GetDirectories(dir))
+        {
+            DeleteDirectoryTree(sub);
+        }
+
+        Directory.Delete(dir);
+    }
+
+    private void PopulateCustomThemes()
+    {
+        string? selectedCustomTheme = App.Settings.Prop.SelectedCustomTheme;
+        Directory.CreateDirectory(Paths.CustomThemes);
+        CustomThemes.Clear();
+        string[] directories = Directory.GetDirectories(Paths.CustomThemes);
+        foreach (string text in directories)
+        {
+            if (File.Exists(Path.Combine(text, "Theme.xml")))
+            {
+                string fileName = Path.GetFileName(text);
+                CustomThemes.Add(fileName);
+            }
+        }
+        if (selectedCustomTheme != null)
+        {
+            int num = CustomThemes.IndexOf(selectedCustomTheme);
+            if (num != -1)
+            {
+                SelectedCustomThemeIndex = num;
+                OnPropertyChanged(nameof(SelectedCustomThemeIndex));
+            }
+            else
+            {
+                SelectedCustomTheme = null;
+            }
+        }
+    }
+}
