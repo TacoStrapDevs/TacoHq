@@ -198,7 +198,7 @@ public final class Ui {
     }
 
     public static int writeFailure(Uri uri, Exception e) {
-        android.util.Log.w("Voidstrap", "Write failed for " + uri.getAuthority(), e);
+        android.util.Log.w("TacoStrap", "Write failed for " + uri.getAuthority(), e);
         return e instanceof SecurityException ? R.string.export_denied : R.string.export_failed;
     }
 

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class Core {
-    static final String UNAVAILABLE = "The Voidstrap core could not be loaded on this device.";
+    static final String UNAVAILABLE = "The TacoStrap core could not be loaded on this device.";
 
     private static final boolean LOADED = load();
 
@@ -121,7 +121,7 @@ final class Core {
     }
 
     static JSONObject feed(Context c, Object... kv) {
-        return merge(args("cache", c.getCacheDir(), "agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME), args(kv));
+        return merge(args("cache", c.getCacheDir(), "agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME), args(kv));
     }
 
     static List<JSONObject> objects(Object v) {

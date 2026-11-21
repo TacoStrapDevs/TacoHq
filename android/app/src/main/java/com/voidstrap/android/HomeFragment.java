@@ -165,7 +165,7 @@ public final class HomeFragment extends Page {
             try {
                 news = HomeFeed.latestNews(app, 2);
             } catch (IOException | RuntimeException e) {
-                android.util.Log.w("Voidstrap", "News feed failed", e);
+                android.util.Log.w("TacoStrap", "News feed failed", e);
             }
             List<HomeFeed.News> n = news;
             store.main.post(() -> bindNews(n));
@@ -184,7 +184,7 @@ public final class HomeFragment extends Page {
             try {
                 items = HomeFeed.catalog(app);
             } catch (IOException | RuntimeException e) {
-                android.util.Log.w("Voidstrap", "Catalog feed failed", e);
+                android.util.Log.w("TacoStrap", "Catalog feed failed", e);
             }
             List<HomeFeed.Item> it = items;
             store.main.post(() -> bindCatalog(it));

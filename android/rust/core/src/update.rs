@@ -185,7 +185,7 @@ pub fn call(op: &str, a: &Value) -> Result<Value, crate::archive::Error> {
     Ok(match op {
         "code" => json!({"v": version_code(&opt_str(a, "version", ""))}),
         "latest" => {
-            let client = Client { agent: opt_str(a, "agent", "Voidstrap Android") };
+            let client = Client { agent: opt_str(a, "agent", "TacoStrap Android") };
             let flavor = opt_str(a, "flavor", "direct");
             let installed = java::opt_long(a, "installed", 0);
             let pre = opt_bool(a, "prerelease", false);

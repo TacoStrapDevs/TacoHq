@@ -236,7 +236,7 @@ fn small(settings: &Value, account: &Value) -> (String, String) {
         return (LOADING.to_string(), String::new());
     }
     if !on(settings, "account") || image.is_empty() {
-        return (LOGO.to_string(), "Voidstrap".to_string());
+        return (LOGO.to_string(), "TacoStrap".to_string());
     }
     (image, opt_str(account, "text", ""))
 }
@@ -343,7 +343,7 @@ pub fn game(settings: &Value, data: &Value, game: &Value, account: &Value, flag_
 
 pub fn idle(icon: &str, start: i64, settings: &Value, account: &Value) -> Value {
     let url = IDLE.iter().find(|(k, _)| *k == icon).unwrap_or(&IDLE[0]).1;
-    presence("Inside Voidstrap".into(), "Browsing Roblox".into(), url.into(), "Roblox".into(), small(settings, account), start, true, Vec::new())
+    presence("Inside TacoStrap".into(), "Browsing Roblox".into(), url.into(), "Roblox".into(), small(settings, account), start, true, Vec::new())
 }
 
 fn field(current: &str, value: &str, original: &str) -> String {
@@ -426,10 +426,10 @@ pub fn app(a: &Value) -> Value {
     let mut details = clip(&opt_str(a, "details", ""));
     let mut state = clip(&opt_str(a, "state", ""));
     if utf16_len(&details) < 2 {
-        details = "Voidstrap".into();
+        details = "TacoStrap".into();
     }
     if utf16_len(&state) < 2 {
-        state = "Exploring Voidstrap".into();
+        state = "Exploring TacoStrap".into();
     }
     let seed = sparkle_seed(&details);
     let (before, after) = DETAIL_SPARKLES[seed % DETAIL_SPARKLES.len()];
@@ -437,7 +437,7 @@ pub fn app(a: &Value) -> Value {
     let (before, after) = STATE_SPARKLES[(seed / DETAIL_SPARKLES.len()) % STATE_SPARKLES.len()];
     let state = clip(&format!("{before}{state}{after}"));
     let https = |k: &str| Some(opt_str(a, k, "")).filter(|v| scene && v.starts_with("https://"));
-    let version = format!("\u{2736} Voidstrap Android v{} \u{2736}", opt_str(a, "version", ""));
+    let version = format!("\u{2736} TacoStrap Android v{} \u{2736}", opt_str(a, "version", ""));
     let avatar = a.get("avatar").cloned().unwrap_or(Value::Null);
     let (image, text, small) = match https("image") {
         Some(image) => {
@@ -455,7 +455,7 @@ pub fn app(a: &Value) -> Value {
         Some(url) => {
             let label = opt_str(a, "buttonLabel", "");
             let label = if label.is_empty() { "Open".to_string() } else { utf16_prefix(&label, 32).to_string() };
-            vec![[label, url], ["Get Voidstrap".to_string(), DOWNLOAD.to_string()]]
+            vec![[label, url], ["Get TacoStrap".to_string(), DOWNLOAD.to_string()]]
         }
         None => vec![["Discord".to_string(), DISCORD.to_string()], ["Github".to_string(), GITHUB.to_string()]],
     };

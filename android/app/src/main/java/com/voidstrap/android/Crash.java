@@ -10,7 +10,7 @@ import androidx.annotation.NonNull;
 import java.util.concurrent.Callable;
 
 public final class Crash {
-    private static final String TAG = "Voidstrap";
+    private static final String TAG = "TacoStrap";
 
     private Crash() {
     }

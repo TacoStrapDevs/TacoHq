@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class ModLog {
-    private static final String TAG = "VoidstrapMods";
+    private static final String TAG = "TacoStrapMods";
     private static final int MAX = 150;
     private static final Deque<String> LINES = new ArrayDeque<>();
     private static final SimpleDateFormat STAMP = new SimpleDateFormat("HH:mm:ss", Locale.US);

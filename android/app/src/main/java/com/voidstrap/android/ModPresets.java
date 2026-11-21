@@ -82,7 +82,7 @@ public final class ModPresets {
     public static final int SLOT_SHIFTLOCK = 4;
 
     public static final String[] SKY_FACES = {"sky512_bk.tex", "sky512_dn.tex", "sky512_ft.tex", "sky512_lf.tex", "sky512_rt.tex", "sky512_up.tex"};
-    public static final String CUSTOM_SKY = "Voidstrap Custom";
+    public static final String CUSTOM_SKY = "TacoStrap Custom";
     private static final String SKY_API = "https://api.github.com/repos/KloBraticc/SkyboxPackV2/contents";
     private static final String SKY_COMMIT = "https://api.github.com/repos/KloBraticc/SkyboxPackV2/commits/main";
     private static final String SKY_RAW = "https://raw.githubusercontent.com/KloBraticc/SkyboxPackV2/";

@@ -45,7 +45,7 @@ final class UpdateSource {
 
     static Updater.Release check(Context app) throws IOException {
         JSONObject r = Core.run("update.latest", Core.args(
-                "agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME,
+                "agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME,
                 "flavor", "direct",
                 "installed", Updater.installedCode(),
                 "prerelease", false));

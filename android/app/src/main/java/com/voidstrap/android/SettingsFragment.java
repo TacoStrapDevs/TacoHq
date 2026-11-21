@@ -437,7 +437,7 @@ public final class SettingsFragment extends Page {
     private String diagnostics() {
         Context c = requireContext();
         StringBuilder sb = new StringBuilder();
-        sb.append("Voidstrap for Android ").append(BuildConfig.VERSION_NAME).append(" (").append(BuildConfig.VERSION_CODE).append(") ")
+        sb.append("TacoStrap for Android ").append(BuildConfig.VERSION_NAME).append(" (").append(BuildConfig.VERSION_CODE).append(") ")
                 .append(BuildConfig.FLAVOR).append(' ').append(BuildConfig.BUILD_TYPE).append('\n');
         sb.append("Android ").append(Build.VERSION.RELEASE).append(" API ").append(Build.VERSION.SDK_INT).append('\n');
         sb.append("Device ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');

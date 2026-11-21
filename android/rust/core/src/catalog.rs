@@ -453,7 +453,7 @@ pub fn inspect_listing(e: &Entry) -> Option<String> {
         return Some("The entry does not come from a trusted community source.".into());
     }
     if HIDDEN.contains(&e.category.to_lowercase().as_str()) || HIDDEN.contains(&e.super_category.to_lowercase().as_str()) {
-        return Some("The entry is in a category Voidstrap does not show.".into());
+        return Some("The entry is in a category TacoStrap does not show.".into());
     }
     let tags = e.tags.join(" ");
     let hay = flatten(&[&e.name, &e.summary, &e.category, &e.super_category, &tags]);

@@ -124,7 +124,7 @@ final class AppPresence {
         if (id == R.id.nav_integrations) return new String[]{"Integrations", "Advanced integrations"};
         if (id == R.id.nav_smart && SmartJoin.presence() != null) return SmartJoin.presence();
         if (id == R.id.nav_settings) return new String[]{"Settings", "App settings & updates"};
-        return new String[]{"Home", "On the Voidstrap home screen"};
+        return new String[]{"Home", "On the TacoStrap home screen"};
     }
 
     private static Integrations.Presence build() {

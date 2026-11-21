@@ -301,7 +301,7 @@ public final class ModCatalog {
     }
 
     private static String agent() {
-        return "Voidstrap Android/" + BuildConfig.VERSION_NAME;
+        return "TacoStrap Android/" + BuildConfig.VERSION_NAME;
     }
 
     public static String inspectFile(ModFile f) {

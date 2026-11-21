@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vs_launcher_background">#FF110D1C</color>
+    <color name="vs_launcher_background">#FF121B18</color>
 
-    <color name="vs_p_primary">#FF625690</color>
-    <color name="vs_p_on_primary">#FFFFFFFF</color>
+    <color name="vs_p_primary">#FFFF8C42</color>
+    <color name="vs_p_on_primary">#FF1A1206</color>
     <color name="vs_p_window">#FFFDF7FF</color>
     <color name="vs_p_sidebar">#FFF1ECF4</color>
     <color name="vs_p_card">#FFF7F2FA</color>

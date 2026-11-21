@@ -98,7 +98,7 @@ final class SmartJoin {
     }
 
     static String[] presence() {
-        return new String[]{"Voidstrap Smart Join", "Picking a server"};
+        return new String[]{"TacoStrap Smart Join", "Picking a server"};
     }
 
     static boolean rejoining() {
@@ -106,7 +106,7 @@ final class SmartJoin {
     }
 
     private static JSONObject env(Context c, Object... kv) {
-        return Core.merge(Core.args("files", c.getFilesDir(), "cache", c.getCacheDir(), "agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME), Core.args(kv));
+        return Core.merge(Core.args("files", c.getFilesDir(), "cache", c.getCacheDir(), "agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME), Core.args(kv));
     }
 
     static Deeplink rewrite(Context app, Deeplink destination) {

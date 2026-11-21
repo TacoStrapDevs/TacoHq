@@ -16,7 +16,7 @@ import java.util.Locale;
 import java.util.Set;
 
 final class Matchmaker {
-    static final String TAG = "VoidstrapMatchmaker";
+    static final String TAG = "TacoStrapMatchmaker";
     static final String ENABLED = "mmEnabled";
     static final String PREFER_EMPTY = "mmPreferEmpty";
     static final String PREFERRED = "mmPreferred";
@@ -239,7 +239,7 @@ final class Matchmaker {
 
     static JSONObject env(Context c, Object... kv) {
         JSONObject base = Core.args("builtin", builtin(c), "cache", c.getCacheDir(), "files", c.getFilesDir(),
-                "agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME, "savedGeo", Store.get(c).setting(GEO, "{}"));
+                "agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME, "savedGeo", Store.get(c).setting(GEO, "{}"));
         return Core.merge(base, Core.args(kv));
     }
 

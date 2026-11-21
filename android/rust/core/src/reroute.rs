@@ -120,7 +120,7 @@ pub fn on_joined(d: &Joined, s: &Settings) -> Outcome {
         return out;
     };
     let Some(current) = matchmaker::lookup(&d.address, java::now_ms() + 12_000) else {
-        net::info("VoidstrapMatchmaker", "Current datacenter could not be resolved, staying put");
+        net::info("TacoStrapMatchmaker", "Current datacenter could not be resolved, staying put");
         clear_attempt(d.place);
         return out;
     };
@@ -199,7 +199,7 @@ pub fn on_joined(d: &Joined, s: &Settings) -> Outcome {
         st.rejoin_target = Some(best.dc.city.clone());
         st.rejoin_place = d.place;
     });
-    net::info("VoidstrapMatchmaker", &format!("Rerouting from {} ({current_ping}ms) to {} ({}ms)", current.city, best.dc.city, best.estimated_ping));
+    net::info("TacoStrapMatchmaker", &format!("Rerouting from {} ({current_ping}ms) to {} ({}ms)", current.city, best.dc.city, best.estimated_ping));
     REJOINING_UNTIL.store(java::now_ms() + 45_000, Ordering::SeqCst);
     out.rejoin = Some(best.job_id);
     out

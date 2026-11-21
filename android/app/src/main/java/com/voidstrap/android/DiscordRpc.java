@@ -21,7 +21,7 @@ import java.util.UUID;
 final class DiscordRpc {
     static final String PACKAGE = "com.discord";
     static final DiscordRpc ROBLOX = new DiscordRpc(1005469189907173486L, "Roblox");
-    static final DiscordRpc VOIDSTRAP = new DiscordRpc(1459679943498661910L, "Voidstrap Android");
+    static final DiscordRpc VOIDSTRAP = new DiscordRpc(1459679943498661910L, "TacoStrap Android");
 
     private static final String SERVICE = "com.discord.socialsdk.rpc.IDiscordRpcService";
     private static final String CONNECTION = "com.discord.socialsdk.rpc.IDiscordRpcConnection";

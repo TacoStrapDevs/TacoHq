@@ -77,7 +77,7 @@ public final class Net {
         con.setConnectTimeout(TIMEOUT_MS);
         con.setReadTimeout(TIMEOUT_MS);
         con.setRequestProperty("Accept", "application/json, image/png");
-        con.setRequestProperty("User-Agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME);
+        con.setRequestProperty("User-Agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME);
         try {
             int code = con.getResponseCode();
             if (code != 200) throw new IOException("HTTP " + code);
@@ -119,7 +119,7 @@ public final class Net {
         con.setConnectTimeout(15000);
         con.setReadTimeout(30000);
         con.setInstanceFollowRedirects(true);
-        con.setRequestProperty("User-Agent", "Voidstrap Android/" + BuildConfig.VERSION_NAME);
+        con.setRequestProperty("User-Agent", "TacoStrap Android/" + BuildConfig.VERSION_NAME);
         File tmp = new File(dest.getPath() + ".part");
         try {
             int code = con.getResponseCode();

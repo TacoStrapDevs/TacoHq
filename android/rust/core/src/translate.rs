@@ -172,7 +172,7 @@ fn send(lang: &str, chunk: &[String]) -> i64 {
         return if header > 0 { (header * 1000).min(MAX_BACKOFF_MS) } else { BASE_BACKOFF_MS };
     }
     if r.code / 100 != 2 {
-        crate::net::warn("Voidstrap", &format!("Translation endpoint returned {}", r.code));
+        crate::net::warn("TacoStrap", &format!("Translation endpoint returned {}", r.code));
         return -1;
     }
     if parse(lang, chunk, &r.text()) { 0 } else { -1 }

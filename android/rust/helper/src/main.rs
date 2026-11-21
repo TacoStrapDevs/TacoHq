@@ -94,10 +94,10 @@ fn main() {
         cleanup,
     });
     let Some(server) = bind() else {
-        println!("The Voidstrap helper could not listen");
+        println!("The TacoStrap helper could not listen");
         return;
     };
-    println!("The Voidstrap helper started");
+    println!("The TacoStrap helper started");
     let port = server.local_addr().map(|a| a.port()).unwrap_or(0);
     thread::spawn(move || watch(port));
     for client in server.incoming() {

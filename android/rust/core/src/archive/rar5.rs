@@ -160,7 +160,7 @@ fn scan(path: &Path) -> Result<Vec<Item>, Error> {
                 dict += dict / 32 * fraction;
                 extra_dist = info & 0x10_0000 == 0;
             } else if version != 0 {
-                return Err(Error::rejected("This rar package uses a newer format than Voidstrap supports."));
+                return Err(Error::rejected("This rar package uses a newer format than TacoStrap supports."));
             }
             if flags & 0x08 != 0 || flags & 0x10 != 0 {
                 return Err(Error::rejected(RAR_SPLIT));

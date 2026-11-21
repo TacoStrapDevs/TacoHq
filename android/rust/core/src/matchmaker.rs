@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-const TAG: &str = "VoidstrapMatchmaker";
+const TAG: &str = "TacoStrapMatchmaker";
 const REMOTE_URL: &str = "https://raw.githubusercontent.com/KloBraticc/Voidstrap-Resources/main/ServerLocations.json";
 pub const MIN_CANDIDATES: i64 = 8;
 pub const MAX_CANDIDATES: i64 = 64;
@@ -388,7 +388,7 @@ fn request(method: &str, url: &str, cookie: Option<&str>, token: Option<&str>, b
 }
 
 fn get(url: &str, cookie: Option<&str>, timeout: i64) -> Option<String> {
-    let r = request("GET", url, cookie, None, None, "Voidstrap/1.0", timeout)?;
+    let r = request("GET", url, cookie, None, None, "TacoStrap/1.0", timeout)?;
     (r.code == 200).then_some(r.body)
 }
 
@@ -655,7 +655,7 @@ fn list_servers(place_id: i64, cookie: &str, prefer_empty: bool, deadline: i64) 
                 std::thread::sleep(Duration::from_millis(*wait));
             }
             let last = attempt == backoff.len() - 1;
-            let Some(r) = request("GET", &url, Some(cookie), None, None, "Voidstrap/1.0", 10000) else {
+            let Some(r) = request("GET", &url, Some(cookie), None, None, "TacoStrap/1.0", 10000) else {
                 if last {
                     return sort(items, prefer_empty);
                 }

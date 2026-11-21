@@ -37,7 +37,7 @@ final class SmartJoin {
     }
 
     static String[] presence() {
-        return new String[]{"Voidstrap Matchmaker", "Picking the closest servers"};
+        return new String[]{"TacoStrap Matchmaker", "Picking the closest servers"};
     }
 
     static Deeplink rewrite(Context app, Deeplink destination) {

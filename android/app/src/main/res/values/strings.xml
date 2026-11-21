@@ -386,8 +386,8 @@
         <item quantity="other">%1$d items</item>
     </plurals>
     <plurals name="mods_remove_folder">
-        <item quantity="one">%1$s and the %2$d file inside it will be deleted from the Voidstrap workspace.</item>
-        <item quantity="other">%1$s and the %2$d files inside it will be deleted from the Voidstrap workspace.</item>
+        <item quantity="one">%1$s and the %2$d file inside it will be deleted from the TacoStrap workspace.</item>
+        <item quantity="other">%1$s and the %2$d files inside it will be deleted from the TacoStrap workspace.</item>
     </plurals>
     <string name="presets_mesh">Mesh detail</string>
     <string name="presets_gray_sky">Gray sky</string>
@@ -772,8 +772,8 @@
         <item quantity="other">%1$d files are loaded into Roblox. Applied %2$s.</item>
     </plurals>
     <plurals name="mods_state_pending">
-        <item quantity="one">%1$d file is ready. It loads the next time Voidstrap starts Roblox, or apply it now.</item>
-        <item quantity="other">%1$d files are ready. They load the next time Voidstrap starts Roblox, or apply them now.</item>
+        <item quantity="one">%1$d file is ready. It loads the next time TacoStrap starts Roblox, or apply it now.</item>
+        <item quantity="other">%1$d files are ready. They load the next time TacoStrap starts Roblox, or apply them now.</item>
     </plurals>
     <plurals name="mods_library_summary">
         <item quantity="one">%1$d mod, %2$d on</item>

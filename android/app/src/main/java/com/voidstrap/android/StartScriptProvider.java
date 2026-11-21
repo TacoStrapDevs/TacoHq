@@ -23,7 +23,7 @@ public final class StartScriptProvider extends ContentProvider {
     }
 
     static String script(String pkg, int uid, String token) {
-        return HelperServer.launchLine(pkg, uid, token) + "sleep 1\necho 'Voidstrap helper start requested'\n";
+        return HelperServer.launchLine(pkg, uid, token) + "sleep 1\necho 'TacoStrap helper start requested'\n";
     }
 
     @Override
