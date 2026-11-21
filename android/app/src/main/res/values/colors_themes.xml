@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vs_theme_voidstrap_vs_window">#FF121B18</color>
-    <color name="vs_theme_voidstrap_vs_sidebar">#FF0A100E</color>
-    <color name="vs_theme_voidstrap_vs_card">#FF1A2A24</color>
-    <color name="vs_theme_voidstrap_vs_menu">#FF20352D</color>
-    <color name="vs_theme_voidstrap_vs_input">#FF0E1714</color>
-    <color name="vs_theme_voidstrap_vs_text_primary">#FFBFE8D6</color>
-    <color name="vs_theme_voidstrap_vs_text_secondary">#FF93C4B0</color>
-    <color name="vs_theme_voidstrap_vs_text_tertiary">#FF6E9C8A</color>
-    <color name="vs_theme_voidstrap_color_primary">#FFFF8C42</color>
-    <color name="vs_theme_voidstrap_color_accent">#FFFF8C42</color>
-    <color name="vs_theme_voidstrap_color_secondary">#FF4FD1A5</color>
-    <color name="vs_theme_voidstrap_color_tertiary">#FF4FD1A5</color>
-    <color name="vs_theme_voidstrap_text_color_link">#FF4FD1A5</color>
-    <color name="vs_theme_voidstrap_color_on_primary">#FF1A1206</color>
+    <color name="vs_theme_voidstrap_vs_window">#FF1E0B2F</color>
+    <color name="vs_theme_voidstrap_vs_sidebar">#FF0A0412</color>
+    <color name="vs_theme_voidstrap_vs_card">#FF2C1A3B</color>
+    <color name="vs_theme_voidstrap_vs_menu">#FF342344</color>
+    <color name="vs_theme_voidstrap_vs_input">#FF180926</color>
+    <color name="vs_theme_voidstrap_vs_text_primary">#FF7F8CBF</color>
+    <color name="vs_theme_voidstrap_vs_text_secondary">#FF6E78A5</color>
+    <color name="vs_theme_voidstrap_vs_text_tertiary">#FF5C6390</color>
+    <color name="vs_theme_voidstrap_color_primary">#FF5E52C2</color>
+    <color name="vs_theme_voidstrap_color_accent">#FF5E52C2</color>
+    <color name="vs_theme_voidstrap_color_secondary">#FF7E75CE</color>
+    <color name="vs_theme_voidstrap_color_tertiary">#FF7E75CE</color>
+    <color name="vs_theme_voidstrap_text_color_link">#FF7E75CE</color>
+    <color name="vs_theme_voidstrap_color_on_primary">#FFFFFFFF</color>
     <color name="vs_theme_ultra_gray_vs_window">#FF202020</color>
     <color name="vs_theme_ultra_gray_vs_sidebar">#FF0A0A0A</color>
     <color name="vs_theme_ultra_gray_vs_card">#FF262626</color>
