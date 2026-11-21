@@ -83,6 +83,7 @@ fun NxToolsScreen(state: TacoState) {
                         }
                         Spacer(Modifier.width(8.dp))
                         NxButton("Use", {
+                            nxTick(context, state.hapticsOn)
                             state.draftFlags[e.key] = e.recommended
                             NxActivity.add(context, "Set ${e.title}", e.recommended, "flag")
                         }, Modifier.width(60.dp), NxButtonKind.Secondary, height = 34.dp)
@@ -105,10 +106,10 @@ fun NxToolsScreen(state: TacoState) {
             diagRow("Listener", state.vpnStatus, TacoIcon.Globe)
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth()) {
-                NxButton("Copy report", { state.copyDiagnostics() },
+                NxButton("Copy report", { nxTick(context, state.hapticsOn); state.copyDiagnostics() },
                     Modifier.weight(1f), NxButtonKind.Secondary, icon = TacoIcon.Copy)
                 Spacer(Modifier.width(8.dp))
-                NxButton("Clear cache", { state.clearCache() },
+                NxButton("Clear cache", { nxTick(context, state.hapticsOn); state.clearCache() },
                     Modifier.weight(1f), NxButtonKind.Ghost, icon = TacoIcon.Refresh)
             }
         }
@@ -116,7 +117,7 @@ fun NxToolsScreen(state: TacoState) {
 
         NxSection("Backup & restore")
         Row(Modifier.fillMaxWidth()) {
-            NxButton("Export", { state.exportBackup() },
+            NxButton("Export", { nxTick(context, state.hapticsOn); state.exportBackup() },
                 Modifier.weight(1f), NxButtonKind.Secondary, icon = TacoIcon.Up)
             Spacer(Modifier.width(8.dp))
             NxButton("Import", { state.importBackup() },

@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,6 +50,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.flagmanager.TacoIcon
+import com.example.flagmanager.hapticCrunch
+import com.example.flagmanager.hapticTick
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -59,6 +63,10 @@ private const val UI_PREFS = "nx_ui"
 
 fun nxPrefs(context: Context) =
     context.getSharedPreferences(UI_PREFS, Context.MODE_PRIVATE)
+
+/** Haptics helpers that respect the persisted Haptics setting. */
+fun nxTick(context: Context, enabled: Boolean) { if (enabled) hapticTick(context) }
+fun nxCrunch(context: Context, enabled: Boolean) { if (enabled) hapticCrunch(context) }
 
 data class NxEvent(
     val time: String,
@@ -123,14 +131,18 @@ fun NxCard(
     val motion = LocalNxMotion.current
     val shape = RoundedCornerShape(corner)
     val tint = nx.accent.copy(alpha = 0.10f * accentTint)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed && onClick != null) 0.985f else 1f, tween(90))
     var mod = modifier
+        .graphicsLayer { scaleX = scale; scaleY = scale }
         .clip(shape)
         .background(Brush.verticalGradient(listOf(nx.surfaceAlt, nx.surface)))
         .background(tint)
         .border(borderWidth, nx.border.copy(alpha = if (accentTint > 0f) 0.85f else 0.55f), shape)
     if (onClick != null) {
         mod = mod.clickable(
-            interactionSource = remember { MutableInteractionSource() },
+            interactionSource = interaction,
             indication = null,
             onClick = onClick
         )
@@ -216,7 +228,13 @@ fun NxButton(
         else -> if (enabled) nx.text else nx.faint
     }
     val shape = RoundedCornerShape(13.dp)
-    val scale by animateFloatAsState(if (enabled) 1f else 0.98f, tween(120))
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val clickable = enabled && !busy
+    val scale by animateFloatAsState(
+        if (!clickable) 0.98f else if (pressed) 0.95f else 1f,
+        tween(90)
+    )
     Box(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
@@ -232,7 +250,9 @@ fun NxButton(
                 },
                 shape
             )
-            .clickable(enabled = enabled && !busy) { onClick() }
+            .clickable(interactionSource = interaction, indication = null, enabled = clickable) {
+                onClick()
+            }
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -262,11 +282,17 @@ fun NxIconButton(
     enabled: Boolean = true
 ) {
     val nx = LocalNx.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed && enabled) 0.90f else 1f, tween(90))
     Box(
-        modifier.size(size).clip(RoundedCornerShape(10.dp))
-            .background(nx.surfaceAlt)
+        modifier.size(size).graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (pressed && enabled) nx.accent.copy(0.16f) else nx.surfaceAlt)
             .border(1.dp, nx.border.copy(0.5f), RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled) { onClick() },
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled) {
+                onClick()
+            },
         contentAlignment = Alignment.Center
     ) { TacoIcon(icon, if (enabled) tint else nx.faint, size * 0.52f) }
 }
@@ -284,14 +310,24 @@ fun NxSwitch(
         if (checked) nx.accent else nx.border,
         if (motion) tween(180) else tween(0)
     )
+    val thumb by animateFloatAsState(
+        if (checked) 1f else 0f,
+        if (motion) tween(180) else tween(0)
+    )
+    val interaction = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(50)
     Box(
         modifier.size(42.dp, 24.dp).clip(shape).background(color)
-            .clickable(enabled = enabled) { onChange(!checked) }
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled) {
+                onChange(!checked)
+            }
             .padding(3.dp),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+        contentAlignment = Alignment.CenterStart
     ) {
-        Box(Modifier.size(18.dp).clip(CircleShape).background(if (checked) nx.onAccent else nx.dim))
+        Box(
+            Modifier.size(18.dp).offset(x = 18.dp * thumb).clip(CircleShape)
+                .background(if (checked) nx.onAccent else nx.dim)
+        )
     }
 }
 
@@ -492,7 +528,7 @@ fun Modifier.nxGlow(color: Color, radius: Float = 18f): Modifier =
 fun Modifier.nxGrain(enabled: Boolean, alpha: Float = 0.035f): Modifier =
     if (!enabled) this else this.drawBehind {
         val seed = java.util.Random(42)
-        repeat((size.width * size.height / 90).toInt().coerceAtMost(900)) {
+        repeat((size.width * size.height / 140).toInt().coerceAtMost(450)) {
             val x = seed.nextFloat() * size.width
             val y = seed.nextFloat() * size.height
             drawCircle(Color.White.copy(alpha = alpha), radius = 1f, center = Offset(x, y))

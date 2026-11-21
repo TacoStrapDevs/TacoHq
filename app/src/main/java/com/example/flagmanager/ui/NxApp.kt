@@ -4,14 +4,17 @@ package com.example.flagmanager.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,8 +41,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.flagmanager.LaunchMode
@@ -138,7 +143,7 @@ fun NxRoot(state: TacoState) {
                     }
                 }
 
-                bottomNav(current = route) { route = it }
+                bottomNav(state = state, current = route) { route = it }
             }
 
             SnackbarHost(
@@ -161,82 +166,111 @@ fun NxRoot(state: TacoState) {
 @Composable
 private fun topBar(state: TacoState, onSettings: () -> Unit, onTheme: () -> Unit) {
     val nx = LocalNx.current
-    Row(
-        Modifier.fillMaxWidth().statusBarsPadding().height(62.dp)
-            .background(nx.bg.copy(alpha = 0.92f))
-            .border(androidx.compose.foundation.BorderStroke(1.dp, nx.border.copy(0.5f)))
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier.size(32.dp).clip(RoundedCornerShape(10.dp))
-                .background(Brush.linearGradient(listOf(nx.accent, nx.accent2))),
-            contentAlignment = Alignment.Center
+    val context = LocalContext.current
+    val pending = state.pendingCount()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 400.dp
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(62.dp)
+                .background(nx.bg.copy(alpha = 0.92f))
+                .border(androidx.compose.foundation.BorderStroke(1.dp, nx.border.copy(0.5f)))
+                .padding(horizontal = if (compact) 10.dp else 14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("T", style = NxType.body.copy(color = nx.onAccent))
-        }
-        Spacer(Modifier.width(9.dp))
-        Column {
-            Text("TACO", style = NxType.label, color = nx.text)
-            Text("v${state.appVersion}", style = NxType.monoSmall, color = nx.faint)
-        }
-        Spacer(Modifier.weight(1f))
-        if (state.pendingCount() > 0) {
-            NxPill("${state.pendingCount()} UNSAVED", nx.warn, dot = true)
-            Spacer(Modifier.width(6.dp))
-        }
-        NxIconButton(TacoIcon.Star, onTheme, size = 32.dp, tint = nx.accent2)
-        Spacer(Modifier.width(5.dp))
-        NxIconButton(TacoIcon.Sliders, onSettings, size = 32.dp)
-        Spacer(Modifier.width(5.dp))
-        Box(
-            Modifier.clip(RoundedCornerShape(10.dp))
-                .background(nx.accent)
-                .clickable {
-                    state.mode = LaunchMode.SAVE_LAUNCH
-                    state.runLaunch()
+            Box(
+                Modifier.size(32.dp).clip(RoundedCornerShape(10.dp))
+                    .background(Brush.linearGradient(listOf(nx.accent, nx.accent2))),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("T", style = NxType.body.copy(color = nx.onAccent))
+            }
+            if (!compact) {
+                Spacer(Modifier.width(9.dp))
+                Column {
+                    Text("TACO", style = NxType.label, color = nx.text)
+                    Text("v${state.appVersion}", style = NxType.monoSmall, color = nx.faint)
                 }
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TacoIcon(TacoIcon.Play, nx.onAccent, 13.dp)
-                Spacer(Modifier.width(5.dp))
-                Text("Save & Launch", style = NxType.caption.copy(color = nx.onAccent))
+            }
+            Spacer(Modifier.weight(1f))
+            if (pending > 0) {
+                if (compact) {
+                    NxPill("$pending", nx.warn, dot = true)
+                } else {
+                    NxPill("$pending UNSAVED", nx.warn, dot = true)
+                }
+                Spacer(Modifier.width(if (compact) 4.dp else 6.dp))
+            }
+            NxIconButton(TacoIcon.Star, {
+                nxTick(context, state.hapticsOn)
+                onTheme()
+            }, size = 32.dp, tint = nx.accent2)
+            Spacer(Modifier.width(4.dp))
+            NxIconButton(TacoIcon.Sliders, {
+                nxTick(context, state.hapticsOn)
+                onSettings()
+            }, size = 32.dp)
+            Spacer(Modifier.width(4.dp))
+            Box(
+                Modifier.clip(RoundedCornerShape(10.dp))
+                    .background(nx.accent)
+                    .clickable {
+                        nxCrunch(context, state.hapticsOn)
+                        state.mode = LaunchMode.SAVE_LAUNCH
+                        state.runLaunch()
+                    }
+                    .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TacoIcon(TacoIcon.Play, nx.onAccent, 13.dp)
+                    if (!compact) {
+                        Spacer(Modifier.width(5.dp))
+                        Text("Save & Launch", style = NxType.caption.copy(color = nx.onAccent))
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun bottomNav(current: String, onSelect: (String) -> Unit) {
+private fun bottomNav(state: TacoState, current: String, onSelect: (String) -> Unit) {
     val nx = LocalNx.current
+    val context = LocalContext.current
     Row(
         Modifier.fillMaxWidth().navigationBarsPadding().height(66.dp)
             .background(nx.bg.copy(alpha = 0.95f))
             .border(androidx.compose.foundation.BorderStroke(1.dp, nx.border.copy(0.5f)))
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 6.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
         TABS.forEach { tab ->
-            val route = tab.route
-            val icon = tab.icon
-            val label = tab.label
-            val active = current == route
-            val tint = if (active) nx.accent else nx.faint
+            val selected = current == tab.route
+            val tint = if (selected) nx.accent else nx.faint
+            val interaction = remember { MutableInteractionSource() }
+            val pressed by interaction.collectIsPressedAsState()
+            val scale by animateFloatAsState(if (pressed) 0.90f else 1f, tween(90))
             Column(
                 Modifier.clip(RoundedCornerShape(12.dp))
-                    .background(if (active) nx.accent.copy(0.14f) else androidx.compose.ui.graphics.Color.Transparent)
+                    .graphicsLayer { scaleX = scale; scaleY = scale }
+                    .background(
+                        if (selected) nx.accent.copy(if (pressed) 0.24f else 0.14f)
+                        else if (pressed) nx.surfaceAlt else Color.Transparent
+                    )
                     .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
+                        interactionSource = interaction,
                         indication = null
-                    ) { onSelect(route) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        nxTick(context, state.hapticsOn)
+                        onSelect(tab.route)
+                    }
+                    .padding(horizontal = if (nx.bg.luminance() < 0.5f) 10.dp else 12.dp,
+                        vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                TacoIcon(icon, tint, 20.dp)
+                TacoIcon(tab.icon, tint, 20.dp)
                 Spacer(Modifier.height(3.dp))
-                Text(label, style = NxType.caption.copy(color = tint))
+                Text(tab.label, style = NxType.caption.copy(color = tint), maxLines = 1)
             }
         }
     }

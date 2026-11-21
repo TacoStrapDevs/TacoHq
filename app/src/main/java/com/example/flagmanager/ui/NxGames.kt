@@ -86,14 +86,16 @@ fun NxGamesScreen(state: TacoState) {
                             style = NxType.monoSmall)
                     }
                     NxIconButton(TacoIcon.Play, {
+                        nxCrunch(context, state.hapticsOn)
                         state.targetGame = gameName
                         state.launchGameById(game.placeId)
                         NxActivity.add(context, "Launched $gameName", "#${game.placeId}", "launch")
                     }, size = 34.dp, tint = nx.accent)
                     Spacer(Modifier.width(5.dp))
-                    NxIconButton(TacoIcon.Layers, { assignFor = gameName }, size = 34.dp)
+                    NxIconButton(TacoIcon.Layers, { nxTick(context, state.hapticsOn); assignFor = gameName }, size = 34.dp)
                     Spacer(Modifier.width(5.dp))
                     NxIconButton(TacoIcon.Trash, {
+                        nxTick(context, state.hapticsOn)
                         state.removeGame(gameName)
                         NxActivity.add(context, "Unpinned $gameName", kind = "flag")
                     }, size = 34.dp, tint = nx.danger)

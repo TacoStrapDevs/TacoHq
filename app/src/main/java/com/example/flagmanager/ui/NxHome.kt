@@ -4,6 +4,12 @@ package com.example.flagmanager.ui
 
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +35,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,8 +61,6 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
     val scroll = rememberScrollState()
     val merged = state.mergedFlags()
     val canLaunch = state.shizuku.ok || state.useRoot
-
-    LaunchedEffect(Unit) { NxActivity.load(context) }
 
     var showTarget by remember { mutableStateOf(false) }
     var showChannel by remember { mutableStateOf(false) }
@@ -92,19 +95,23 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
         NxSection("Quick actions")
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
             quickAction(TacoIcon.Save, "Save", "Store flags") {
+                nxTick(context, state.hapticsOn)
                 state.applyDraft()
                 NxActivity.add(context, "Flags saved", "${state.draftFlags.size} flags in draft", "flag")
             }
             quickAction(TacoIcon.Check, "Verify", "Read back file") {
+                nxCrunch(context, state.hapticsOn)
                 state.mode = LaunchMode.VERIFY
                 state.runLaunch()
                 NxActivity.add(context, "Verify started", "", "launch")
             }
             quickAction(TacoIcon.Refresh, "Cache", "Clear Roblox cache") {
+                nxTick(context, state.hapticsOn)
                 state.clearCache()
                 NxActivity.add(context, "Cache clear requested", state.pkg, "tool")
             }
             quickAction(TacoIcon.Doc, "Diagnostics", "Copy support info") {
+                nxTick(context, state.hapticsOn)
                 state.copyDiagnostics()
                 NxActivity.add(context, "Diagnostics copied", "", "tool")
             }
@@ -120,6 +127,7 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
                         .background(if (active) nx.accent.copy(0.18f) else nx.surfaceAlt)
                         .border(1.dp, if (active) nx.accent else nx.border, RoundedCornerShape(14.dp))
                         .clickable {
+                            nxTick(context, state.hapticsOn)
                             state.applyPack(p)
                             NxActivity.add(context, "Preset applied", p.name, "flag")
                         }
@@ -257,10 +265,26 @@ private fun statusRow(state: TacoState, onNavigate: (String) -> Unit) {
 @Composable
 private fun hero(state: TacoState, canLaunch: Boolean, context: Context) {
     val nx = LocalNx.current
+    val motion = LocalNxMotion.current
     val running = state.launchState is LaunchState.Running
+    val glow by rememberInfiniteTransition(label = "hero-glow").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = if (motion) infiniteRepeatable(
+            tween(5200, easing = LinearEasing), RepeatMode.Reverse
+        ) else infiniteRepeatable(tween(3_600_000), RepeatMode.Restart),
+        label = "glow"
+    )
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
-            .background(Brush.linearGradient(listOf(nx.accent.copy(0.24f), nx.surfaceAlt, nx.surface)))
+            .background(
+                Brush.linearGradient(
+                    colorStops = arrayOf(
+                        0f to nx.accent.copy(alpha = 0.14f + 0.16f * glow),
+                        0.55f to nx.surfaceAlt,
+                        1f to nx.accent2.copy(alpha = 0.06f + 0.14f * (1f - glow))
+                    )
+                )
+            )
             .border(1.dp, nx.accent.copy(0.45f), RoundedCornerShape(22.dp))
             .padding(18.dp)
     ) {
@@ -287,6 +311,7 @@ private fun hero(state: TacoState, canLaunch: Boolean, context: Context) {
             NxButton(
                 text = if (running) "WORKING…" else "LAUNCH ROBLOX",
                 onClick = {
+                    nxCrunch(context, state.hapticsOn)
                     state.runLaunch()
                     NxActivity.add(context, "Launch started", state.mode.label, "launch")
                 },

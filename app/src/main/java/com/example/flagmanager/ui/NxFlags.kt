@@ -48,6 +48,7 @@ fun NxFlagsScreen(state: TacoState) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf(0) }
+    var supportedOnly by remember { mutableStateOf(false) }
     var showAdd by remember { mutableStateOf(false) }
 
     val cats = listOf("All") + SECTIONS.map { it.first } + "Custom"
@@ -95,7 +96,15 @@ fun NxFlagsScreen(state: TacoState) {
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            NxSwitchRow(
+                "Supported by Roblox only",
+                checked = supportedOnly,
+                onChange = { nxTick(context, state.hapticsOn); supportedOnly = it }
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
 
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -105,11 +114,13 @@ fun NxFlagsScreen(state: TacoState) {
             val filtered = SECTIONS.filter { (name, _) -> category == 0 || name == cats.getOrNull(category) }
                 .map { (name, items) ->
                     name to items.filter { fs -> matches(fs, q, state) }
+                        .filter { fs -> !supportedOnly || fsKeys(fs).all { k -> state.isAllowed(k) } }
                 }.filter { it.second.isNotEmpty() }
 
             if (category == 0 || category == cats.lastIndex) {
                 val custom = state.draftFlags.keys
                     .filter { k -> !SECTIONS.any { (_, items) -> items.any { fs -> fsKeys(fs).contains(k) } } }
+                    .filter { k -> !supportedOnly || state.isAllowed(k) }
                     .filter { k -> q.isBlank() || k.contains(q, true) || (state.draftFlags[k] ?: "").contains(q, true) }
                 if (custom.isNotEmpty() || category == cats.lastIndex) {
                     NxSection("Manual flags", action = "+ Add") { showAdd = true }
@@ -139,10 +150,17 @@ fun NxFlagsScreen(state: TacoState) {
             }
 
             if (filtered.isEmpty() && (category != cats.lastIndex || state.draftFlags.isEmpty())) {
-                NxCard { NxEmpty(TacoIcon.Search, "No flags found", "Try a different search or category.") }
+                NxCard {
+                    NxEmpty(
+                        if (supportedOnly) TacoIcon.Check else TacoIcon.Search,
+                        if (supportedOnly) "No supported flags here" else "No flags found",
+                        if (supportedOnly) "These flags are not on Roblox's allowlist."
+                        else "Try a different search or category."
+                    )
+                }
             }
 
-            if (ignored.isNotEmpty()) {
+            if (ignored.isNotEmpty() && !supportedOnly) {
                 Spacer(Modifier.height(12.dp))
                 NxSection("Ignored by Roblox (${ignored.size})")
                 NxCard(accentTint = 0f) {
@@ -201,6 +219,7 @@ private fun fsRow(fs: FS, state: TacoState, context: android.content.Context) {
         is FS.Toggle -> {
             val on = fs.sets.all { (k, v) -> draft[k] == v }
             NxCard(onClick = {
+                nxTick(context, state.hapticsOn)
                 draft.entries.removeAll { e -> fs.sets.containsKey(e.key) }
                 if (!on) fs.sets.forEach { (k, v) -> draft[k] = v }
                 NxActivity.add(context, if (!on) "Enabled ${fs.title}" else "Disabled ${fs.title}",
@@ -213,6 +232,7 @@ private fun fsRow(fs: FS, state: TacoState, context: android.content.Context) {
                     }
                     Spacer(Modifier.width(8.dp))
                     NxSwitch(on, { want ->
+                        nxTick(context, state.hapticsOn)
                         draft.entries.removeAll { e -> fs.sets.containsKey(e.key) }
                         if (want) fs.sets.forEach { (k, v) -> draft[k] = v }
                         NxActivity.add(context, if (want) "Enabled ${fs.title}" else "Disabled ${fs.title}",
