@@ -2,6 +2,8 @@
 
 package com.example.flagmanager.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,10 +43,6 @@ fun NxSettingsScreen(
     state: TacoState,
     themeIdx: Int,
     onTheme: (Int) -> Unit,
-    corner: Int,
-    onCorner: (Int) -> Unit,
-    glass: Float,
-    onGlass: (Float) -> Unit,
     dense: Boolean,
     onDense: (Boolean) -> Unit
 ) {
@@ -54,6 +52,10 @@ fun NxSettingsScreen(
     var pkgText by remember { mutableStateOf(state.pkg) }
     var showImport by remember { mutableStateOf(false) }
     var importUrl by remember { mutableStateOf("") }
+    val bgLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> if (uri != null) { state.bgImageUri = uri.toString(); state.persist() } }
+    val fontNames = listOf("Default", "Mono", "Serif", "Cursive", "Mono Alt")
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -96,11 +98,56 @@ fun NxSettingsScreen(
                 }
             }
             Spacer(Modifier.height(14.dp))
-            settingSlider("Corner radius", "$corner dp", corner.toFloat(), 8f, 32f) {
-                onCorner(it.toInt())
+            settingSlider("Corner radius", "${state.cardCornerRadius} dp",
+                state.cardCornerRadius.toFloat(), 8f, 32f) {
+                state.cardCornerRadius = it.toInt(); state.appearancePreset = -1; state.persist()
             }
-            settingSlider("Surface opacity", "${(glass * 100).toInt()}%", glass, 0.55f, 1f, onGlass)
+            settingSlider("Surface opacity", "${(state.glassOpacity * 100).toInt()}%",
+                state.glassOpacity, 0.55f, 1f) {
+                state.glassOpacity = it; state.appearancePreset = -1; state.persist()
+            }
+            settingSlider("Wallpaper dim", "${(state.wallpaperDim * 100).toInt()}%",
+                state.wallpaperDim, 0f, 0.8f) {
+                state.wallpaperDim = it; state.persist()
+            }
             Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
+            Text("Font", style = NxType.label)
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                fontNames.forEachIndexed { i, name ->
+                    Box(
+                        Modifier.clip(RoundedCornerShape(9.dp))
+                            .background(if (state.fontIdx == i) nx.accent.copy(0.22f) else nx.surface)
+                            .border(1.dp, if (state.fontIdx == i) nx.accent else nx.border,
+                                RoundedCornerShape(9.dp))
+                            .clickable { state.fontIdx = i; state.persist() }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                    ) {
+                        Text(name, style = NxType.caption,
+                            color = if (state.fontIdx == i) nx.accent else nx.dim)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth()) {
+                NxButton(if (state.bgImageUri.isEmpty()) "Set wallpaper" else "Change wallpaper",
+                    { bgLauncher.launch("image/*") }, Modifier.weight(1f),
+                    NxButtonKind.Secondary, icon = TacoIcon.Image, height = 40.dp)
+                if (state.bgImageUri.isNotEmpty()) {
+                    Spacer(Modifier.width(8.dp))
+                    NxButton("Remove", {
+                        state.bgImageUri = ""; state.persist()
+                    }, Modifier.weight(0.6f), NxButtonKind.Ghost, height = 40.dp)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            NxSwitchRow("Background texture", "Subtle grain across the app", state.textureEnabled,
+                { state.textureEnabled = it; state.persist() }, leading = TacoIcon.Image)
+            NxSwitchRow("AMOLED black", "Pure black background", state.amoled,
+                { state.amoled = it; state.appearancePreset = -1; state.persist() },
+                leading = TacoIcon.Dot)
             NxSwitchRow("Compact layout", "Tighter spacing on all screens", dense, onDense,
                 leading = TacoIcon.Home)
             NxSwitchRow("Reduce motion", "Disable animations and transitions", state.reduceMotion,

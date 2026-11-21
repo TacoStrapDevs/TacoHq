@@ -99,26 +99,36 @@ val NX_THEMES = listOf(
 val LocalNx = staticCompositionLocalOf { NX_THEMES[0] }
 val LocalNxMotion = staticCompositionLocalOf { true }
 val LocalNxDense = staticCompositionLocalOf { false }
+val LocalNxFont = staticCompositionLocalOf<FontFamily> { FontFamily.SansSerif }
+
+/** Maps the persisted font index onto a Compose font family. */
+fun nxFont(index: Int): FontFamily = when (index) {
+    1 -> FontFamily.Monospace
+    2 -> FontFamily.Serif
+    3 -> FontFamily.Cursive
+    4 -> FontFamily(android.graphics.Typeface.MONOSPACE)
+    else -> FontFamily.SansSerif
+}
 
 object NxType {
     val display @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.ExtraBold,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.ExtraBold,
         fontSize = 28.sp, letterSpacing = (-0.6).sp, color = LocalNx.current.text
     )
     val title @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.Bold,
         fontSize = 19.sp, letterSpacing = (-0.2).sp, color = LocalNx.current.text
     )
     val body @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.Medium,
         fontSize = 14.sp, color = LocalNx.current.text
     )
     val caption @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.Normal,
         fontSize = 12.sp, color = LocalNx.current.dim
     )
     val label @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.Bold,
         fontSize = 10.sp, letterSpacing = 1.3.sp, color = LocalNx.current.dim
     )
     val mono @Composable get() = TextStyle(
@@ -130,7 +140,7 @@ object NxType {
         fontSize = 11.sp, color = LocalNx.current.dim
     )
     val stat @Composable get() = TextStyle(
-        fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.ExtraBold,
+        fontFamily = LocalNxFont.current, fontWeight = FontWeight.ExtraBold,
         fontSize = 24.sp, color = LocalNx.current.text
     )
 }
@@ -138,6 +148,7 @@ object NxType {
 @Composable
 fun NxTheme(
     spec: NxSpec,
+    fontFamily: FontFamily = FontFamily.SansSerif,
     motion: Boolean = true,
     dense: Boolean = false,
     content: @Composable () -> Unit
@@ -162,7 +173,8 @@ fun NxTheme(
     androidx.compose.runtime.CompositionLocalProvider(
         LocalNx provides spec,
         LocalNxMotion provides motion,
-        LocalNxDense provides dense
+        LocalNxDense provides dense,
+        LocalNxFont provides fontFamily
     ) {
         MaterialTheme(
             colorScheme = scheme,

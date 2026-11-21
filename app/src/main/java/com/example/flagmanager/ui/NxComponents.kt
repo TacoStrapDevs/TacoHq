@@ -487,3 +487,14 @@ fun Modifier.nxGlow(color: Color, radius: Float = 18f): Modifier =
             center = Offset(size.width / 2, size.height / 2)
         )
     }
+
+/** Lightweight deterministic grain, matching the legacy app's texture toggle. */
+fun Modifier.nxGrain(enabled: Boolean, alpha: Float = 0.035f): Modifier =
+    if (!enabled) this else this.drawBehind {
+        val seed = java.util.Random(42)
+        repeat((size.width * size.height / 90).toInt().coerceAtMost(900)) {
+            val x = seed.nextFloat() * size.width
+            val y = seed.nextFloat() * size.height
+            drawCircle(Color.White.copy(alpha = alpha), radius = 1f, center = Offset(x, y))
+        }
+    }

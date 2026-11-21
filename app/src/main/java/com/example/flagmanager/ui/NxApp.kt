@@ -5,6 +5,7 @@ package com.example.flagmanager.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,9 +39,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.flagmanager.LaunchMode
+import com.example.flagmanager.rememberImageBitmapFromUri
 import com.example.flagmanager.TacoIcon
 import com.example.flagmanager.TacoState
 
@@ -65,20 +68,37 @@ fun NxRoot(state: TacoState) {
     var themeIdx by remember {
         mutableStateOf(prefs.getInt("theme", 0).coerceIn(0, NX_THEMES.lastIndex))
     }
-    var corner by remember { mutableStateOf(prefs.getInt("corner", 18).coerceIn(8, 32)) }
-    var glass by remember { mutableStateOf(prefs.getFloat("glass", 0.9f).coerceIn(0.55f, 1f)) }
     var dense by remember { mutableStateOf(prefs.getBoolean("dense", false)) }
-    var motion by remember { mutableStateOf(!state.reduceMotion) }
     var route by rememberSaveable { mutableStateOf("home") }
+    val motion = !state.reduceMotion
+    val fontFamily = nxFont(state.fontIdx)
+    val bgBitmap = rememberImageBitmapFromUri(state.bgImageUri)
 
     LaunchedEffect(Unit) { NxActivity.load(context) }
-    LaunchedEffect(state.reduceMotion) { motion = !state.reduceMotion }
 
     BackHandler(enabled = route != "home") { route = "home" }
 
-    NxTheme(NX_THEMES[themeIdx], motion, dense) {
+    NxTheme(
+        spec = NX_THEMES[themeIdx],
+        fontFamily = fontFamily,
+        motion = motion,
+        dense = dense
+    ) {
         val nx = LocalNx.current
         Box(Modifier.fillMaxSize().background(nx.bgDeep)) {
+            if (bgBitmap != null) {
+                Image(
+                    bitmap = bgBitmap,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    alpha = 1f
+                )
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = state.wallpaperDim)))
+            }
+
+            Box(Modifier.fillMaxSize().nxGrain(state.textureEnabled))
+
             Column(Modifier.fillMaxSize()) {
                 topBar(
                     state = state,
@@ -101,16 +121,14 @@ fun NxRoot(state: TacoState) {
                             "games" -> NxGamesScreen(state)
                             "tools" -> NxToolsScreen(state)
                             "settings" -> NxSettingsScreen(
-                                state, themeIdx, { i ->
+                                state = state,
+                                themeIdx = themeIdx,
+                                onTheme = { i ->
                                     themeIdx = i.coerceIn(0, NX_THEMES.lastIndex)
                                     prefs.edit().putInt("theme", themeIdx).apply()
-                                }, corner, { c ->
-                                    corner = c.coerceIn(8, 32)
-                                    prefs.edit().putInt("corner", corner).apply()
-                                }, glass, { g ->
-                                    glass = g.coerceIn(0.55f, 1f)
-                                    prefs.edit().putFloat("glass", glass).apply()
-                                }, dense, { d ->
+                                },
+                                dense = dense,
+                                onDense = { d ->
                                     dense = d
                                     prefs.edit().putBoolean("dense", dense).apply()
                                 }
