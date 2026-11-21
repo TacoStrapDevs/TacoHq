@@ -52,28 +52,30 @@ import com.example.flagmanager.PACKS
 import com.example.flagmanager.StepStatus
 import com.example.flagmanager.TacoIcon
 import com.example.flagmanager.TacoState
-import java.util.Calendar
 
 @Composable
-fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
+fun NxHomeScreen(
+    state: TacoState,
+    onNavigate: (String) -> Unit,
+    onPickTarget: () -> Unit
+) {
     val nx = LocalNx.current
     val context = LocalContext.current
     val scroll = rememberScrollState()
     val merged = state.mergedFlags()
     val canLaunch = state.shizuku.ok || state.useRoot
 
-    var showTarget by remember { mutableStateOf(false) }
     var showChannel by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(scroll)
             .padding(horizontal = 16.dp).padding(bottom = 24.dp)
     ) {
-        Spacer(Modifier.height(10.dp))
-        greeting()
-        Spacer(Modifier.height(14.dp))
-        statusRow(state, onNavigate)
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(8.dp))
+        consoleHeader(state)
+        Spacer(Modifier.height(12.dp))
+        statusStrip(state)
+        Spacer(Modifier.height(12.dp))
 
         hero(state, canLaunch, context)
         Spacer(Modifier.height(12.dp))
@@ -94,17 +96,6 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 
         NxSection("Quick actions")
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            quickAction(TacoIcon.Save, "Save", "Store flags") {
-                nxTick(context, state.hapticsOn)
-                state.applyDraft()
-                NxActivity.add(context, "Flags saved", "${state.draftFlags.size} flags in draft", "flag")
-            }
-            quickAction(TacoIcon.Check, "Verify", "Read back file") {
-                nxCrunch(context, state.hapticsOn)
-                state.mode = LaunchMode.VERIFY
-                state.runLaunch()
-                NxActivity.add(context, "Verify started", "", "launch")
-            }
             quickAction(TacoIcon.Refresh, "Cache", "Clear Roblox cache") {
                 nxTick(context, state.hapticsOn)
                 state.clearCache()
@@ -165,7 +156,7 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
             NxDivider()
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth()) {
-                infoCell("Target", state.targetLabel(), Modifier.weight(1.2f)) { showTarget = true }
+                infoCell("Target", state.targetLabel(), Modifier.weight(1.2f)) { onPickTarget() }
                 infoCell("Channel", state.channel, Modifier.weight(0.8f)) { showChannel = true }
                 infoCell("Mode", if (state.useRoot) "Root" else "Shizuku", Modifier.weight(0.8f)) {
                     onNavigate("settings")
@@ -197,18 +188,6 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
         }
     }
 
-    if (showTarget) {
-        NxDialog("Launch target", { showTarget = false }, confirm = "Done") {
-            Text("Home (Roblox app)", style = NxType.body,
-                modifier = Modifier.clickable { state.targetGame = null; showTarget = false }
-                    .padding(vertical = 10.dp))
-            state.games.forEach { (name, g) ->
-                Text("$name · ${g.placeId}", style = NxType.body,
-                    modifier = Modifier.clickable { state.targetGame = name; showTarget = false }
-                        .padding(vertical = 10.dp))
-            }
-        }
-    }
     if (showChannel) {
         NxDialog("Release channel", { showChannel = false }) {
             listOf("release", "zfeature", "zcanary", "live", "old").forEach { c ->
@@ -225,40 +204,46 @@ fun NxHomeScreen(state: TacoState, onNavigate: (String) -> Unit) {
 }
 
 @Composable
-private fun greeting() {
+private fun consoleHeader(state: TacoState) {
     val nx = LocalNx.current
-    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-    val word = when (hour) {
-        in 5..11 -> "GOOD MORNING"
-        in 12..17 -> "GOOD AFTERNOON"
-        in 18..22 -> "GOOD EVENING"
-        else -> "LATE SHIFT"
-    }
     Column {
-        Text(word, style = NxType.label, color = nx.accent)
-        Spacer(Modifier.height(2.dp))
-        Text("Bootstrapper ready.", style = NxType.display)
+        Text("TACOSTRAP // BOOTSTRAP CONSOLE", style = NxType.label, color = nx.accent)
+        Spacer(Modifier.height(3.dp))
+        Text("Deployment control", style = NxType.display)
+        Spacer(Modifier.height(3.dp))
+        Text(
+            "Configure FastFlags, pick a target, and deploy through Shizuku or root.",
+            style = NxType.caption
+        )
     }
 }
 
 @Composable
-private fun statusRow(state: TacoState, onNavigate: (String) -> Unit) {
+private fun statusStrip(state: TacoState) {
     val nx = LocalNx.current
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-        NxPill(
-            "SHIZUKU ${state.shizuku.short.uppercase()}",
-            if (state.shizuku.ok) nx.success else nx.danger,
-            dot = true
-        )
-        Spacer(Modifier.width(7.dp))
-        NxPill("ROOT ${if (state.rootAvailable == true) "YES" else "NO"}",
-            if (state.useRoot) nx.accent2 else nx.dim, dot = state.useRoot)
-        Spacer(Modifier.width(7.dp))
-        NxPill("V${state.appVersion}", nx.dim)
-        Spacer(Modifier.width(7.dp))
-        NxPill("UNSAVED ${state.pendingCount()}",
-            if (state.pendingCount() > 0) nx.warn else nx.faint,
-            dot = state.pendingCount() > 0)
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(nx.surfaceAlt)
+            .border(1.dp, nx.border.copy(0.7f), RoundedCornerShape(12.dp))
+            .padding(vertical = 11.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        statusCell("SHIZUKU", if (state.shizuku.ok) "READY" else "OFF",
+            if (state.shizuku.ok) nx.success else nx.danger)
+        statusCell("ACCESS", if (state.useRoot) "ROOT" else "ADB", nx.accent2)
+        statusCell("ROBLOX", state.robloxVersion ?: "…", nx.text)
+        statusCell("CHANNEL", state.channel.uppercase(), nx.dim)
+    }
+}
+
+@Composable
+private fun RowScope.statusCell(label: String, value: String, valueColor: Color) {
+    val nx = LocalNx.current
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = NxType.label, color = nx.faint)
+        Spacer(Modifier.height(3.dp))
+        Text(value, style = NxType.monoSmall.copy(color = valueColor), maxLines = 1)
     }
 }
 
@@ -307,25 +292,20 @@ private fun hero(state: TacoState, canLaunch: Boolean, context: Context) {
                 selected = state.mode.ordinal,
                 onSelect = { state.mode = LaunchMode.entries[it] }
             )
-            Spacer(Modifier.height(14.dp))
-            NxButton(
-                text = if (running) "WORKING…" else "LAUNCH ROBLOX",
-                onClick = {
-                    nxCrunch(context, state.hapticsOn)
-                    state.runLaunch()
-                    NxActivity.add(context, "Launch started", state.mode.label, "launch")
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = canLaunch && !running,
-                busy = running,
-                icon = TacoIcon.Play,
-                height = 54.dp
-            )
-            if (!canLaunch) {
-                Spacer(Modifier.height(8.dp))
-                Text("Start Shizuku or enable root in Settings to arm the launch button.",
-                    style = NxType.caption, color = nx.warn)
-            }
+             Spacer(Modifier.height(12.dp))
+             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                 Box(Modifier.size(7.dp).clip(CircleShape)
+                     .background(if (canLaunch) nx.success else nx.warn))
+                 Spacer(Modifier.width(8.dp))
+                 Text(
+                     if (canLaunch) "Ready to deploy ${state.allowedCount(state.draftFlags)} flags"
+                     else "Enable Shizuku or root to deploy",
+                     style = NxType.caption,
+                     color = if (canLaunch) nx.dim else nx.warn,
+                     modifier = Modifier.weight(1f)
+                 )
+                 if (running) NxPill("WORKING", nx.accent, dot = true)
+             }
         }
     }
 }
