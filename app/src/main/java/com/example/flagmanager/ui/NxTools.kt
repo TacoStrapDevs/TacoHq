@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.flagmanager.FlagCatalog
 import com.example.flagmanager.RobloxServerLocation
 import com.example.flagmanager.TacoIcon
 import com.example.flagmanager.TacoState
@@ -64,6 +65,32 @@ fun NxToolsScreen(state: TacoState) {
         Text("Tools", style = NxType.display)
         Text("Diagnostics, backups, fonts and network helpers.", style = NxType.caption)
         Spacer(Modifier.height(18.dp))
+
+        NxSection("Supported FastFlags (${FlagCatalog.ENTRIES.size})")
+        NxCard {
+            Text("These are the only flags Roblox reads from a local config.", style = NxType.caption)
+            Spacer(Modifier.height(6.dp))
+            FlagCatalog.byGroup().forEach { (group, entries) ->
+                Spacer(Modifier.height(8.dp))
+                Text(group.uppercase(), style = NxType.label, color = nx.accent)
+                entries.forEach { e ->
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(e.title, style = NxType.body)
+                            Text(e.key, style = NxType.monoSmall, color = nx.faint, maxLines = 1)
+                            Text(e.detail, style = NxType.caption)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        NxButton("Use", {
+                            state.draftFlags[e.key] = e.recommended
+                            NxActivity.add(context, "Set ${e.title}", e.recommended, "flag")
+                        }, Modifier.width(60.dp), NxButtonKind.Secondary, height = 34.dp)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
 
         NxSection("Diagnostics")
         NxCard {

@@ -396,8 +396,9 @@ interface AllowlistProvider {
 }
 
 object DefaultAllowlist : AllowlistProvider {
-    // No authoritative allowlist source is connected. Never claim a flag is allowed.
-    override fun isAllowed(key: String): Boolean = false
+    // Roblox's published local FastFlag allowlist. Flags outside it are ignored
+    // by the client, so we never present them as supported.
+    override fun isAllowed(key: String): Boolean = FlagCatalog.isAllowed(key)
 }
 
 sealed class ShizukuState(val ok: Boolean, val short: String, val long: String, val color: Color) {
@@ -3398,6 +3399,7 @@ class TacoState(
     }
 
     // VPN/MITM bypass — intercepts Roblox CDN flag fetch and injects all flags including allowlist-blocked ones
+    var safeMode by mutableStateOf(prefs.getBoolean("safeMode", true))
     var desyncEnabled by mutableStateOf(prefs.getBoolean("desyncEnabled", false))
     var vpnBypass by mutableStateOf(prefs.getBoolean("vpnBypass", false))
     var vpnStatus by mutableStateOf<String>("off") // "off" | "starting" | "active" | "error"
@@ -3451,8 +3453,14 @@ class TacoState(
         val out = LinkedHashMap<String, String>()
         layers.forEach { if (it.enabled) out.putAll(it.flags) }
         if (extraLayer != null) layers.firstOrNull { it.name == extraLayer }?.let { out.putAll(it.flags) }
-        return out
+        // Safe mode strips flags Roblox ignores locally, so only supported keys are deployed.
+        return if (safeMode) out.filterKeys { FlagCatalog.isAllowed(it) } else out
     }
+
+    fun allowedCount(flags: Map<String, String>): Int = flags.keys.count { FlagCatalog.isAllowed(it) }
+
+    fun ignoredKeys(flags: Map<String, String>): List<String> =
+        flags.keys.filter { !FlagCatalog.isAllowed(it) }.sorted()
 
     fun activeLayerName(): String =
         layers.lastOrNull { it.enabled && it.id != "base" }?.name ?: "Base flags"
@@ -3832,6 +3840,7 @@ class TacoState(
             .putString("path2", path).putString("pkg", pkg)
             .putBoolean("root", useRoot).putBoolean("applyOnSave", applyOnSave)
             .putBoolean("restart", restart).putBoolean("fps", fpsCap)
+            .putBoolean("safeMode", safeMode)
             .putInt("accent", accentIdx).putInt("fontIdx", fontIdx).putBoolean("trueBlack", amoled)
             .putBoolean("haptics", hapticsOn).putBoolean("reduceMotion", reduceMotion)
             .putBoolean("msgFlag", msgFlag).putBoolean("msgLaunch", msgLaunch)

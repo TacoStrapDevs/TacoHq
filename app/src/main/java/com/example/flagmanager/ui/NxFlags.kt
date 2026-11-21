@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.flagmanager.FS
+import com.example.flagmanager.FlagCatalog
 import com.example.flagmanager.Opt
 import com.example.flagmanager.SECTIONS
 import com.example.flagmanager.TacoIcon
@@ -50,13 +51,29 @@ fun NxFlagsScreen(state: TacoState) {
     var showAdd by remember { mutableStateOf(false) }
 
     val cats = listOf("All") + SECTIONS.map { it.first } + "Custom"
+    val ignored = state.ignoredKeys(state.draftFlags)
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(8.dp))
             Text("FastFlags", style = NxType.display)
-            Text("Tune the client. Changes stay in draft until saved.", style = NxType.caption)
-            Spacer(Modifier.height(12.dp))
+            Text("${state.allowedCount(state.draftFlags)}/${state.draftFlags.size} flags are supported by Roblox.",
+                style = NxType.caption)
+            Spacer(Modifier.height(10.dp))
+            NxCard(accentTint = 0.4f, corner = 14.dp) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Safe mode", style = NxType.body)
+                        Text("Only deploy flags Roblox accepts. Others are kept in draft but ignored.",
+                            style = NxType.caption)
+                    }
+                    NxSwitch(state.safeMode, {
+                        state.safeMode = it
+                        state.persist()
+                    })
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             NxSearch(query, { query = it }, placeholder = "Search flags, keys, values…")
             Spacer(Modifier.height(10.dp))
         }
@@ -125,6 +142,24 @@ fun NxFlagsScreen(state: TacoState) {
                 NxCard { NxEmpty(TacoIcon.Search, "No flags found", "Try a different search or category.") }
             }
 
+            if (ignored.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                NxSection("Ignored by Roblox (${ignored.size})")
+                NxCard(accentTint = 0f) {
+                    Text("These flags are in your draft but are not on Roblox's local allowlist.",
+                        style = NxType.caption, color = nx.warn)
+                    Spacer(Modifier.height(8.dp))
+                    ignored.take(12).forEach { key ->
+                        Text(key, style = NxType.monoSmall, color = nx.faint, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(3.dp))
+                    }
+                    if (ignored.size > 12) {
+                        Text("+ ${ignored.size - 12} more", style = NxType.caption, color = nx.dim)
+                    }
+                }
+            }
+
             Spacer(Modifier.height(14.dp))
             NxDivider()
             Spacer(Modifier.height(12.dp))
@@ -137,10 +172,12 @@ fun NxFlagsScreen(state: TacoState) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Allowlist-aware: flags Roblox does not honor locally are marked. " +
-                    "FastFlags modify rendering and networking only — they are not exploits.",
+                "Roblox's allowlist is enforced in the client itself. Shizuku writes the file correctly, " +
+                    "but Roblox decides which keys it reads. Safe mode keeps ignored keys out of the deployed file.",
                 style = NxType.caption
             )
+            Spacer(Modifier.height(4.dp))
+            Text(FlagCatalog.ALLOWLIST_URL, style = NxType.monoSmall, color = nx.accent2)
         }
     }
 
