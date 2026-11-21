@@ -220,27 +220,16 @@ fun toJson(map: Map<String, String>, indent: Int = 0): String {
 
 private fun shq(s: String) = "'" + s.replace("'", "'\\''") + "'"
 
-private fun shizukuProcess(cmd: String): Process {
-    val m = rikka.shizuku.Shizuku::class.java.getDeclaredMethod(
-        "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
-    )
-    m.isAccessible = true
-    return m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-}
-
 fun runCmd(cmd: String, root: Boolean): Pair<Boolean, String> = try {
-    val p = if (root) Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)) else shizukuProcess(cmd)
-    val out = p.inputStream.bufferedReader().readText()
-    val err = p.errorStream.bufferedReader().readText()
-    val code = p.waitFor()
-    (code == 0) to (if (code == 0) out else err.ifBlank { out }).trim()
+    val result = if (root) ShizukuShell.runSu(cmd) else ShizukuShell.runShell(cmd)
+    result.ok to
+        (if (result.ok) result.stdout else result.stderr.ifBlank { result.stdout }).trim()
 } catch (e: Throwable) {
     false to (e.message ?: "command error")
 }
 
 fun isRootAvailable(): Boolean = try {
-    val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-    p.waitFor() == 0
+    ShizukuShell.runSu("id", timeoutMs = 5_000L).ok
 } catch (e: Throwable) { false }
 
 fun fetchText(url: String): Pair<Boolean, String> = try {

@@ -1,11 +1,9 @@
 
 package com.example.flagmanager
 
-import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
@@ -69,42 +67,14 @@ class RobloxLogHelper(
 
     fun isRunning(): Boolean = running.get()
 
-    private fun isShizukuReady(): Boolean {
-        return try {
-            Shizuku.pingBinder() &&
-                Shizuku.checkSelfPermission() ==
-                PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            Log.e(TAG, "Shizuku check failed", e)
-            false
-        }
-    }
+    private fun isShizukuReady(): Boolean = ShizukuShell.isAvailable()
 
     /**
-     * Uses the same Shizuku process approach already present
-     * in TacoStrap's MainActivity.kt.
+     * Delegates to the shared launcher so the monitor and the UI use the
+     * same privileged process path with the same error handling.
      */
-    private fun executeShizuku(command: String): Process {
-        check(isShizukuReady()) {
-            "Shizuku is not authorized"
-        }
-
-        val method = Shizuku::class.java.getDeclaredMethod(
-            "newProcess",
-            Array<String>::class.java,
-            Array<String>::class.java,
-            String::class.java
-        )
-
-        method.isAccessible = true
-
-        return method.invoke(
-            null,
-            arrayOf("sh", "-c", command),
-            null,
-            null
-        ) as Process
-    }
+    private fun executeShizuku(command: String): Process =
+        ShizukuShell.newProcess(listOf("/system/bin/sh", "-c", command))
 
     private fun findRobloxPid(): String? {
         var process: Process? = null
